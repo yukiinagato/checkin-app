@@ -1,10 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  ShieldCheck, 
   Wifi, 
   Clock, 
-  VolumeX, 
-  CigaretteOff, 
   MapPin, 
   ChevronRight, 
   ChevronLeft, 
@@ -14,17 +11,12 @@ import {
   Coffee,
   Languages,
   UserCheck,
-  Waves,
   Baby,
   AlertTriangle,
-  PhoneCall,
-  Zap,
-  BookOpen,
   Wrench,
   Flame,
   Wind,
   Trash2,
-  Container,
   ExternalLink,
   Camera,
   Users,
@@ -77,18 +69,21 @@ const COUNTRY_DATA = [
 // ----------------------------------------------------------------------
 // 後端 API 服務
 // ----------------------------------------------------------------------
-const API_URL = 'http://localhost:3001/api';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+const STEP_STORAGE_KEY = 'checkin.steps';
+const DEFAULT_LANG = 'zh-hans';
 
 const DB = {
   async getAllRecords() {
-    try {
-      const res = await fetch(`${API_URL}/records`);
-      if (!res.ok) throw new Error('Failed to fetch records');
-      return await res.json();
-    } catch (error) {
-      console.error("API Error:", error);
-      return [];
-    }
+    const res = await fetch(`${API_URL}/records`);
+    if (!res.ok) throw new Error('Failed to fetch records');
+    return await res.json();
+  },
+
+  async getSteps(lang) {
+    const res = await fetch(`${API_URL}/steps?lang=${encodeURIComponent(lang)}`);
+    if (!res.ok) throw new Error('Failed to fetch steps');
+    return await res.json();
   },
 
   async insertRecord(record) {
@@ -98,7 +93,11 @@ const DB = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(record)
       });
-      return await res.json();
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { success: false, error: payload.error || 'Server Error' };
+      }
+      return payload;
     } catch (error) {
       console.error("Submission Error:", error);
       return { success: false, error: "Connection Failed" };
@@ -125,24 +124,213 @@ const DB = {
         ]);
       });
     });
-    const csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.join(",")).join("\n");
-    const encodedUri = encodeURI(csvContent);
+    const csvContent = rows.map(e => e.join(",")).join("\n");
+    const encodedUri = URL.createObjectURL(new Blob([csvContent], { type: 'text/csv;charset=utf-8;' }));
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
     link.setAttribute("download", `hotel_guests_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(encodedUri);
   }
 };
 
 const fileToBase64 = (file) => {
   return new Promise((resolve, reject) => {
+    if (!file) {
+      resolve('');
+      return;
+    }
     const reader = new FileReader();
     reader.readAsDataURL(file);
     reader.onload = () => resolve(reader.result);
     reader.onerror = error => reject(error);
   });
+};
+
+const createStepId = () => `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+const LANG_OPTIONS = [
+  { value: 'zh-hans', label: '简体中文' },
+  { value: 'zh-hant', label: '繁體中文' },
+  { value: 'en', label: 'English' },
+  { value: 'jp', label: '日本語' },
+  { value: 'ko', label: '한국어' }
+];
+
+const translations = {
+  'zh-hans': {
+    next: "下一步", prev: "上一步", finish: "确认并获取房号", agree: "我已详读并同意遵守上述所有守则",
+    zipLookup: "查询", zipPlaceholder: "7位邮编", zipLoading: "查询中...", regFormAddr: "日本住址", regFormZip: "邮政编码",
+    roomNo: "您的房号", wifi: "Wi-Fi 密码", copy: "复制", breakfast: "早餐时间", breakfastLoc: "2楼西餐厅",
+    service: "紧急协助", serviceDetail: "优先拨打紧急电话，再前往别栋联系管理人", welcomeTitle: "欢迎入住！", welcomeSub: "请开始您的愉快旅程",
+    footer: "您的安全与舒适是我们的最高宗旨。", guideTitle: "入住导览", changeLang: "语言", manualLink: "说明书 PDF",
+    regResident: "日本居民", regTourist: "访日游客", regFormName: "姓名", regFormAge: "年龄", regFormOcc: "职业",
+    regFormNation: "国籍", regFormPass: "护照号码", regPassportUpload: "拍摄/上传护照照片", regMinorAlert: "未成年人需填监护人信息",
+    addGuest: "增加人员", guestLabel: "住客", infantLabel: "婴儿人数 (2岁以下)", countAdults: "住客人数 (成人/未成年)",
+    selectCountry: "选择国家/地区",
+    customStepEmpty: "此步骤暂无内容。",
+    steps: [
+      { id: 'welcome', title: "欢迎入住", subtitle: "Welcome" },
+      { id: 'count', title: "入住人数", subtitle: "Guest Count" },
+      { id: 'registration', title: "住客信息登记", subtitle: "Osaka Regulation" },
+      { id: 'emergency', title: "安全与紧急应对", subtitle: "Safety First" },
+      { id: 'child', title: "婴儿与儿童安全", subtitle: "Child Protection" },
+      { id: 'outdoor', title: "户外边界警告", subtitle: "Outdoor Safety" },
+      { id: 'water', title: "空气能热水器 (EcoCute)", subtitle: "Hot Water System" },
+      { id: 'trash', title: "垃圾分类指南", subtitle: "Waste Management" },
+      { id: 'laundry', title: "洗烘一体机使用", subtitle: "Laundry Guide" },
+      { id: 'rules', title: "邻里礼仪与管理", subtitle: "Etiquette" }
+    ]
+  },
+  'zh-hant': {
+    next: "下一步", prev: "上一步", finish: "確認並獲取房號", agree: "我已詳讀並同意遵守上述所有守則",
+    zipLookup: "地址查詢", zipPlaceholder: "7位郵遞區號", zipLoading: "查詢中...", regFormAddr: "日本住址", regFormZip: "郵遞區號",
+    roomNo: "您的房號", wifi: "Wi-Fi 密碼", copy: "複製", breakfast: "早餐時間", breakfastLoc: "2樓西餐廳",
+    service: "緊急協助", serviceDetail: "優先撥打緊急電話，再前往別棟聯繫管理人", welcomeTitle: "入住愉快！", welcomeSub: "請開始您的愉快旅程",
+    footer: "您的安全與舒適是我們的最高宗旨。", guideTitle: "入住導覽", changeLang: "語言", manualLink: "說明書 PDF",
+    regResident: "日本居民", regTourist: "訪日遊客", regFormName: "姓名", regFormAge: "年齡", regFormOcc: "職業",
+    regFormNation: "國籍", regFormPass: "護照號碼", regPassportUpload: "拍攝/上傳護照照片", regMinorAlert: "未成年人需填監護人資訊",
+    addGuest: "增加人員", guestLabel: "住客", infantLabel: "嬰兒人數 (2歲以下)", countAdults: "住客人數 (成人/未成年)",
+    selectCountry: "選擇國家/地區",
+    customStepEmpty: "此步驟目前沒有內容。",
+    steps: [
+      { id: 'welcome', title: "歡迎入住", subtitle: "Welcome" },
+      { id: 'count', title: "入住人數", subtitle: "Guest Count" },
+      { id: 'registration', title: "住客資訊登記", subtitle: "Osaka Regulation" },
+      { id: 'emergency', title: "安全與緊急應對", subtitle: "Safety First" },
+      { id: 'child', title: "嬰兒與兒童安全", subtitle: "Child Protection" },
+      { id: 'outdoor', title: "戶外邊界警告", subtitle: "Outdoor Safety" },
+      { id: 'water', title: "空氣能熱水器 (EcoCute)", subtitle: "Hot Water System" },
+      { id: 'trash', title: "垃圾分類指南", subtitle: "Waste Management" },
+      { id: 'laundry', title: "洗烘一體機使用", subtitle: "Laundry Guide" },
+      { id: 'rules', title: "鄰里禮儀與管理", subtitle: "Etiquette" }
+    ]
+  },
+  'en': {
+    next: "Next", prev: "Back", finish: "Confirm & Get Room No.", agree: "I have read and agree to all rules above.",
+    zipLookup: "Lookup", zipPlaceholder: "7-digit ZIP", zipLoading: "Searching...", regFormAddr: "Japanese address", regFormZip: "Postal code",
+    roomNo: "Your Room No.", wifi: "Wi-Fi Password", copy: "Copy", breakfast: "Breakfast Time", breakfastLoc: "2F Restaurant",
+    service: "Emergency Support", serviceDetail: "Call emergency first, then contact the manager in another building.", welcomeTitle: "Welcome!", welcomeSub: "Start your journey",
+    footer: "Your safety and comfort are our top priority.", guideTitle: "Check-in Guide", changeLang: "Language", manualLink: "Manual PDF",
+    regResident: "Japan Resident", regTourist: "Visitor", regFormName: "Name", regFormAge: "Age", regFormOcc: "Occupation",
+    regFormNation: "Nationality", regFormPass: "Passport No.", regPassportUpload: "Upload passport photo", regMinorAlert: "Minors need guardian info",
+    addGuest: "Add Guest", guestLabel: "Guest", infantLabel: "Infants (under 2)", countAdults: "Guest Count (adult/minor)",
+    selectCountry: "Select country/region",
+    customStepEmpty: "No content for this step yet.",
+    steps: [
+      { id: 'welcome', title: "Welcome", subtitle: "Welcome" },
+      { id: 'count', title: "Guest Count", subtitle: "Guest Count" },
+      { id: 'registration', title: "Registration", subtitle: "Osaka Regulation" },
+      { id: 'emergency', title: "Emergency", subtitle: "Safety First" },
+      { id: 'child', title: "Child Safety", subtitle: "Child Protection" },
+      { id: 'outdoor', title: "Outdoor Warning", subtitle: "Outdoor Safety" },
+      { id: 'water', title: "Hot Water System", subtitle: "EcoCute" },
+      { id: 'trash', title: "Waste Guide", subtitle: "Waste Management" },
+      { id: 'laundry', title: "Laundry", subtitle: "Laundry Guide" },
+      { id: 'rules', title: "Etiquette", subtitle: "Etiquette" }
+    ]
+  },
+  'jp': {
+    next: "次へ", prev: "戻る", finish: "確認して部屋番号を取得", agree: "上記の規則を読み同意しました",
+    zipLookup: "検索", zipPlaceholder: "7桁郵便番号", zipLoading: "検索中...", regFormAddr: "日本の住所", regFormZip: "郵便番号",
+    roomNo: "あなたの部屋番号", wifi: "Wi-Fi パスワード", copy: "コピー", breakfast: "朝食時間", breakfastLoc: "2階レストラン",
+    service: "緊急連絡", serviceDetail: "先に緊急電話、次に管理人へ連絡。", welcomeTitle: "ようこそ！", welcomeSub: "旅を始めましょう",
+    footer: "安全と快適さが最優先です。", guideTitle: "チェックイン案内", changeLang: "言語", manualLink: "マニュアル PDF",
+    regResident: "日本在住", regTourist: "訪日観光客", regFormName: "氏名", regFormAge: "年齢", regFormOcc: "職業",
+    regFormNation: "国籍", regFormPass: "パスポート番号", regPassportUpload: "パスポート写真をアップロード", regMinorAlert: "未成年は保護者情報が必要",
+    addGuest: "追加", guestLabel: "ゲスト", infantLabel: "乳児 (2歳未満)", countAdults: "人数 (成人/未成年)",
+    selectCountry: "国/地域を選択",
+    customStepEmpty: "このステップにはまだ内容がありません。",
+    steps: [
+      { id: 'welcome', title: "ようこそ", subtitle: "Welcome" },
+      { id: 'count', title: "人数", subtitle: "Guest Count" },
+      { id: 'registration', title: "登録", subtitle: "Osaka Regulation" },
+      { id: 'emergency', title: "緊急", subtitle: "Safety First" },
+      { id: 'child', title: "子どもの安全", subtitle: "Child Protection" },
+      { id: 'outdoor', title: "屋外注意", subtitle: "Outdoor Safety" },
+      { id: 'water', title: "給湯システム", subtitle: "EcoCute" },
+      { id: 'trash', title: "ゴミ分別", subtitle: "Waste Management" },
+      { id: 'laundry', title: "洗濯", subtitle: "Laundry Guide" },
+      { id: 'rules', title: "マナー", subtitle: "Etiquette" }
+    ]
+  },
+  'ko': {
+    next: "다음", prev: "뒤로", finish: "확인 후 객실 번호 받기", agree: "위 규칙을 읽고 동의합니다",
+    zipLookup: "조회", zipPlaceholder: "7자리 우편번호", zipLoading: "조회 중...", regFormAddr: "일본 주소", regFormZip: "우편번호",
+    roomNo: "객실 번호", wifi: "와이파이 비밀번호", copy: "복사", breakfast: "조식 시간", breakfastLoc: "2층 레스토랑",
+    service: "긴급 지원", serviceDetail: "긴급 전화 후 관리자에게 연락.", welcomeTitle: "환영합니다!", welcomeSub: "여행을 시작하세요",
+    footer: "안전과 편안함이 최우선입니다.", guideTitle: "체크인 안내", changeLang: "언어", manualLink: "매뉴얼 PDF",
+    regResident: "일본 거주자", regTourist: "방문객", regFormName: "이름", regFormAge: "나이", regFormOcc: "직업",
+    regFormNation: "국적", regFormPass: "여권 번호", regPassportUpload: "여권 사진 업로드", regMinorAlert: "미성년자는 보호자 정보 필요",
+    addGuest: "인원 추가", guestLabel: "게스트", infantLabel: "영아 (2세 이하)", countAdults: "인원 수 (성인/미성년)",
+    selectCountry: "국가/지역 선택",
+    customStepEmpty: "이 단계에는 아직 내용이 없습니다.",
+    steps: [
+      { id: 'welcome', title: "환영", subtitle: "Welcome" },
+      { id: 'count', title: "인원 수", subtitle: "Guest Count" },
+      { id: 'registration', title: "등록", subtitle: "Osaka Regulation" },
+      { id: 'emergency', title: "긴급", subtitle: "Safety First" },
+      { id: 'child', title: "아동 안전", subtitle: "Child Protection" },
+      { id: 'outdoor', title: "야외 경고", subtitle: "Outdoor Safety" },
+      { id: 'water', title: "온수 시스템", subtitle: "EcoCute" },
+      { id: 'trash', title: "쓰레기 분리", subtitle: "Waste Management" },
+      { id: 'laundry', title: "세탁", subtitle: "Laundry Guide" },
+      { id: 'rules', title: "에티켓", subtitle: "Etiquette" }
+    ]
+  }
+};
+
+const buildDefaultSteps = (lang) => {
+  const base = translations[lang]?.steps || translations[DEFAULT_LANG].steps;
+  return base.map(step => ({
+    ...step,
+    enabled: true,
+    type: 'builtin',
+    content: ''
+  }));
+};
+
+const normalizeSteps = (steps, fallback) => {
+  if (!Array.isArray(steps)) return fallback;
+  return steps.map((step) => ({
+    id: step.id || createStepId(),
+    title: step.title || '',
+    subtitle: step.subtitle || '',
+    enabled: step.enabled !== false,
+    type: step.type === 'custom' ? 'custom' : 'builtin',
+    content: step.content || ''
+  }));
+};
+
+const loadSteps = (lang) => {
+  try {
+    const raw = localStorage.getItem(`${STEP_STORAGE_KEY}.${lang}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return normalizeSteps(parsed, buildDefaultSteps(lang));
+  } catch (error) {
+    console.warn('無法讀取步驟設定:', error);
+    return null;
+  }
+};
+
+const saveSteps = (lang, steps) => {
+  localStorage.setItem(`${STEP_STORAGE_KEY}.${lang}`, JSON.stringify(steps));
+};
+
+const StepContent = ({ content, fallback }) => {
+  const html = (content || fallback || '').trim();
+  if (!html) {
+    return <p className="text-sm text-slate-500">暂无内容</p>;
+  }
+  return (
+    <div
+      className="step-content space-y-4 text-sm text-slate-600"
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
 };
 
 // ----------------------------------------------------------------------
@@ -226,6 +414,9 @@ const AdminDashboard = ({ onLogout }) => {
   const [tab, setTab] = useState('data');
   const [records, setRecords] = useState([]);
   const [serverStatus, setServerStatus] = useState('checking');
+  const [stepLang, setStepLang] = useState(DEFAULT_LANG);
+  const [editableSteps, setEditableSteps] = useState(() => buildDefaultSteps(DEFAULT_LANG));
+  const [stepsSaved, setStepsSaved] = useState(false);
 
   useEffect(() => {
     DB.getAllRecords()
@@ -233,11 +424,76 @@ const AdminDashboard = ({ onLogout }) => {
         setRecords(data);
         setServerStatus('online');
       })
-      .catch(() => setServerStatus('offline'));
+      .catch(() => {
+        setRecords([]);
+        setServerStatus('offline');
+      });
   }, []);
+
+  useEffect(() => {
+    let isActive = true;
+    const stored = loadSteps(stepLang);
+    if (stored) {
+      setEditableSteps(stored);
+      setStepsSaved(false);
+      return () => {
+        isActive = false;
+      };
+    }
+    DB.getSteps(stepLang)
+      .then((steps) => {
+        if (!isActive) return;
+        const normalized = normalizeSteps(steps, buildDefaultSteps(stepLang));
+        setEditableSteps(normalized);
+        saveSteps(stepLang, normalized);
+        setStepsSaved(false);
+      })
+      .catch(() => {
+        if (!isActive) return;
+        setEditableSteps(buildDefaultSteps(stepLang));
+        setStepsSaved(false);
+      });
+    return () => {
+      isActive = false;
+    };
+  }, [stepLang]);
 
   const totalGuests = records.reduce((acc, r) => acc + (r.guests?.length || 0), 0);
   const todayCount = records.filter(r => r.submittedAt.startsWith(new Date().toISOString().split('T')[0])).reduce((acc, r) => acc + (r.guests?.length || 0), 0);
+  const stepLangText = translations[stepLang] || translations[DEFAULT_LANG];
+
+  const updateStepField = (id, field, value) => {
+    setEditableSteps((prev) => prev.map((step) => step.id === id ? { ...step, [field]: value } : step));
+    setStepsSaved(false);
+  };
+
+  const toggleStepEnabled = (id) => {
+    setEditableSteps((prev) => prev.map((step) => step.id === id ? { ...step, enabled: !step.enabled } : step));
+    setStepsSaved(false);
+  };
+
+  const addCustomStep = () => {
+    setEditableSteps((prev) => [
+      ...prev,
+      { id: createStepId(), title: '新步骤', subtitle: 'Custom Step', type: 'custom', content: '', enabled: true }
+    ]);
+    setStepsSaved(false);
+  };
+
+  const removeCustomStep = (id) => {
+    setEditableSteps((prev) => prev.filter((step) => step.id !== id));
+    setStepsSaved(false);
+  };
+
+  const handleSaveSteps = () => {
+    saveSteps(stepLang, editableSteps);
+    setStepsSaved(true);
+  };
+
+  const handleResetSteps = () => {
+    setEditableSteps(buildDefaultSteps(stepLang));
+    setStepsSaved(false);
+  };
 
   const renderContent = () => {
     if (serverStatus === 'offline') {
@@ -373,6 +629,96 @@ const AdminDashboard = ({ onLogout }) => {
              </div>
           </div>
         );
+      case 'steps':
+        return (
+          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h3 className="font-bold text-xl text-slate-800">入住步骤管理</h3>
+                <p className="text-sm text-slate-500">编辑步骤标题与内容，可新增或移除自定义步骤。</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <select
+                  value={stepLang}
+                  onChange={(e) => setStepLang(e.target.value)}
+                  className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700"
+                >
+                  {LANG_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <button onClick={addCustomStep} className="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-bold">新增步骤</button>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              {editableSteps.map((step, index) => (
+                <div key={step.id} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-bold text-slate-400 uppercase">Step {index + 1}</span>
+                      <span className={`text-[10px] px-2 py-1 rounded-full ${step.type === 'custom' ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-500'}`}>
+                        {step.type === 'custom' ? 'Custom' : 'Built-in'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                        <input type="checkbox" checked={step.enabled !== false} onChange={() => toggleStepEnabled(step.id)} />
+                        啟用
+                      </label>
+                      {step.type === 'custom' && (
+                        <button onClick={() => removeCustomStep(step.id)} className="text-rose-500 text-xs font-bold">移除</button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">标题</label>
+                      <input
+                        type="text"
+                        value={step.title}
+                        onChange={(e) => updateStepField(step.id, 'title', e.target.value)}
+                        className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">副标题</label>
+                      <input
+                        type="text"
+                        value={step.subtitle}
+                        onChange={(e) => updateStepField(step.id, 'subtitle', e.target.value)}
+                        className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">内容 (支持 HTML，可插入圖片)</label>
+                      <span className="text-[10px] text-slate-400">例如: &lt;img src=&quot;https://...&quot; /&gt;</span>
+                    </div>
+                    <textarea
+                      value={step.content}
+                      onChange={(e) => updateStepField(step.id, 'content', e.target.value)}
+                      rows={5}
+                      className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm"
+                      placeholder="输入该步骤要展示的内容..."
+                    />
+                  </div>
+                  <div className="step-content-surface">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase mb-3">预览</p>
+                    <StepContent content={step.content} fallback={stepLangText.customStepEmpty} />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <button onClick={handleSaveSteps} className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-bold">保存设置</button>
+              <button onClick={handleResetSteps} className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-bold">恢复默认</button>
+              {stepsSaved && <span className="text-sm text-emerald-600 font-bold">已保存</span>}
+            </div>
+          </div>
+        );
       default: return null;
     }
   };
@@ -394,6 +740,9 @@ const AdminDashboard = ({ onLogout }) => {
             </button>
             <button onClick={() => setTab('settings')} className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all font-bold text-sm ${tab === 'settings' ? 'bg-white text-slate-900 shadow-xl' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
               <Settings className="w-5 h-5" /> 系統設置
+            </button>
+            <button onClick={() => setTab('steps')} className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all font-bold text-sm ${tab === 'steps' ? 'bg-white text-slate-900 shadow-xl' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
+              <LayoutDashboard className="w-5 h-5" /> 步驟管理
             </button>
           </nav>
         </div>
@@ -438,191 +787,40 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
     name: '', age: '', occupation: '', address: '', postalCode: '', nationality: '', passportNumber: '', passportPhoto: null, guardianName: '', guardianPhone: ''
   });
 
-  const langConfig = {
-    'zh-hans': { label: '简体中文', name: 'Simplified Chinese' },
-    'zh-hant': { label: '繁體中文', name: 'Traditional Chinese' },
-    'en': { label: 'English', name: 'English' },
-    'jp': { label: '日本語', name: 'Japanese' },
-    'ko': { label: '한국어', name: 'Korean' }
-  };
+  const [stepsConfig, setStepsConfig] = useState([]);
 
-  const translations = {
-    'zh-hans': {
-      next: "下一步", prev: "上一步", finish: "确认并获取房号", agree: "我已详读并同意遵守上述所有守则",
-      zipLookup: "查询", zipPlaceholder: "7位邮编", zipLoading: "查询中...", regFormAddr: "日本住址", regFormZip: "邮政编码",
-      roomNo: "您的房号", wifi: "Wi-Fi 密码", copy: "复制", breakfast: "早餐时间", breakfastLoc: "2楼西餐厅",
-      service: "紧急协助", serviceDetail: "优先拨打紧急电话，再前往别栋联系管理人", welcomeTitle: "欢迎入住！", welcomeSub: "请开始您的愉快旅程",
-      footer: "您的安全与舒适是我们的最高宗旨。", guideTitle: "入住导览", changeLang: "语言", manualLink: "说明书 PDF",
-      regResident: "日本居民", regTourist: "访日游客", regFormName: "姓名", regFormAge: "年龄", regFormOcc: "职业",
-      regFormNation: "国籍", regFormPass: "护照号码", regPassportUpload: "拍摄/上传护照照片", regMinorAlert: "未成年人需填监护人信息",
-      addGuest: "增加人员", guestLabel: "住客", infantLabel: "婴儿人数 (2岁以下)", countAdults: "住客人数 (成人/未成年)",
-      welcomeIntro: "尊贵的客人，欢迎您选择入住。为了确保您能充分享受这里的宁静与便利，并保障所有住客的安全，我们准备了这份详尽的向导。请务必逐页阅读并了解。",
-      emergencyFire: "火警/急救", emergencyPolice: "警察", emergencyAdvice: "请优先拨打上述紧急电话。在确保自身安全后，前往别栋寻找管理人協助。", voltageNotice: "日本电压为 100V。请勿同时开启大功率电器，以免跳闸。",
-      bathSafetyTitle: "浴缸溺水预防", bathSafetyDesc: "即使极浅的水也能导致溺水。严禁婴儿单独在浴室内。用完浴缸请务必立即放干存水。",
-      laundrySafetyTitle: "洗衣机窒息风险", laundrySafetyDesc: "滚筒洗衣机空间封闭。请严防儿童爬入。平时请务必关紧舱门，防止发生窒息事故。",
-      hillWarningTitle: "后山警告", hillWarningDesc: "地势湿滑且有毒虫，进入前必须联系管理人陪同。",
-      garageWarningTitle: "车库上方平台", garageWarningDesc: "围栏较矮。请严防坠落，严禁在边缘嬉戏。",
-      waterNoticeTitle: "特別注意：时间设定", waterNoticeDesc: "面板显示的时间被故意调快了12小时。这是为了让机器在白天气温较高时制热。请勿自行更改。",
-      waterResetTitle: "报错消除方法", waterResetDesc: "在厨房面板上同时按住「時刻合わせ」与「▼」键5秒，听到「滴」声即可复位。",
-      trashBurnableTitle: "可燃垃圾 (特别规定)", trashBurnableDesc: "包括厨余、纸屑、塑料袋，以及宝特瓶(PET)和瓶盖。",
-      trashResourceTitle: "资源垃圾 (瓶/罐)", trashResourceDesc: "本区域不需要特别清洗，分类放入容器。装满后打包放在室内或拿到车库大垃圾桶。",
-      laundryGuideTitle: "Iris Ohyama 快速上手", laundryStep1: "1. 放入衣物关门", laundryStep2: "2. 添加洗涤剂", laundryStep3: "3. 选择洗濯/乾燥", laundryStep4: "4. 按下スタート",
-      rulesManager: "管理人（男性）会因巡视进入公用空间。进入前会大声询问招呼。", rulesNoise: "晚上 22:00 后请保持室内外静音，避免影响邻居。请在中午 12:00 前退房。",
-      selectCountry: "选择国家/地区",
-      steps: [
-        { id: 'welcome', title: "欢迎入住", subtitle: "Welcome" },
-        { id: 'count', title: "入住人数", subtitle: "Guest Count" },
-        { id: 'registration', title: "住客信息登记", subtitle: "Osaka Regulation" },
-        { id: 'emergency', title: "安全与紧急应对", subtitle: "Safety First" },
-        { id: 'child', title: "婴儿与儿童安全", subtitle: "Child Protection" },
-        { id: 'outdoor', title: "户外边界警告", subtitle: "Outdoor Safety" },
-        { id: 'water', title: "空气能热水器 (EcoCute)", subtitle: "Hot Water System" },
-        { id: 'trash', title: "垃圾分类指南", subtitle: "Waste Management" },
-        { id: 'laundry', title: "洗烘一体机使用", subtitle: "Laundry Guide" },
-        { id: 'rules', title: "邻里礼仪与管理", subtitle: "Etiquette" }
-      ]
-    },
-    'zh-hant': {
-      next: "下一步", prev: "上一步", finish: "確認並獲取房號", agree: "我已詳讀並同意遵守上述所有守則",
-      zipLookup: "地址查詢", zipPlaceholder: "7位郵遞區號", zipLoading: "查詢中...", regFormAddr: "日本住址", regFormZip: "郵遞區號",
-      roomNo: "您的房號", wifi: "Wi-Fi 密碼", copy: "複製", breakfast: "早餐時間", breakfastLoc: "2樓西餐廳",
-      service: "緊急協助", serviceDetail: "優先撥打緊急電話，再前往別棟聯繫管理人", welcomeTitle: "入住愉快！", welcomeSub: "請開始您的愉快旅程",
-      footer: "您的安全與舒適是我們的最高宗旨。", guideTitle: "入住導覽", changeLang: "語言", manualLink: "說明書 PDF",
-      regResident: "日本居民", regTourist: "訪日遊客", regFormName: "姓名", regFormAge: "年齡", regFormOcc: "職業",
-      regFormNation: "國籍", regFormPass: "護照號碼", regPassportUpload: "拍攝/上傳護照照片", regMinorAlert: "未成年人需填監護人資訊",
-      addGuest: "增加人員", guestLabel: "住客", infantLabel: "嬰兒人數 (2歲以下)", countAdults: "住客人數 (成人/未成年)",
-      welcomeIntro: "尊貴的客人，歡迎您選擇入住。為了確保您能充分享受這裡的寧靜與便利，並保障所有住客的安全，我們準備了這份詳盡的向導。請務必逐頁閱讀並了解。",
-      emergencyFire: "火警/急救", emergencyPolice: "警察", emergencyAdvice: "請優先撥打上述緊急電話。在確保自身安全後，前往別棟尋找管理人協助。", voltageNotice: "日本電壓為 100V。請勿同時開啟大功率電器，以免跳閘。",
-      bathSafetyTitle: "浴缸溺水預防", bathSafetyDesc: "即使極淺的水也能導致溺水。嚴禁嬰兒單獨在浴室內。用完浴缸請務必立即放乾存水。",
-      laundrySafetyTitle: "洗衣機窒息風險", laundrySafetyDesc: "滾筒洗衣機空間封閉。請嚴防兒童爬入。平時請務必關緊艙門，防止發生窒息事故。",
-      hillWarningTitle: "後山警告", hillWarningDesc: "地勢濕滑且有毒蟲，進入前必須聯繫管理人陪同。",
-      garageWarningTitle: "車庫上方平台", garageWarningDesc: "圍欄較矮。請嚴防墜落，嚴禁在邊緣嬉戲。",
-      waterNoticeTitle: "特別注意：時間設定", waterNoticeDesc: "面板顯示的時間被故意調快了12小時。這是為了讓機器在白天氣溫較高時制熱。請勿自行更改。",
-      waterResetTitle: "報錯消除方法", waterResetDesc: "在廚房面板上同時按住「時刻合わせ」與「▼」鍵5秒，聽到「滴」聲即可復位。",
-      trashBurnableTitle: "可燃垃圾 (特別規定)", trashBurnableDesc: "包括廚餘、紙屑、塑料袋，以及寶特瓶(PET)和瓶蓋。",
-      trashResourceTitle: "資源垃圾 (瓶/罐)", trashResourceDesc: "本區域不需要特別清洗，分類放入容器。裝滿後打包放在室內或拿到車庫大垃圾桶。",
-      laundryGuideTitle: "Iris Ohyama 快速上手", laundryStep1: "1. 放入衣物關門", laundryStep2: "2. 添加洗滌劑", laundryStep3: "3. 選擇洗濯/乾燥", laundryStep4: "4. 按下スタート",
-      rulesManager: "管理人（男性）會因巡視進入公用空間。進入前會大聲詢問招呼。", rulesNoise: "晚上 22:00 後請保持室內外靜音，避免影響鄰居。請在中午 12:00 前退房。",
-      selectCountry: "選擇國家/地區",
-      steps: [
-        { id: 'welcome', title: "歡迎入住", subtitle: "Welcome" },
-        { id: 'count', title: "入住人數", subtitle: "Guest Count" },
-        { id: 'registration', title: "住客資訊登記", subtitle: "Osaka Regulation" },
-        { id: 'emergency', title: "安全與緊急應對", subtitle: "Safety First" },
-        { id: 'child', title: "嬰兒與兒童安全", subtitle: "Child Protection" },
-        { id: 'outdoor', title: "戶外邊界警告", subtitle: "Outdoor Safety" },
-        { id: 'water', title: "空氣能熱水器 (EcoCute)", subtitle: "Hot Water System" },
-        { id: 'trash', title: "垃圾分類指南", subtitle: "Waste Management" },
-        { id: 'laundry', title: "洗烘一體機使用", subtitle: "Laundry Guide" },
-        { id: 'rules', title: "鄰里禮儀與管理", subtitle: "Etiquette" }
-      ]
-    },
-    'en': {
-      next: "Next", prev: "Back", finish: "Finish & Get Info", agree: "I have read and agree to all rules",
-      zipLookup: "Lookup", zipPlaceholder: "7 digits", zipLoading: "Searching...", regFormAddr: "Address (Japan)", regFormZip: "Postal Code",
-      roomNo: "Room No.", wifi: "Wi-Fi Password", copy: "Copy", breakfast: "Breakfast", breakfastLoc: "2F Restaurant",
-      service: "Support", serviceDetail: "Call 119/110 first, then contact manager.", welcomeTitle: "Welcome!", welcomeSub: "Enjoy your stay",
-      footer: "Your safety is our priority.", guideTitle: "Check-in Guide", changeLang: "Language", manualLink: "Manual PDF",
-      regResident: "Resident", regTourist: "Tourist", regFormName: "Name", regFormAge: "Age", regFormOcc: "Occupation",
-      regFormNation: "Nationality", regFormPass: "Passport No.", regPassportUpload: "Upload Passport", regMinorAlert: "Guardian info required for minors",
-      addGuest: "Add Person", guestLabel: "Guest", infantLabel: "Infants (Under 2)", countAdults: "Guests (Adults/Minors)",
-      welcomeIntro: "Dear guest, welcome. To ensure you enjoy the tranquility and convenience while staying safe, we have prepared this guide. Please read carefully.",
-      emergencyFire: "Fire/Ambulance", emergencyPolice: "Police", emergencyAdvice: "Please call the numbers above for emergencies first. Then contact the manager.", voltageNotice: "Voltage is 100V. Do not use multiple high-power devices at once to avoid tripping breakers.",
-      bathSafetyTitle: "Drowning Prevention", bathSafetyDesc: "Even shallow water can cause drowning. Never leave infants alone in the bathroom. Drain the tub after use.",
-      laundrySafetyTitle: "Suffocation Risk", laundrySafetyDesc: "Drum washers are enclosed spaces. Prevent children from climbing inside. Keep the door closed when not in use.",
-      hillWarningTitle: "Mountain Warning", hillWarningDesc: "The terrain is slippery and has toxic insects. Contact manager before entering.",
-      garageWarningTitle: "Garage Platform", garageWarningDesc: "The fence is low. Please prevent falls and avoid playing near the edge.",
-      waterNoticeTitle: "Time Setting", waterNoticeDesc: "The panel time is set 12 hours ahead on purpose for higher efficiency. Please do not change it.",
-      waterResetTitle: "Resetting Errors", waterResetDesc: "Hold '時刻合わせ' and '▼' for 5 seconds on the kitchen panel until you hear a beep.",
-      trashBurnableTitle: "Burnable Waste", trashBurnableDesc: "Includes food waste, paper, plastic bags, PET bottles, and caps.",
-      trashResourceTitle: "Resources (Glass/Cans)", trashResourceDesc: "No need to wash, just sort into containers. Place full bags in the garage bin.",
-      laundryGuideTitle: "Laundry Quick Start", laundryStep1: "1. Load clothes and close door", laundryStep2: "2. Add detergent", laundryStep3: "3. Select Wash/Dry", laundryStep4: "4. Press Start",
-      rulesManager: "The manager (male) may enter common areas for inspection after announcing.", rulesNoise: "Keep noise down after 22:00. Check out before 12:00 PM.",
-      selectCountry: "Select Country/Region",
-      steps: [
-        { id: 'welcome', title: "Welcome", subtitle: "Intro" },
-        { id: 'count', title: "Guest Count", subtitle: "People" },
-        { id: 'registration', title: "Registration", subtitle: "Legal" },
-        { id: 'emergency', title: "Safety", subtitle: "Emergency" },
-        { id: 'child', title: "Child Safety", subtitle: "Protection" },
-        { id: 'outdoor', title: "Outdoor Warnings", subtitle: "Boundaries" },
-        { id: 'water', title: "Hot Water System", subtitle: "EcoCute" },
-        { id: 'trash', title: "Waste Management", subtitle: "Sorting" },
-        { id: 'laundry', title: "Laundry Guide", subtitle: "Usage" },
-        { id: 'rules', title: "Rules & Management", subtitle: "Etiquette" }
-      ]
-    },
-    'jp': {
-      next: "次へ", prev: "戻る", finish: "完了して情報取得", agree: "全ての事項を読み、同意します",
-      zipLookup: "住所検索", zipPlaceholder: "7桁", zipLoading: "検索中...", regFormAddr: "国内住所", regFormZip: "郵便番号",
-      roomNo: "お部屋番号", wifi: "Wi-Fi パスワード", copy: "コピー", breakfast: "朝食時間", breakfastLoc: "2階 レストラン",
-      service: "緊急連絡", serviceDetail: "119/110の後に、管理人に連絡してください。", welcomeTitle: "ようこそ！", welcomeSub: "快適な滞在を",
-      footer: "お客様の安全が第一です。", guideTitle: "宿泊ガイド", changeLang: "言語", manualLink: "説明書 PDF",
-      regResident: "国内居住", regTourist: "訪日観光客", regFormName: "氏名", regFormAge: "年齢", regFormOcc: "職業",
-      regFormNation: "国籍", regFormPass: "パスポート番号", regPassportUpload: "パスポートを撮影/アップロード", regMinorAlert: "未成年者は保護者情報が必要です",
-      addGuest: "人数追加", guestLabel: "宿泊者", infantLabel: "乳幼児 (2歳以下)", countAdults: "宿泊人数 (大人/子供)",
-      welcomeIntro: "お客様、ようこそ。静寂と利便性を享受し、安全を確保するために、このガイドを用意しました。必ずお読みください。",
-      emergencyFire: "火災/救急", emergencyPolice: "警察", emergencyAdvice: "まず上記の番号に電話してください。その上で管理人に連絡してください。", voltageNotice: "電圧は100Vです。ブレーカーが落ちないよう、高出力家電の同時使用はお控えください。",
-      bathSafetyTitle: "浴槽での溺水防止", bathSafetyDesc: "浅い水でも溺れる危険があります。乳幼児を浴室に一人にしないでください。使用後は必ず排水してください。",
-      laundrySafetyTitle: "洗濯機の窒息事故防止", laundrySafetyDesc: "ドラム式洗濯機は密閉空間です。お子様が中に入らないようにしてください。使用しない時はドアを閉めてください。",
-      hillWarningTitle: "裏山への立入禁止", hillWarningDesc: "滑りやすく、毒虫がいるため、立ち入る際は事前に管理人に連絡してください。",
-      garageWarningTitle: "車庫上のベランダ", garageWarningDesc: "柵が低いため、転落に十分注意してください。端で遊ばないでください。",
-      waterNoticeTitle: "重要：時刻設定について", waterNoticeDesc: "パネルの時刻は、制熱効率を高めるためにあえて12時間進めて設定されています。変更しないでください。",
-      waterResetTitle: "エラー解除方法", waterResetDesc: "キッチンパネルの「時刻合わせ」と「▼」ボタンを同時に5秒間長押しし、「ピッ」と鳴ればリセット完了です。",
-      trashBurnableTitle: "燃えるゴミ (特別規定)", trashBurnableDesc: "生ゴミ、紙屑、プラスチック袋、ペットボトルとキャップを含みます。",
-      trashResourceTitle: "資源ゴミ (ビン/カン)", trashResourceDesc: "洗浄不要です。容器に分別してください。袋がいっぱいになったら車庫の大型ゴミ箱へ。",
-      laundryGuideTitle: "洗濯乾燥機 使い方", laundryStep1: "1. 衣類を入れてドアを閉める", laundryStep2: "2. 洗剤を入れる", laundryStep3: "3. 洗濯/乾燥を選択", laundryStep4: "4. スタートを押す",
-      rulesManager: "管理人（男性）が巡回のため共用スペースに入ることがあります（入室前に声掛けします）。", rulesNoise: "22:00以降はお静かにお願いします。チェックアウトは12:00までです。",
-      selectCountry: "国・地域を選択",
-      steps: [
-        { id: 'welcome', title: "ようこそ", subtitle: "Intro" },
-        { id: 'count', title: "人数選択", subtitle: "People" },
-        { id: 'registration', title: "名簿登録", subtitle: "Legal" },
-        { id: 'emergency', title: "安全・緊急", subtitle: "Emergency" },
-        { id: 'child', title: "子供の安全", subtitle: "Protection" },
-        { id: 'outdoor', title: "屋外制限", subtitle: "Boundaries" },
-        { id: 'water', title: "給湯器 (エコキュート)", subtitle: "EcoCute" },
-        { id: 'trash', title: "ゴミ分別", subtitle: "Trash" },
-        { id: 'laundry', title: "洗濯機ガイド", subtitle: "Laundry" },
-        { id: 'rules', title: "マナーと管理", subtitle: "Rules" }
-      ]
-    },
-    'ko': {
-      next: "다음", prev: "이전", finish: "완료 및 정보 확인", agree: "모든 사항을 확인하였으며 동의합니다",
-      zipLookup: "주소검색", zipPlaceholder: "7자리", zipLoading: "검색중...", regFormAddr: "일본 내 주소", regFormZip: "우편번호",
-      roomNo: "객실 번호", wifi: "비밀번호", copy: "복사", breakfast: "조식 시간", breakfastLoc: "2층 레스토랑",
-      service: "긴급 지원", serviceDetail: "119/110에 먼저 전화한 후 관리자에게 문의하세요.", welcomeTitle: "환영합니다!", welcomeSub: "편안한 숙박 되세요",
-      footer: "안전이 최우선입니다.", guideTitle: "이용 가이드", changeLang: "언어", manualLink: "설명서 PDF",
-      regResident: "일본 거주", regTourist: "외국인 관광객", regFormName: "성함", regFormAge: "나이", regFormOcc: "직업",
-      regFormNation: "국적", regFormPass: "여권 번호", regPassportUpload: "여권 사진 촬영/업로드", regMinorAlert: "미성년자는 보호자 정보가 필요합니다",
-      addGuest: "인원 추가", guestLabel: "투숙객", infantLabel: "영유아 (2세 미만)", countAdults: "숙박 인원 (성인/청소년)",
-      welcomeIntro: "고객님, 환영합니다. 평온하고 편리한 숙박과 안전을 위해 이 가이드를 준비했습니다. 내용을 반드시 숙지해 주시기 바랍니다.",
-      emergencyFire: "화재/구급", emergencyPolice: "경찰", emergencyAdvice: "비상시 위 번호로 먼저 전화하세요. 그 후 관리자에게 도움을 요청하세요.", voltageNotice: "전압은 100V입니다. 차단기가 내려가지 않도록 고전력 가전의 동시 사용을 자제해 주세요.",
-      bathSafetyTitle: "익사 사고 예방", bathSafetyDesc: "낮은 수심에서도 익사 위험이 있습니다. 영유아를 욕실에 혼자 두지 마세요. 사용 후에는 반드시 배수해 주세요.",
-      laundrySafetyTitle: "세탁기 질식 위험", laundrySafetyDesc: "드럼 세탁기는 밀폐된 공간입니다. 어린이가 들어가지 않도록 주의하세요. 사용하지 않을 때는 문을 닫아두세요.",
-      hillWarningTitle: "뒷산 출입 주의", hillWarningDesc: "미끄럽고 독충이 있을 수 있으므로 출입 전 반드시 관리자에게 문의하세요.",
-      garageWarningTitle: "차고 위 테라스", garageWarningDesc: "난간이 낮으므로 추락 사고에 주의하세요. 가장자리에서 장난치지 마세요.",
-      waterNoticeTitle: "중요: 시간 설정", waterNoticeDesc: "온수기 패널의 시간은 열 효율을 위해 일부러 12시간 빠르게 설정되어 있습니다. 설정을 변경하지 마세요.",
-      waterResetTitle: "에러 해제 방법", waterResetDesc: "주방 패널의 「時刻合わせ」와 「▼」 버튼을 동시에 5초간 누르면 '띠' 소리와 함께 리셋됩니다.",
-      trashBurnableTitle: "타는 쓰레기 (가연성)", trashBurnableDesc: "음식물 쓰레기, 종이, 비닐, 페트병 및 캡을 포함합니다.",
-      trashResourceTitle: "재활용 쓰레기 (병/캔)", trashResourceDesc: "세척할 필요는 없습니다. 분리수거함에 넣어주세요. 가득 차면 차고의 대형 쓰레기통으로 옮겨주세요.",
-      laundryGuideTitle: "세탁기 퀵 가이드", laundryStep1: "1. 세탁물을 넣고 문을 닫는다", laundryStep2: "2. 세제를 넣는다", laundryStep3: "3. 세탁/건조 선택", laundryStep4: "4. 시작 버튼을 누른다",
-      rulesManager: "관리자(남성)가 시설 점검을 위해 공용 공간에 들어올 수 있습니다(입장 전 안내함).", rulesNoise: "22:00 이후에는 소음에 주의해 주세요. 체크아웃은 12:00까지입니다.",
-      selectCountry: "국가/지역 선택",
-      steps: [
-        { id: 'welcome', title: "환영합니다", subtitle: "Welcome" },
-        { id: 'count', title: "인원 선택", subtitle: "People" },
-        { id: 'registration', title: "정보 등록", subtitle: "Legal" },
-        { id: 'emergency', title: "안전 및 긴급", subtitle: "Emergency" },
-        { id: 'child', title: "어린이 안전", subtitle: "Protection" },
-        { id: 'outdoor', title: "실외 주의사항", subtitle: "Boundaries" },
-        { id: 'water', title: "온수 시스템 (에코큐트)", subtitle: "EcoCute" },
-        { id: 'trash', title: "쓰레기 분리배출", subtitle: "Trash" },
-        { id: 'laundry', title: "세탁기 사용법", subtitle: "Laundry" },
-        { id: 'rules', title: "에티켓 및 관리", subtitle: "Rules" }
-      ]
+  useEffect(() => {
+    let isActive = true;
+    if (!lang) return () => {};
+    const storedSteps = loadSteps(lang);
+    if (storedSteps) {
+      setStepsConfig(storedSteps);
+      return () => {
+        isActive = false;
+      };
     }
-  };
+    DB.getSteps(lang)
+      .then((steps) => {
+        if (!isActive) return;
+        const normalized = normalizeSteps(steps, buildDefaultSteps(lang));
+        setStepsConfig(normalized);
+        saveSteps(lang, normalized);
+      })
+      .catch(() => {
+        if (!isActive) return;
+        setStepsConfig(buildDefaultSteps(lang));
+      });
+    return () => {
+      isActive = false;
+    };
+  }, [lang]);
+
+  useEffect(() => {
+    const active = stepsConfig.filter(step => step.enabled !== false);
+    if (active.length && currentStep >= active.length) {
+      setCurrentStep(0);
+    }
+  }, [stepsConfig, currentStep]);
 
   const addGuest = () => setGuests([...guests, createGuestTemplate('adult')]);
   const removeGuest = (id) => setGuests(guests.filter(g => g.id !== id));
@@ -653,9 +851,13 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
   };
 
   const handleNext = async () => {
-    const t = translations[lang] || translations['en'];
-    if (currentStep < t.steps.length - 1) { setCurrentStep(currentStep + 1); } 
-    else if (hasAgreed) {
+    const activeSteps = steps.length;
+    if (currentStep < activeSteps - 1) { setCurrentStep(currentStep + 1); } 
+    else {
+      const requiresAgreement = steps.some((step) => step.id === 'rules');
+      if (requiresAgreement && !hasAgreed) {
+        return;
+      }
       const finalData = [
         ...guests,
         ...Array.from({length: infantCount}).map((_, i) => ({ type: 'infant', id: `infant-${i}`, name: `Infant ${i+1}`, age: '0-2', isResident: true }))
@@ -674,9 +876,9 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
           </div>
           <h1 className="text-2xl font-bold text-slate-900">Choose Language / 選擇語言</h1>
           <div className="grid grid-cols-1 gap-3">
-            {Object.entries(langConfig).map(([key, value]) => (
-              <button key={key} onClick={() => setLang(key)} className="group flex items-center justify-between p-4 bg-white hover:bg-slate-900 rounded-2xl border border-slate-100 shadow-sm transition-all duration-300">
-                <p className="font-bold text-slate-900 group-hover:text-white">{value.label}</p>
+            {LANG_OPTIONS.map((option) => (
+              <button key={option.value} onClick={() => setLang(option.value)} className="group flex items-center justify-between p-4 bg-white hover:bg-slate-900 rounded-2xl border border-slate-100 shadow-sm transition-all duration-300">
+                <p className="font-bold text-slate-900 group-hover:text-white">{option.label}</p>
                 <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-white" />
               </button>
             ))}
@@ -687,8 +889,13 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
     );
   }
 
-  const t = translations[lang] || translations['en'];
-  const stepConfig = t.steps[currentStep];
+  const t = translations[lang || DEFAULT_LANG];
+  const activeSteps = stepsConfig.length
+    ? stepsConfig.filter(step => step.enabled !== false)
+    : buildDefaultSteps(lang || DEFAULT_LANG);
+  const steps = activeSteps.length ? activeSteps : buildDefaultSteps(lang || DEFAULT_LANG);
+  const stepConfig = steps[currentStep];
+  const hasContent = Boolean(stepConfig?.content?.trim());
 
   if (isCompleted) {
     return (
@@ -708,7 +915,7 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
     );
   }
 
-  const progress = ((currentStep + 1) / t.steps.length) * 100;
+  const progress = ((currentStep + 1) / steps.length) * 100;
 
   const getStepIcon = (id) => {
     switch(id) {
@@ -734,7 +941,7 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
         <div className="mb-8">
           <div className="flex justify-between items-end mb-2">
             <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">{t.guideTitle}</span>
-            <span className="text-xs font-bold text-slate-900">{currentStep + 1} / {t.steps.length}</span>
+            <span className="text-xs font-bold text-slate-900">{currentStep + 1} / {steps.length}</span>
           </div>
           <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
             <div className="h-full bg-slate-900 transition-all duration-500" style={{ width: `${progress}%` }} />
@@ -748,7 +955,11 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
             <p className="text-sm font-medium text-slate-400 mb-8 uppercase tracking-wide">{stepConfig.subtitle}</p>
             
             <div className="w-full text-left">
-              {stepConfig.id === 'welcome' && <p className="text-gray-600 leading-relaxed text-sm bg-gray-50 p-6 rounded-2xl border italic">{t.welcomeIntro}</p>}
+              {(hasContent || stepConfig?.type === 'custom') && (
+                <div className="step-content-surface">
+                  <StepContent content={stepConfig.content} fallback={t.customStepEmpty} />
+                </div>
+              )}
 
               {stepConfig.id === 'count' && (
                 <div className="space-y-4 py-4">
@@ -845,7 +1056,7 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
                               <input type="text" value={guest.passportNumber} onChange={(e) => updateGuest(guest.id, 'passportNumber', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm" />
                             </div>
                             <div className="col-span-2 relative">
-                                <input type="file" accept="image/*" className="absolute inset-0 w-full h-full opacity-0 z-10 cursor-pointer" onChange={(e) => fileToBase64(e.target.files[0]).then(base64 => updateGuest(guest.id, 'passportPhoto', base64))} />
+                                <input type="file" accept="image/*" className="absolute inset-0 w-full h-full opacity-0 z-10 cursor-pointer" onChange={(e) => fileToBase64(e.target.files?.[0]).then(base64 => updateGuest(guest.id, 'passportPhoto', base64))} />
                                 <div className={`p-4 border-2 border-dashed rounded-xl flex items-center justify-center gap-2 ${guest.passportPhoto ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-slate-100 text-slate-300'}`}>
                                   <Camera className="w-4 h-4" /> <span className="text-[10px] font-bold uppercase">{guest.passportPhoto ? 'Uploaded' : t.regPassportUpload}</span>
                                 </div>
@@ -867,80 +1078,8 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
                   <button onClick={addGuest} className="w-full py-4 border-2 border-dashed border-slate-200 rounded-2xl flex items-center justify-center gap-2 text-slate-400 hover:text-slate-900 transition-all focus:ring-1 focus:ring-slate-900 outline-none"><UserPlus className="w-5 h-5" /> <span className="text-xs font-bold uppercase">{t.addGuest}</span></button>
                 </div>
               )}
-
-              {stepConfig.id === 'emergency' && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-rose-600 text-white p-5 rounded-3xl shadow-lg flex flex-col items-center"><p className="text-[10px] font-black uppercase mb-1">{t.emergencyFire}</p><p className="text-4xl font-black">119</p></div>
-                    <div className="bg-slate-800 text-white p-5 rounded-3xl shadow-lg flex flex-col items-center"><p className="text-[10px] font-black uppercase mb-1">{t.emergencyPolice}</p><p className="text-4xl font-black">110</p></div>
-                  </div>
-                  <div className="p-4 bg-gray-50 rounded-2xl border text-xs text-gray-600 space-y-2">
-                    <div className="flex gap-2"><ShieldCheck className="w-4 h-4 text-slate-400 shrink-0" /><p>{t.emergencyAdvice}</p></div>
-                    <div className="flex gap-2"><Zap className="w-4 h-4 text-slate-400 shrink-0" /><p>{t.voltageNotice}</p></div>
-                  </div>
-                </div>
-              )}
-
-              {stepConfig.id === 'child' && (
-                <div className="space-y-4">
-                  <div className="p-4 bg-blue-50/50 rounded-2xl border border-blue-100 flex items-start gap-4 transition-all hover:bg-blue-50">
-                    <Waves className="w-6 h-6 text-blue-400 mt-1 shrink-0" />
-                    <div><p className="font-bold text-sm text-blue-900 mb-1">{t.bathSafetyTitle}</p><p className="text-xs text-blue-700 leading-relaxed">{t.bathSafetyDesc}</p></div>
-                  </div>
-                  <div className="p-4 bg-orange-50/50 rounded-2xl border border-orange-100 flex items-start gap-4 transition-all hover:bg-orange-50">
-                    <VolumeX className="w-6 h-6 text-orange-400 mt-1 shrink-0" />
-                    <div><p className="font-bold text-sm text-orange-900 mb-1">{t.laundrySafetyTitle}</p><p className="text-xs text-orange-700 leading-relaxed">{t.laundrySafetyDesc}</p></div>
-                  </div>
-                </div>
-              )}
-
-              {stepConfig.id === 'outdoor' && (
-                <div className="space-y-4">
-                  <div className="flex items-center gap-4 p-4 bg-gray-50 rounded-xl transition-all hover:bg-slate-100"><MapPin className="w-5 h-5 text-slate-400 shrink-0" /><div><p className="font-bold text-sm">{t.hillWarningTitle}</p><p className="text-xs text-gray-500">{t.hillWarningDesc}</p></div></div>
-                  <div className="flex items-center gap-4 p-4 bg-gray-50 rounded-xl transition-all hover:bg-slate-100"><AlertTriangle className="w-5 h-5 text-slate-400 shrink-0" /><div><p className="font-bold text-sm">{t.garageWarningTitle}</p><p className="text-xs text-gray-500">{t.garageWarningDesc}</p></div></div>
-                </div>
-              )}
-
-              {stepConfig.id === 'water' && (
-                <div className="space-y-4">
-                  <div className="p-4 bg-amber-50/50 border border-amber-200 rounded-2xl space-y-2">
-                    <div className="flex items-center gap-2 text-amber-900 font-bold text-sm"><Clock className="w-4 h-4" /> {t.waterNoticeTitle}</div>
-                    <p className="text-xs text-amber-800 leading-relaxed italic">{t.waterNoticeDesc}</p>
-                  </div>
-                  <div className="flex items-start gap-4 p-4 bg-gray-50 rounded-xl"><Wrench className="w-5 h-5 text-slate-400 shrink-0" /><div><p className="font-bold text-sm">{t.waterResetTitle}</p><p className="text-xs text-gray-500">{t.waterResetDesc}</p></div></div>
-                </div>
-              )}
-
-              {stepConfig.id === 'trash' && (
-                <div className="space-y-4">
-                   <div className="flex items-center gap-4 p-4 bg-emerald-50 rounded-xl border border-emerald-100">
-                    <Trash2 className="w-6 h-6 text-emerald-600 shrink-0" />
-                    <div><p className="font-bold text-sm text-emerald-900">{t.trashBurnableTitle}</p><p className="text-xs text-emerald-700">{t.trashBurnableDesc}</p></div>
-                  </div>
-                  <div className="flex items-center gap-4 p-4 bg-gray-50 rounded-xl"><Container className="w-6 h-6 text-slate-400 shrink-0" /><div><p className="font-bold text-sm">{t.trashResourceTitle}</p><p className="text-xs text-gray-500">{t.trashResourceDesc}</p></div></div>
-                </div>
-              )}
-
-              {stepConfig.id === 'laundry' && (
-                <div className="space-y-4">
-                  <div className="bg-gray-50 p-4 rounded-2xl space-y-3">
-                    <p className="font-bold text-xs uppercase text-slate-400 tracking-widest">{t.laundryGuideTitle}</p>
-                    <div className="grid grid-cols-1 gap-2">
-                      <div className="bg-white p-3 rounded-xl border text-xs font-bold">{t.laundryStep1}</div>
-                      <div className="bg-white p-3 rounded-xl border text-xs font-bold">{t.laundryStep2}</div>
-                      <div className="bg-white p-3 rounded-xl border text-xs font-bold">{t.laundryStep3}</div>
-                      <div className="bg-white p-3 rounded-xl border text-xs font-bold">{t.laundryStep4}</div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
               {stepConfig.id === 'rules' && (
                 <div className="space-y-6">
-                  <div className="p-4 bg-gray-50 rounded-2xl space-y-3 text-xs text-gray-600">
-                    <div className="flex gap-3"><UserCheck className="w-5 h-5 text-slate-400 shrink-0" /><p>{t.rulesManager}</p></div>
-                    <div className="flex gap-3"><VolumeX className="w-5 h-5 text-slate-400 shrink-0" /><p>{t.rulesNoise}</p></div>
-                  </div>
                   <label className="flex items-center gap-4 p-6 bg-emerald-50 rounded-2xl border border-emerald-100 cursor-pointer shadow-sm group transition-all hover:bg-emerald-100">
                     <input type="checkbox" className="w-6 h-6 rounded text-emerald-600 transition-transform group-hover:scale-110" checked={hasAgreed} onChange={(e) => setHasAgreed(e.target.checked)} />
                     <span className="text-emerald-900 font-bold text-sm">{t.agree}</span>
@@ -957,7 +1096,7 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
               disabled={(stepConfig.id === 'registration' && !isRegValid()) || (stepConfig.id === 'rules' && !hasAgreed) || isSubmitting} 
               className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-2xl font-bold transition-all ${((stepConfig.id === 'registration' && !isRegValid()) || (stepConfig.id === 'rules' && !hasAgreed)) ? 'bg-slate-100 text-slate-300 cursor-not-allowed' : 'bg-slate-900 text-white shadow-lg hover:bg-slate-800'}`}
             >
-              {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : (currentStep === t.steps.length - 1 ? t.finish : t.next)}
+              {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : (currentStep === steps.length - 1 ? t.finish : t.next)}
               {!isSubmitting && <ChevronRight className="w-5 h-5" />}
             </button>
           </div>
@@ -967,6 +1106,13 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+        .step-content-surface { padding: 1.25rem; border-radius: 1rem; background: #f8fafc; border: 1px solid #f1f5f9; }
+        .step-content h1, .step-content h2, .step-content h3 { font-weight: 700; color: #0f172a; }
+        .step-content p { line-height: 1.6; }
+        .step-content ul { list-style: disc; padding-left: 1.25rem; }
+        .step-content ol { list-style: decimal; padding-left: 1.25rem; }
+        .step-content img { max-width: 100%; border-radius: 0.75rem; box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08); }
+        .step-content a { color: #2563eb; text-decoration: underline; }
         @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
         .animate-shake { animation: shake 0.3s ease-in-out; }
       `}</style>

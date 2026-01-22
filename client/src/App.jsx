@@ -77,13 +77,18 @@ const COUNTRY_DATA = [
 // ----------------------------------------------------------------------
 // 後端 API 服務
 // ----------------------------------------------------------------------
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+const API_URL = 'http://localhost:3001/api';
 
 const DB = {
   async getAllRecords() {
-    const res = await fetch(`${API_URL}/records`);
-    if (!res.ok) throw new Error('Failed to fetch records');
-    return await res.json();
+    try {
+      const res = await fetch(`${API_URL}/records`);
+      if (!res.ok) throw new Error('Failed to fetch records');
+      return await res.json();
+    } catch (error) {
+      console.error("API Error:", error);
+      return [];
+    }
   },
 
   async insertRecord(record) {
@@ -93,11 +98,7 @@ const DB = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(record)
       });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        return { success: false, error: payload.error || 'Server Error' };
-      }
-      return payload;
+      return await res.json();
     } catch (error) {
       console.error("Submission Error:", error);
       return { success: false, error: "Connection Failed" };
@@ -124,24 +125,19 @@ const DB = {
         ]);
       });
     });
-    const csvContent = rows.map(e => e.join(",")).join("\n");
-    const encodedUri = URL.createObjectURL(new Blob([csvContent], { type: 'text/csv;charset=utf-8;' }));
+    const csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.join(",")).join("\n");
+    const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
     link.setAttribute("download", `hotel_guests_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    URL.revokeObjectURL(encodedUri);
   }
 };
 
 const fileToBase64 = (file) => {
   return new Promise((resolve, reject) => {
-    if (!file) {
-      resolve('');
-      return;
-    }
     const reader = new FileReader();
     reader.readAsDataURL(file);
     reader.onload = () => resolve(reader.result);
@@ -237,10 +233,7 @@ const AdminDashboard = ({ onLogout }) => {
         setRecords(data);
         setServerStatus('online');
       })
-      .catch(() => {
-        setRecords([]);
-        setServerStatus('offline');
-      });
+      .catch(() => setServerStatus('offline'));
   }, []);
 
   const totalGuests = records.reduce((acc, r) => acc + (r.guests?.length || 0), 0);
@@ -852,7 +845,7 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
                               <input type="text" value={guest.passportNumber} onChange={(e) => updateGuest(guest.id, 'passportNumber', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm" />
                             </div>
                             <div className="col-span-2 relative">
-                                <input type="file" accept="image/*" className="absolute inset-0 w-full h-full opacity-0 z-10 cursor-pointer" onChange={(e) => fileToBase64(e.target.files?.[0]).then(base64 => updateGuest(guest.id, 'passportPhoto', base64))} />
+                                <input type="file" accept="image/*" className="absolute inset-0 w-full h-full opacity-0 z-10 cursor-pointer" onChange={(e) => fileToBase64(e.target.files[0]).then(base64 => updateGuest(guest.id, 'passportPhoto', base64))} />
                                 <div className={`p-4 border-2 border-dashed rounded-xl flex items-center justify-center gap-2 ${guest.passportPhoto ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-slate-100 text-slate-300'}`}>
                                   <Camera className="w-4 h-4" /> <span className="text-[10px] font-bold uppercase">{guest.passportPhoto ? 'Uploaded' : t.regPassportUpload}</span>
                                 </div>

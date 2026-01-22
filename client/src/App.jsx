@@ -35,6 +35,13 @@ import {
   Database,
   Download,
   Image as ImageIcon,
+  Bold,
+  Italic,
+  Underline,
+  Link2,
+  List,
+  ListOrdered,
+  ImagePlus,
   Loader2,
   Server,
   Search
@@ -330,6 +337,85 @@ const StepContent = ({ content, fallback }) => {
       className="step-content space-y-4 text-sm text-slate-600"
       dangerouslySetInnerHTML={{ __html: html }}
     />
+  );
+};
+
+const RichTextEditor = ({ value, onChange, placeholder }) => {
+  const editorRef = useRef(null);
+
+  useEffect(() => {
+    if (!editorRef.current) return;
+    if (editorRef.current.innerHTML !== (value || '')) {
+      editorRef.current.innerHTML = value || '';
+    }
+  }, [value]);
+
+  const updateValue = () => {
+    if (!editorRef.current) return;
+    onChange(editorRef.current.innerHTML);
+  };
+
+  const runCommand = (command, commandValue) => {
+    if (!editorRef.current) return;
+    editorRef.current.focus();
+    document.execCommand(command, false, commandValue);
+    updateValue();
+  };
+
+  const handleAddLink = () => {
+    const url = window.prompt('请输入链接地址');
+    if (!url) return;
+    runCommand('createLink', url);
+  };
+
+  const handleImageUpload = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    fileToBase64(file).then((base64) => {
+      if (!base64) return;
+      runCommand('insertHTML', `<img src="${base64}" alt="Uploaded" />`);
+    });
+    event.target.value = '';
+  };
+
+  const toolbarButtonClass =
+    'inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50';
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => runCommand('bold')} className={toolbarButtonClass}>
+          <Bold className="w-4 h-4" /> 粗体
+        </button>
+        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => runCommand('italic')} className={toolbarButtonClass}>
+          <Italic className="w-4 h-4" /> 斜体
+        </button>
+        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => runCommand('underline')} className={toolbarButtonClass}>
+          <Underline className="w-4 h-4" /> 下划线
+        </button>
+        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={handleAddLink} className={toolbarButtonClass}>
+          <Link2 className="w-4 h-4" /> 超链接
+        </button>
+        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => runCommand('insertUnorderedList')} className={toolbarButtonClass}>
+          <List className="w-4 h-4" /> 无序列表
+        </button>
+        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => runCommand('insertOrderedList')} className={toolbarButtonClass}>
+          <ListOrdered className="w-4 h-4" /> 有序列表
+        </button>
+        <label className={`${toolbarButtonClass} cursor-pointer`}>
+          <ImagePlus className="w-4 h-4" /> 上传图片
+          <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+        </label>
+      </div>
+      <div
+        ref={editorRef}
+        className="rich-text-editor min-h-[140px] w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+        contentEditable
+        suppressContentEditableWarning
+        data-placeholder={placeholder}
+        onInput={updateValue}
+      />
+    </div>
   );
 };
 
@@ -693,16 +779,16 @@ const AdminDashboard = ({ onLogout }) => {
                   </div>
                   <div>
                     <div className="flex items-center justify-between">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase">内容 (支持 HTML，可插入圖片)</label>
-                      <span className="text-[10px] text-slate-400">例如: &lt;img src=&quot;https://...&quot; /&gt;</span>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">内容编辑</label>
+                      <span className="text-[10px] text-slate-400">支持图片与常见文本样式</span>
                     </div>
-                    <textarea
-                      value={step.content}
-                      onChange={(e) => updateStepField(step.id, 'content', e.target.value)}
-                      rows={5}
-                      className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm"
-                      placeholder="输入该步骤要展示的内容..."
-                    />
+                    <div className="mt-3">
+                      <RichTextEditor
+                        value={step.content}
+                        onChange={(value) => updateStepField(step.id, 'content', value)}
+                        placeholder="输入该步骤要展示的内容..."
+                      />
+                    </div>
                   </div>
                   <div className="step-content-surface">
                     <p className="text-[10px] font-bold text-slate-400 uppercase mb-3">预览</p>
@@ -1113,6 +1199,11 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
         .step-content ol { list-style: decimal; padding-left: 1.25rem; }
         .step-content img { max-width: 100%; border-radius: 0.75rem; box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08); }
         .step-content a { color: #2563eb; text-decoration: underline; }
+        .rich-text-editor:empty::before {
+          content: attr(data-placeholder);
+          color: #94a3b8;
+          pointer-events: none;
+        }
         @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
         .animate-shake { animation: shake 0.3s ease-in-out; }
       `}</style>

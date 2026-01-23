@@ -76,7 +76,7 @@ const COUNTRY_DATA = [
 // ----------------------------------------------------------------------
 // 後端 API 服務
 // ----------------------------------------------------------------------
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+const API_URL = import.meta.env.DEV ? 'http://localhost:3001/api' : '/api';
 const STEP_STORAGE_KEY = 'checkin.steps';
 const DEFAULT_LANG = 'zh-hans';
 

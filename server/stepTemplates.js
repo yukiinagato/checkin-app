@@ -2,6 +2,7 @@ const STEP_TEMPLATES = {
   'zh-hans': [
     { id: 'welcome', title: '欢迎入住', subtitle: 'Welcome', content: `<p>尊贵的客人，欢迎您选择入住。为了确保您能充分享受这里的宁静与便利，并保障所有住客的安全，我们准备了这份详尽的向导。请务必逐页阅读并了解。</p>` },
     { id: 'count', title: '入住人数', subtitle: 'Guest Count', content: '' },
+    { id: 'customerUpload', title: '客户资料上传', subtitle: 'Customer Upload', content: '' },
     { id: 'registration', title: '住客信息登记', subtitle: 'Osaka Regulation', content: '' },
     { id: 'emergency', title: '安全与紧急应对', subtitle: 'Safety First', content: `
       <h3>紧急电话</h3>
@@ -53,6 +54,7 @@ const STEP_TEMPLATES = {
   'zh-hant': [
     { id: 'welcome', title: '歡迎入住', subtitle: 'Welcome', content: `<p>尊貴的客人，歡迎您選擇入住。為了確保您能充分享受這裡的寧靜與便利，並保障所有住客的安全，我們準備了這份詳盡的向導。請務必逐頁閱讀並了解。</p>` },
     { id: 'count', title: '入住人數', subtitle: 'Guest Count', content: '' },
+    { id: 'customerUpload', title: '客戶資料上傳', subtitle: 'Customer Upload', content: '' },
     { id: 'registration', title: '住客資訊登記', subtitle: 'Osaka Regulation', content: '' },
     { id: 'emergency', title: '安全與緊急應對', subtitle: 'Safety First', content: `
       <h3>緊急電話</h3>
@@ -104,6 +106,7 @@ const STEP_TEMPLATES = {
   en: [
     { id: 'welcome', title: 'Welcome', subtitle: 'Welcome', content: `<p>Dear guest, welcome. Please read this guide for safety and convenience.</p>` },
     { id: 'count', title: 'Guest Count', subtitle: 'Guest Count', content: '' },
+    { id: 'customerUpload', title: 'Customer Upload', subtitle: 'Customer Upload', content: '' },
     { id: 'registration', title: 'Registration', subtitle: 'Osaka Regulation', content: '' },
     { id: 'emergency', title: 'Emergency', subtitle: 'Safety First', content: `
       <h3>Emergency Numbers</h3>
@@ -155,6 +158,7 @@ const STEP_TEMPLATES = {
   jp: [
     { id: 'welcome', title: 'ようこそ', subtitle: 'Welcome', content: `<p>ようこそ。安全のためガイドをお読みください。</p>` },
     { id: 'count', title: '人数', subtitle: 'Guest Count', content: '' },
+    { id: 'customerUpload', title: 'お客様資料アップロード', subtitle: 'Customer Upload', content: '' },
     { id: 'registration', title: '登録', subtitle: 'Osaka Regulation', content: '' },
     { id: 'emergency', title: '緊急', subtitle: 'Safety First', content: `
       <h3>緊急連絡先</h3>
@@ -206,6 +210,7 @@ const STEP_TEMPLATES = {
   ko: [
     { id: 'welcome', title: '환영', subtitle: 'Welcome', content: `<p>환영합니다. 안전을 위해 안내를 읽어주세요.</p>` },
     { id: 'count', title: '인원 수', subtitle: 'Guest Count', content: '' },
+    { id: 'customerUpload', title: '고객 자료 업로드', subtitle: 'Customer Upload', content: '' },
     { id: 'registration', title: '등록', subtitle: 'Osaka Regulation', content: '' },
     { id: 'emergency', title: '긴급', subtitle: 'Safety First', content: `
       <h3>긴급 번호</h3>

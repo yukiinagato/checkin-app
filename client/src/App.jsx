@@ -173,8 +173,9 @@ const translations = {
     roomNo: "您的房号", wifi: "Wi-Fi 密码", copy: "复制", breakfast: "早餐时间", breakfastLoc: "2楼西餐厅",
     service: "紧急协助", serviceDetail: "优先拨打紧急电话，再前往别栋联系管理人", welcomeTitle: "欢迎入住！", welcomeSub: "请开始您的愉快旅程",
     footer: "您的安全与舒适是我们的最高宗旨。", guideTitle: "入住导览", changeLang: "语言", manualLink: "说明书 PDF",
-    regResident: "日本居民", regTourist: "访日游客", regFormName: "姓名", regFormAge: "年龄", regFormOcc: "职业",
+    regResident: "有日本住址", regTourist: "无日本住址", regFormName: "姓名", regFormAge: "年龄", regFormOcc: "职业",
     regFormNation: "国籍", regFormPass: "护照号码", regPassportUpload: "拍摄/上传护照照片", regMinorAlert: "未成年人需填监护人信息",
+    regAddressRule: "依据大阪府特区民宿规定，有日本住址者无需登记护照信息；无住址需填写护照号码并上传照片。",
     addGuest: "增加人员", guestLabel: "住客", infantLabel: "婴儿人数 (2岁以下)", countAdults: "住客人数 (成人/未成年)",
     selectCountry: "选择国家/地区",
     customerUploadName: "客户姓名",
@@ -206,8 +207,9 @@ const translations = {
     roomNo: "您的房號", wifi: "Wi-Fi 密碼", copy: "複製", breakfast: "早餐時間", breakfastLoc: "2樓西餐廳",
     service: "緊急協助", serviceDetail: "優先撥打緊急電話，再前往別棟聯繫管理人", welcomeTitle: "入住愉快！", welcomeSub: "請開始您的愉快旅程",
     footer: "您的安全與舒適是我們的最高宗旨。", guideTitle: "入住導覽", changeLang: "語言", manualLink: "說明書 PDF",
-    regResident: "日本居民", regTourist: "訪日遊客", regFormName: "姓名", regFormAge: "年齡", regFormOcc: "職業",
+    regResident: "有日本住址", regTourist: "無日本住址", regFormName: "姓名", regFormAge: "年齡", regFormOcc: "職業",
     regFormNation: "國籍", regFormPass: "護照號碼", regPassportUpload: "拍攝/上傳護照照片", regMinorAlert: "未成年人需填監護人資訊",
+    regAddressRule: "依大阪府特區民宿規定，有日本住址者免填護照資訊；無住址需填寫護照號碼並上傳照片。",
     addGuest: "增加人員", guestLabel: "住客", infantLabel: "嬰兒人數 (2歲以下)", countAdults: "住客人數 (成人/未成年)",
     selectCountry: "選擇國家/地區",
     customerUploadName: "客戶姓名",
@@ -239,8 +241,9 @@ const translations = {
     roomNo: "Your Room No.", wifi: "Wi-Fi Password", copy: "Copy", breakfast: "Breakfast Time", breakfastLoc: "2F Restaurant",
     service: "Emergency Support", serviceDetail: "Call emergency first, then contact the manager in another building.", welcomeTitle: "Welcome!", welcomeSub: "Start your journey",
     footer: "Your safety and comfort are our top priority.", guideTitle: "Check-in Guide", changeLang: "Language", manualLink: "Manual PDF",
-    regResident: "Japan Resident", regTourist: "Visitor", regFormName: "Name", regFormAge: "Age", regFormOcc: "Occupation",
+    regResident: "Has Japan address", regTourist: "No Japan address", regFormName: "Name", regFormAge: "Age", regFormOcc: "Occupation",
     regFormNation: "Nationality", regFormPass: "Passport No.", regPassportUpload: "Upload passport photo", regMinorAlert: "Minors need guardian info",
+    regAddressRule: "Per Osaka special zone lodging rules, guests with a Japan address do not need passport details; others must provide passport number and photo.",
     addGuest: "Add Guest", guestLabel: "Guest", infantLabel: "Infants (under 2)", countAdults: "Guest Count (adult/minor)",
     selectCountry: "Select country/region",
     customerUploadName: "Customer name",
@@ -272,8 +275,9 @@ const translations = {
     roomNo: "あなたの部屋番号", wifi: "Wi-Fi パスワード", copy: "コピー", breakfast: "朝食時間", breakfastLoc: "2階レストラン",
     service: "緊急連絡", serviceDetail: "先に緊急電話、次に管理人へ連絡。", welcomeTitle: "ようこそ！", welcomeSub: "旅を始めましょう",
     footer: "安全と快適さが最優先です。", guideTitle: "チェックイン案内", changeLang: "言語", manualLink: "マニュアル PDF",
-    regResident: "日本在住", regTourist: "訪日観光客", regFormName: "氏名", regFormAge: "年齢", regFormOcc: "職業",
+    regResident: "日本の住所あり", regTourist: "日本の住所なし", regFormName: "氏名", regFormAge: "年齢", regFormOcc: "職業",
     regFormNation: "国籍", regFormPass: "パスポート番号", regPassportUpload: "パスポート写真をアップロード", regMinorAlert: "未成年は保護者情報が必要",
+    regAddressRule: "大阪府特区民宿の規定により、日本の住所がある場合はパスポート情報不要です。住所がない場合は番号と写真が必要です。",
     addGuest: "追加", guestLabel: "ゲスト", infantLabel: "乳児 (2歳未満)", countAdults: "人数 (成人/未成年)",
     selectCountry: "国/地域を選択",
     customerUploadName: "氏名",
@@ -305,8 +309,9 @@ const translations = {
     roomNo: "객실 번호", wifi: "와이파이 비밀번호", copy: "복사", breakfast: "조식 시간", breakfastLoc: "2층 레스토랑",
     service: "긴급 지원", serviceDetail: "긴급 전화 후 관리자에게 연락.", welcomeTitle: "환영합니다!", welcomeSub: "여행을 시작하세요",
     footer: "안전과 편안함이 최우선입니다.", guideTitle: "체크인 안내", changeLang: "언어", manualLink: "매뉴얼 PDF",
-    regResident: "일본 거주자", regTourist: "방문객", regFormName: "이름", regFormAge: "나이", regFormOcc: "직업",
+    regResident: "일본 주소 있음", regTourist: "일본 주소 없음", regFormName: "이름", regFormAge: "나이", regFormOcc: "직업",
     regFormNation: "국적", regFormPass: "여권 번호", regPassportUpload: "여권 사진 업로드", regMinorAlert: "미성년자는 보호자 정보 필요",
+    regAddressRule: "오사카 특구 민박 규정에 따라 일본 주소가 있으면 여권 정보가 필요 없습니다. 주소가 없으면 여권 번호와 사진이 필요합니다.",
     addGuest: "인원 추가", guestLabel: "게스트", infantLabel: "영아 (2세 이하)", countAdults: "인원 수 (성인/미성년)",
     selectCountry: "국가/지역 선택",
     customerUploadName: "고객 이름",
@@ -1013,8 +1018,16 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
     }
   }, [stepsConfig, currentStep]);
 
-  const addGuest = () => setGuests([...guests, createGuestTemplate('adult')]);
-  const removeGuest = (id) => setGuests(guests.filter(g => g.id !== id));
+  const addGuest = () => setGuests((prev) => [...prev, createGuestTemplate('adult')]);
+  const removeGuest = (id) => {
+    setGuests((prev) => {
+      const next = prev.filter((guest) => guest.id !== id);
+      if (next.length === 0) {
+        return [createGuestTemplate('adult')];
+      }
+      return next;
+    });
+  };
   const updateGuest = (id, field, value) => setGuests(guests.map(g => g.id === id ? { ...g, [field]: value } : g));
 
   const lookupZipCode = async (guestId, zip) => {
@@ -1157,7 +1170,7 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
                   <div className="p-4 bg-slate-50 rounded-2xl flex items-center justify-between">
                     <div><p className="font-bold text-slate-800 text-sm">{t.countAdults}</p></div>
                     <div className="flex items-center gap-4">
-                      <button onClick={() => guests.length > 1 && removeGuest(guests[guests.length-1].id)} className="w-8 h-8 rounded-full border border-slate-300">-</button>
+                      <button onClick={() => removeGuest(guests[guests.length-1].id)} className="w-8 h-8 rounded-full border border-slate-300">-</button>
                       <span className="font-bold">{guests.length}</span>
                       <button onClick={addGuest} className="w-8 h-8 rounded-full border border-slate-300">+</button>
                     </div>
@@ -1179,19 +1192,18 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
                     <div key={guest.id} className="p-5 bg-slate-50/50 rounded-2xl border border-slate-100 space-y-4 shadow-sm relative">
                       <div className="flex justify-between items-center">
                         <span className="text-[10px] font-black uppercase text-slate-400">{t.guestLabel} {idx + 1}</span>
-                        {guests.length > 1 && (
-                          <button 
-                            onClick={() => removeGuest(guest.id)} 
-                            className="text-slate-300 hover:text-rose-500 transition-colors p-1"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
+                        <button 
+                          onClick={() => removeGuest(guest.id)} 
+                          className="text-slate-300 hover:text-rose-500 transition-colors p-1"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                       <div className="flex bg-white p-1 rounded-xl border">
                         <button onClick={() => updateGuest(guest.id, 'isResident', true)} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${guest.isResident ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400'}`}>{t.regResident}</button>
                         <button onClick={() => updateGuest(guest.id, 'isResident', false)} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${!guest.isResident ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400'}`}>{t.regTourist}</button>
                       </div>
+                      <p className="text-[10px] text-slate-400">{t.regAddressRule}</p>
                       <div className="grid grid-cols-2 gap-3">
                         <div className="col-span-2">
                           <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormName}</label>

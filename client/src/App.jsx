@@ -177,10 +177,19 @@ const translations = {
     regFormNation: "国籍", regFormPass: "护照号码", regPassportUpload: "拍摄/上传护照照片", regMinorAlert: "未成年人需填监护人信息",
     addGuest: "增加人员", guestLabel: "住客", infantLabel: "婴儿人数 (2岁以下)", countAdults: "住客人数 (成人/未成年)",
     selectCountry: "选择国家/地区",
+    customerUploadName: "客户姓名",
+    customerUploadPhone: "联系电话",
+    customerUploadEmail: "邮箱",
+    customerUploadId: "证件号码",
+    customerUploadDocs: "上传客户资料",
+    customerUploadHint: "支持图片或 PDF 文件",
+    customerUploadNoteLabel: "备注",
+    customerUploadRemove: "移除",
     customStepEmpty: "此步骤暂无内容。",
     steps: [
       { id: 'welcome', title: "欢迎入住", subtitle: "Welcome" },
       { id: 'count', title: "入住人数", subtitle: "Guest Count" },
+      { id: 'customerUpload', title: "客户资料上传", subtitle: "Customer Upload" },
       { id: 'registration', title: "住客信息登记", subtitle: "Osaka Regulation" },
       { id: 'emergency', title: "安全与紧急应对", subtitle: "Safety First" },
       { id: 'child', title: "婴儿与儿童安全", subtitle: "Child Protection" },
@@ -201,10 +210,19 @@ const translations = {
     regFormNation: "國籍", regFormPass: "護照號碼", regPassportUpload: "拍攝/上傳護照照片", regMinorAlert: "未成年人需填監護人資訊",
     addGuest: "增加人員", guestLabel: "住客", infantLabel: "嬰兒人數 (2歲以下)", countAdults: "住客人數 (成人/未成年)",
     selectCountry: "選擇國家/地區",
+    customerUploadName: "客戶姓名",
+    customerUploadPhone: "聯絡電話",
+    customerUploadEmail: "電子郵件",
+    customerUploadId: "證件號碼",
+    customerUploadDocs: "上傳客戶資料",
+    customerUploadHint: "支援圖片或 PDF 檔",
+    customerUploadNoteLabel: "備註",
+    customerUploadRemove: "移除",
     customStepEmpty: "此步驟目前沒有內容。",
     steps: [
       { id: 'welcome', title: "歡迎入住", subtitle: "Welcome" },
       { id: 'count', title: "入住人數", subtitle: "Guest Count" },
+      { id: 'customerUpload', title: "客戶資料上傳", subtitle: "Customer Upload" },
       { id: 'registration', title: "住客資訊登記", subtitle: "Osaka Regulation" },
       { id: 'emergency', title: "安全與緊急應對", subtitle: "Safety First" },
       { id: 'child', title: "嬰兒與兒童安全", subtitle: "Child Protection" },
@@ -225,10 +243,19 @@ const translations = {
     regFormNation: "Nationality", regFormPass: "Passport No.", regPassportUpload: "Upload passport photo", regMinorAlert: "Minors need guardian info",
     addGuest: "Add Guest", guestLabel: "Guest", infantLabel: "Infants (under 2)", countAdults: "Guest Count (adult/minor)",
     selectCountry: "Select country/region",
+    customerUploadName: "Customer name",
+    customerUploadPhone: "Phone",
+    customerUploadEmail: "Email",
+    customerUploadId: "ID/Passport no.",
+    customerUploadDocs: "Upload customer documents",
+    customerUploadHint: "Images or PDF supported",
+    customerUploadNoteLabel: "Notes",
+    customerUploadRemove: "Remove",
     customStepEmpty: "No content for this step yet.",
     steps: [
       { id: 'welcome', title: "Welcome", subtitle: "Welcome" },
       { id: 'count', title: "Guest Count", subtitle: "Guest Count" },
+      { id: 'customerUpload', title: "Customer Upload", subtitle: "Customer Upload" },
       { id: 'registration', title: "Registration", subtitle: "Osaka Regulation" },
       { id: 'emergency', title: "Emergency", subtitle: "Safety First" },
       { id: 'child', title: "Child Safety", subtitle: "Child Protection" },
@@ -249,10 +276,19 @@ const translations = {
     regFormNation: "国籍", regFormPass: "パスポート番号", regPassportUpload: "パスポート写真をアップロード", regMinorAlert: "未成年は保護者情報が必要",
     addGuest: "追加", guestLabel: "ゲスト", infantLabel: "乳児 (2歳未満)", countAdults: "人数 (成人/未成年)",
     selectCountry: "国/地域を選択",
+    customerUploadName: "氏名",
+    customerUploadPhone: "電話番号",
+    customerUploadEmail: "メール",
+    customerUploadId: "身分証番号",
+    customerUploadDocs: "資料をアップロード",
+    customerUploadHint: "画像または PDF を対応",
+    customerUploadNoteLabel: "備考",
+    customerUploadRemove: "削除",
     customStepEmpty: "このステップにはまだ内容がありません。",
     steps: [
       { id: 'welcome', title: "ようこそ", subtitle: "Welcome" },
       { id: 'count', title: "人数", subtitle: "Guest Count" },
+      { id: 'customerUpload', title: "お客様資料アップロード", subtitle: "Customer Upload" },
       { id: 'registration', title: "登録", subtitle: "Osaka Regulation" },
       { id: 'emergency', title: "緊急", subtitle: "Safety First" },
       { id: 'child', title: "子どもの安全", subtitle: "Child Protection" },
@@ -273,10 +309,19 @@ const translations = {
     regFormNation: "국적", regFormPass: "여권 번호", regPassportUpload: "여권 사진 업로드", regMinorAlert: "미성년자는 보호자 정보 필요",
     addGuest: "인원 추가", guestLabel: "게스트", infantLabel: "영아 (2세 이하)", countAdults: "인원 수 (성인/미성년)",
     selectCountry: "국가/지역 선택",
+    customerUploadName: "고객 이름",
+    customerUploadPhone: "연락처",
+    customerUploadEmail: "이메일",
+    customerUploadId: "신분증 번호",
+    customerUploadDocs: "고객 자료 업로드",
+    customerUploadHint: "이미지 또는 PDF 지원",
+    customerUploadNoteLabel: "비고",
+    customerUploadRemove: "삭제",
     customStepEmpty: "이 단계에는 아직 내용이 없습니다.",
     steps: [
       { id: 'welcome', title: "환영", subtitle: "Welcome" },
       { id: 'count', title: "인원 수", subtitle: "Guest Count" },
+      { id: 'customerUpload', title: "고객 자료 업로드", subtitle: "Customer Upload" },
       { id: 'registration', title: "등록", subtitle: "Osaka Regulation" },
       { id: 'emergency', title: "긴급", subtitle: "Safety First" },
       { id: 'child', title: "아동 안전", subtitle: "Child Protection" },
@@ -299,16 +344,57 @@ const buildDefaultSteps = (lang) => {
   }));
 };
 
-const normalizeSteps = (steps, fallback) => {
+const getDefaultStepMap = (lang) => {
+  const base = translations[lang]?.steps || translations[DEFAULT_LANG].steps;
+  return base.reduce((acc, step) => {
+    acc[step.id] = step;
+    return acc;
+  }, {});
+};
+
+const normalizeSteps = (steps, fallback, lang = DEFAULT_LANG) => {
   if (!Array.isArray(steps)) return fallback;
-  return steps.map((step) => ({
-    id: step.id || createStepId(),
-    title: step.title || '',
-    subtitle: step.subtitle || '',
-    enabled: step.enabled !== false,
-    type: step.type === 'custom' ? 'custom' : 'builtin',
-    content: step.content || ''
-  }));
+  const defaultsById = getDefaultStepMap(lang);
+  const normalizedSteps = steps.map((step) => {
+    const normalized = {
+      id: step.id || createStepId(),
+      title: step.title || '',
+      subtitle: step.subtitle || '',
+      enabled: step.enabled !== false,
+      type: step.type === 'custom' ? 'custom' : 'builtin',
+      content: step.content || ''
+    };
+    if (normalized.id === 'customerUpload') {
+      const defaults = defaultsById.customerUpload;
+      if (defaults) {
+        normalized.title = defaults.title;
+        normalized.subtitle = defaults.subtitle;
+        normalized.type = 'builtin';
+      }
+    }
+    return normalized;
+  });
+  const storedById = new Map();
+  const customSteps = [];
+  normalizedSteps.forEach((step) => {
+    if (step.type === 'custom' || !defaultsById[step.id]) {
+      customSteps.push(step);
+    } else {
+      storedById.set(step.id, step);
+    }
+  });
+  const mergedDefaults = fallback.map((defaultStep) => {
+    const stored = storedById.get(defaultStep.id);
+    if (!stored) return defaultStep;
+    const merged = { ...defaultStep, ...stored };
+    if (defaultStep.id === 'customerUpload') {
+      merged.title = defaultStep.title;
+      merged.subtitle = defaultStep.subtitle;
+      merged.type = 'builtin';
+    }
+    return merged;
+  });
+  return [...mergedDefaults, ...customSteps];
 };
 
 const loadSteps = (lang) => {
@@ -316,7 +402,7 @@ const loadSteps = (lang) => {
     const raw = localStorage.getItem(`${STEP_STORAGE_KEY}.${lang}`);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    return normalizeSteps(parsed, buildDefaultSteps(lang));
+    return normalizeSteps(parsed, buildDefaultSteps(lang), lang);
   } catch (error) {
     console.warn('無法讀取步驟設定:', error);
     return null;
@@ -529,7 +615,7 @@ const AdminDashboard = ({ onLogout }) => {
     DB.getSteps(stepLang)
       .then((steps) => {
         if (!isActive) return;
-        const normalized = normalizeSteps(steps, buildDefaultSteps(stepLang));
+        const normalized = normalizeSteps(steps, buildDefaultSteps(stepLang), stepLang);
         setEditableSteps(normalized);
         saveSteps(stepLang, normalized);
         setStepsSaved(false);
@@ -547,8 +633,12 @@ const AdminDashboard = ({ onLogout }) => {
   const totalGuests = records.reduce((acc, r) => acc + (r.guests?.length || 0), 0);
   const todayCount = records.filter(r => r.submittedAt.startsWith(new Date().toISOString().split('T')[0])).reduce((acc, r) => acc + (r.guests?.length || 0), 0);
   const stepLangText = translations[stepLang] || translations[DEFAULT_LANG];
+  const defaultStepMap = getDefaultStepMap(stepLang);
 
   const updateStepField = (id, field, value) => {
+    if (id === 'customerUpload' && (field === 'title' || field === 'subtitle')) {
+      return;
+    }
     setEditableSteps((prev) => prev.map((step) => step.id === id ? { ...step, [field]: value } : step));
     setStepsSaved(false);
   };
@@ -738,8 +828,10 @@ const AdminDashboard = ({ onLogout }) => {
             </div>
 
             <div className="space-y-4">
-              {editableSteps.map((step, index) => (
-                <div key={step.id} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+              {editableSteps.map((step, index) => {
+                const isCustomerUploadStep = step.id === 'customerUpload';
+                return (
+                  <div key={step.id} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
                       <span className="text-xs font-bold text-slate-400 uppercase">Step {index + 1}</span>
@@ -762,24 +854,29 @@ const AdminDashboard = ({ onLogout }) => {
                       <label className="text-[10px] font-bold text-slate-400 uppercase">标题</label>
                       <input
                         type="text"
-                        value={step.title}
+                        value={isCustomerUploadStep ? (defaultStepMap.customerUpload?.title || step.title) : step.title}
                         onChange={(e) => updateStepField(step.id, 'title', e.target.value)}
-                        className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm"
+                        disabled={isCustomerUploadStep}
+                        className={`w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm ${isCustomerUploadStep ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}`}
                       />
                     </div>
                     <div>
                       <label className="text-[10px] font-bold text-slate-400 uppercase">副标题</label>
                       <input
                         type="text"
-                        value={step.subtitle}
+                        value={isCustomerUploadStep ? (defaultStepMap.customerUpload?.subtitle || step.subtitle) : step.subtitle}
                         onChange={(e) => updateStepField(step.id, 'subtitle', e.target.value)}
-                        className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm"
+                        disabled={isCustomerUploadStep}
+                        className={`w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm ${isCustomerUploadStep ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : ''}`}
                       />
                     </div>
                   </div>
+                  {isCustomerUploadStep && (
+                    <p className="text-xs text-slate-400">客户资料上传为固定步骤，仅允许编辑下方备注内容。</p>
+                  )}
                   <div>
                     <div className="flex items-center justify-between">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase">内容编辑</label>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">{isCustomerUploadStep ? '备注编辑' : '内容编辑'}</label>
                       <span className="text-[10px] text-slate-400">支持图片与常见文本样式</span>
                     </div>
                     <div className="mt-3">
@@ -795,7 +892,8 @@ const AdminDashboard = ({ onLogout }) => {
                     <StepContent content={step.content} fallback={stepLangText.customStepEmpty} />
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
@@ -854,6 +952,13 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
   const [guests, setGuests] = useState([]);
   const [infantCount, setInfantCount] = useState(0);
   const [isLookingUpZip, setIsLookingUpZip] = useState(null);
+  const [customerUpload, setCustomerUpload] = useState({
+    name: '',
+    phone: '',
+    email: '',
+    idNumber: '',
+    documents: []
+  });
 
   useEffect(() => {
     if (guests.length === 0) {
@@ -888,7 +993,7 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
     DB.getSteps(lang)
       .then((steps) => {
         if (!isActive) return;
-        const normalized = normalizeSteps(steps, buildDefaultSteps(lang));
+        const normalized = normalizeSteps(steps, buildDefaultSteps(lang), lang);
         setStepsConfig(normalized);
         saveSteps(lang, normalized);
       })
@@ -1041,7 +1146,7 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
             <p className="text-sm font-medium text-slate-400 mb-8 uppercase tracking-wide">{stepConfig.subtitle}</p>
             
             <div className="w-full text-left">
-              {(hasContent || stepConfig?.type === 'custom') && (
+              {(hasContent || stepConfig?.type === 'custom') && stepConfig.id !== 'customerUpload' && (
                 <div className="step-content-surface">
                   <StepContent content={stepConfig.content} fallback={t.customStepEmpty} />
                 </div>
@@ -1162,6 +1267,101 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
                     </div>
                   ))}
                   <button onClick={addGuest} className="w-full py-4 border-2 border-dashed border-slate-200 rounded-2xl flex items-center justify-center gap-2 text-slate-400 hover:text-slate-900 transition-all focus:ring-1 focus:ring-slate-900 outline-none"><UserPlus className="w-5 h-5" /> <span className="text-xs font-bold uppercase">{t.addGuest}</span></button>
+                </div>
+              )}
+              {stepConfig.id === 'customerUpload' && (
+                <div className="space-y-5">
+                  <div className="grid grid-cols-1 gap-3">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">{t.customerUploadName}</label>
+                      <input
+                        type="text"
+                        value={customerUpload.name}
+                        onChange={(e) => setCustomerUpload({ ...customerUpload, name: e.target.value })}
+                        className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">{t.customerUploadPhone}</label>
+                      <input
+                        type="text"
+                        value={customerUpload.phone}
+                        onChange={(e) => setCustomerUpload({ ...customerUpload, phone: e.target.value })}
+                        className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">{t.customerUploadEmail}</label>
+                      <input
+                        type="email"
+                        value={customerUpload.email}
+                        onChange={(e) => setCustomerUpload({ ...customerUpload, email: e.target.value })}
+                        className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">{t.customerUploadId}</label>
+                      <input
+                        type="text"
+                        value={customerUpload.idNumber}
+                        onChange={(e) => setCustomerUpload({ ...customerUpload, idNumber: e.target.value })}
+                        className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm"
+                      />
+                    </div>
+                  </div>
+                  <div className="relative p-4 border-2 border-dashed rounded-xl flex flex-col gap-2 items-center justify-center text-slate-400 bg-slate-50">
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      multiple
+                      className="absolute inset-0 opacity-0 cursor-pointer"
+                      onChange={(event) => {
+                        const files = Array.from(event.target.files || []);
+                        if (!files.length) return;
+                        Promise.all(files.map(fileToBase64)).then((encoded) => {
+                          const newDocs = files.map((file, index) => ({
+                            name: file.name,
+                            data: encoded[index]
+                          }));
+                          setCustomerUpload((prev) => ({
+                            ...prev,
+                            documents: [...prev.documents, ...newDocs]
+                          }));
+                        });
+                        event.target.value = '';
+                      }}
+                    />
+                    <div className="flex items-center gap-2 text-sm font-bold">
+                      <Cloud className="w-4 h-4" />
+                      <span>{t.customerUploadDocs}</span>
+                    </div>
+                    <span className="text-xs">{t.customerUploadHint}</span>
+                  </div>
+                  {customerUpload.documents.length > 0 && (
+                    <div className="space-y-2">
+                      {customerUpload.documents.map((doc, index) => (
+                        <div key={`${doc.name}-${index}`} className="flex items-center justify-between bg-white border border-slate-200 rounded-xl px-4 py-2 text-xs">
+                          <span className="font-medium text-slate-600">{doc.name}</span>
+                          <button
+                            type="button"
+                            onClick={() => setCustomerUpload((prev) => ({
+                              ...prev,
+                              documents: prev.documents.filter((_, docIndex) => docIndex !== index)
+                            }))}
+                            className="text-rose-500 font-bold"
+                          >
+                            {t.customerUploadRemove}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase mb-3">{t.customerUploadNoteLabel}</p>
+                    <div className="step-content-surface">
+                      <StepContent content={stepConfig.content} fallback={t.customStepEmpty} />
+                    </div>
+                  </div>
                 </div>
               )}
               {stepConfig.id === 'rules' && (

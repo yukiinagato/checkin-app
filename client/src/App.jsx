@@ -114,8 +114,29 @@ const DB = {
   exportCSV(records) {
     if (!records.length) return;
     const rows = [];
-    rows.push(['Date', 'Group ID', 'Name', 'Type', 'Resident?', 'Nationality', 'Passport No', 'Address', 'Occupation', 'Passport Image URL']);
+    rows.push([
+      'Date',
+      'Group ID',
+      'Name',
+      'Type',
+      'Resident?',
+      'Nationality',
+      'Passport No',
+      'Address',
+      'Occupation',
+      'Passport Image URL',
+      'Customer Name',
+      'Customer Phone',
+      'Customer Email',
+      'Customer ID',
+      'Customer Documents'
+    ]);
     records.forEach(group => {
+      const customer = group.customerUpload || {};
+      const customerDocs = (customer.documents || [])
+        .map((doc) => doc?.url || doc?.data || doc?.name)
+        .filter(Boolean)
+        .join(' | ');
       group.guests.forEach(guest => {
         rows.push([
           group.submittedAt.split('T')[0],
@@ -127,7 +148,12 @@ const DB = {
           guest.passportNumber || '-',
           guest.address || '-',
           guest.occupation || '-',
-          guest.passportPhoto || 'N/A'
+          guest.passportPhoto || 'N/A',
+          customer.name || '-',
+          customer.phone || '-',
+          customer.email || '-',
+          customer.idNumber || '-',
+          customerDocs || 'N/A'
         ]);
       });
     });
@@ -517,9 +543,9 @@ const App = () => {
   const [view, setView] = useState('guest'); 
   const [loading, setLoading] = useState(false);
 
-  const handleGuestSubmit = async (guestData) => {
+  const handleGuestSubmit = async (payload) => {
     setLoading(true);
-    const result = await DB.insertRecord({ guests: guestData });
+    const result = await DB.insertRecord(payload);
     setLoading(false);
     if (!result.success) {
       alert("提交失敗，請聯繫管理員 (Server Error)");
@@ -712,11 +738,19 @@ const AdminDashboard = ({ onLogout }) => {
                     <th className="p-4">身份</th>
                     <th className="p-4">護照/證件號</th>
                     <th className="p-4">國籍</th>
+                    <th className="p-4">客户姓名</th>
+                    <th className="p-4">联系电话</th>
+                    <th className="p-4">邮箱</th>
+                    <th className="p-4">证件号码</th>
+                    <th className="p-4">客户资料</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {records.map((group) => (
-                    group.guests.map((guest, idx) => (
+                    group.guests.map((guest, idx) => {
+                      const customer = group.customerUpload || {};
+                      const customerDocs = (customer.documents || []).filter(Boolean);
+                      return (
                       <tr key={`${group.id}-${idx}`} className="hover:bg-slate-50/80 transition-colors">
                         <td className="p-4 pl-6 text-slate-500 font-mono text-xs">{group.submittedAt.split('T')[0]}</td>
                         <td className="p-4 font-bold text-slate-900">{guest.name || '未填寫'}</td>
@@ -733,8 +767,35 @@ const AdminDashboard = ({ onLogout }) => {
                         </td>
                         <td className="p-4 font-mono text-slate-600 text-xs">{guest.passportNumber || '-'}</td>
                         <td className="p-4 text-slate-600">{guest.nationality || 'Japan'}</td>
+                        <td className="p-4 text-slate-700">{customer.name || '-'}</td>
+                        <td className="p-4 text-slate-700">{customer.phone || '-'}</td>
+                        <td className="p-4 text-slate-700">{customer.email || '-'}</td>
+                        <td className="p-4 text-slate-700">{customer.idNumber || '-'}</td>
+                        <td className="p-4">
+                          {customerDocs.length === 0 && <span className="text-slate-400 text-xs">-</span>}
+                          {customerDocs.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                              {customerDocs.map((doc, docIndex) => {
+                                const href = doc.url || doc.data || '#';
+                                return (
+                                  <a
+                                    key={`${group.id}-${idx}-${docIndex}`}
+                                    href={href}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="px-2 py-1 rounded-lg bg-slate-100 text-slate-600 text-[10px] font-bold uppercase flex items-center gap-1"
+                                  >
+                                    <ExternalLink className="w-3 h-3" />
+                                    {doc.name || `Doc ${docIndex + 1}`}
+                                  </a>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </td>
                       </tr>
-                    ))
+                      );
+                    })
                   ))}
                 </tbody>
               </table>
@@ -743,6 +804,13 @@ const AdminDashboard = ({ onLogout }) => {
         );
       case 'files':
         const dates = [...new Set(records.map(r => r.submittedAt.split('T')[0]))];
+        const customerDocDates = [
+          ...new Set(
+            records
+              .filter((record) => record.customerUpload?.documents?.length)
+              .map((record) => record.submittedAt.split('T')[0])
+          )
+        ];
         return (
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4">
              <div className="flex items-center justify-between">
@@ -778,12 +846,77 @@ const AdminDashboard = ({ onLogout }) => {
                                  <ExternalLink className="w-4 h-4 text-white" />
                                </div>
                             </a>
-                          ))}
+                         ))}
                         </div>
                      </div>
                    );
                  })}
               </div>
+              {customerDocDates.length > 0 && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="font-bold text-xl text-slate-800">客户资料归档</h3>
+                      <p className="text-sm text-slate-500">包含客户信息申报上传的附件</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                    {customerDocDates.map((date) => {
+                      const dayDocs = records
+                        .filter((record) => record.submittedAt.startsWith(date))
+                        .flatMap((record) => {
+                          const customer = record.customerUpload || {};
+                          return (customer.documents || []).map((doc, index) => ({
+                            ...doc,
+                            customerName: customer.name,
+                            key: `${record.id}-${index}`
+                          }));
+                        })
+                        .filter((doc) => doc.url || doc.data || doc.name);
+                      if (dayDocs.length === 0) return null;
+                      return (
+                        <div key={date} className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm hover:shadow-lg transition-all">
+                          <div className="flex items-center gap-3 mb-4">
+                            <div className="w-10 h-10 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-500">
+                              <FileSpreadsheet className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <p className="font-bold text-slate-800">{date}</p>
+                              <p className="text-xs text-slate-400">{dayDocs.length} 份客户资料</p>
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            {dayDocs.map((doc, index) => {
+                              const href = doc.url || doc.data;
+                              return (
+                                <div key={doc.key || `${date}-${index}`} className="flex items-center justify-between gap-2 bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-xs">
+                                  <div className="flex flex-col">
+                                    <span className="font-bold text-slate-700">{doc.name || `Document ${index + 1}`}</span>
+                                    {doc.customerName && <span className="text-[10px] text-slate-400">{doc.customerName}</span>}
+                                  </div>
+                                  {href ? (
+                                    <a
+                                      href={href}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 text-blue-600 font-bold"
+                                    >
+                                      <ExternalLink className="w-3 h-3" />
+                                      查看
+                                    </a>
+                                  ) : (
+                                    <span className="text-slate-400">-</span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
           </div>
         );
       case 'settings':
@@ -1066,7 +1199,10 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
         ...guests,
         ...Array.from({length: infantCount}).map((_, i) => ({ type: 'infant', id: `infant-${i}`, name: `Infant ${i+1}`, age: '0-2', isResident: true }))
       ];
-      const success = await onSubmit(finalData);
+      const success = await onSubmit({
+        guests: finalData,
+        customerUpload
+      });
       if (success) setIsCompleted(true);
     }
   };

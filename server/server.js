@@ -25,6 +25,10 @@ const ALLOWED_IMAGE_TYPES = new Set([
   'image/heic',
   'image/heif'
 ]);
+const ALLOWED_DOCUMENT_TYPES = new Set([
+  ...ALLOWED_IMAGE_TYPES,
+  'application/pdf'
+]);
 fs.ensureDirSync(UPLOAD_DIR);
 
 // 3. 初始化 SQLite 數據庫
@@ -112,11 +116,68 @@ const saveImagesLocally = async (guests) => {
 
 const parseRecordData = (row) => {
   try {
-    return JSON.parse(row.data);
+    const parsed = JSON.parse(row.data);
+    if (Array.isArray(parsed)) {
+      return { guests: parsed, customerUpload: null };
+    }
+    if (parsed && typeof parsed === 'object') {
+      return {
+        guests: Array.isArray(parsed.guests) ? parsed.guests : [],
+        customerUpload: parsed.customerUpload || null
+      };
+    }
+    return { guests: [], customerUpload: null };
   } catch (error) {
     console.warn(`無法解析記錄 ${row.id} 的數據:`, error);
-    return [];
+    return { guests: [], customerUpload: null };
   }
+};
+
+const saveCustomerUpload = async (customerUpload, submitId) => {
+  if (!customerUpload || typeof customerUpload !== 'object') {
+    return null;
+  }
+  const documents = Array.isArray(customerUpload.documents) ? customerUpload.documents : [];
+  const sanitizedDocs = await Promise.all(
+    documents.map(async (doc, index) => {
+      if (!doc || typeof doc !== 'object') return null;
+      const { name, data } = doc;
+      if (typeof data === 'string' && data.startsWith('data:')) {
+        try {
+          const matches = data.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+          if (!matches || matches.length !== 3) return doc;
+          if (!ALLOWED_DOCUMENT_TYPES.has(matches[1])) return doc;
+
+          const buffer = Buffer.from(matches[2], 'base64');
+          const extension = matches[1].split('/')[1];
+          const safeBaseName = name
+            ? path.parse(name).name.replace(/[^a-zA-Z0-9._-]/g, '_')
+            : `document-${index + 1}`;
+          const filename = `${submitId}_customer_${safeBaseName}.${extension}`;
+          const filePath = path.join(UPLOAD_DIR, filename);
+
+          await fs.outputFile(filePath, buffer);
+
+          return {
+            name: name || `${safeBaseName}.${extension}`,
+            url: `http://localhost:${PORT}/uploads/${filename}`,
+            type: matches[1]
+          };
+        } catch (err) {
+          console.error('客戶資料保存失敗:', err);
+          return doc;
+        }
+      }
+      return doc;
+    })
+  );
+  return {
+    name: customerUpload.name || '',
+    phone: customerUpload.phone || '',
+    email: customerUpload.email || '',
+    idNumber: customerUpload.idNumber || '',
+    documents: sanitizedDocs.filter(Boolean)
+  };
 };
 
 // ----------------------------------------------------------------------
@@ -132,10 +193,12 @@ app.get('/api/records', (req, res) => {
     }
     // 將數據庫存儲的 JSON 字符串轉回對象
     const records = rows.map(row => {
+      const parsed = parseRecordData(row);
       return {
         id: row.id,
         submittedAt: row.created_at,
-        guests: parseRecordData(row) // 這裡是處理過的 guest 列表
+        guests: parsed.guests, // 這裡是處理過的 guest 列表
+        customerUpload: parsed.customerUpload
       };
     });
     res.json(records);
@@ -165,7 +228,7 @@ app.get('/api/steps', (req, res) => {
 // 提交入住信息
 app.post('/api/submit', async (req, res) => {
   try {
-    const { guests } = req.body;
+    const { guests, customerUpload } = req.body;
     if (!Array.isArray(guests) || guests.length === 0) {
       res.status(400).json({ success: false, error: 'Invalid guest payload' });
       return;
@@ -175,10 +238,11 @@ app.post('/api/submit', async (req, res) => {
 
     // 1. 先處理圖片，保存到本地，獲取 URL
     const guestsWithUrls = await saveImagesLocally(guests);
+    const customerUploadWithUrls = await saveCustomerUpload(customerUpload, submitId);
 
     // 2. 存入數據庫
     const stmt = db.prepare("INSERT INTO checkins (id, date, data) VALUES (?, ?, ?)");
-    stmt.run(submitId, today, JSON.stringify(guestsWithUrls), function(err) {
+    stmt.run(submitId, today, JSON.stringify({ guests: guestsWithUrls, customerUpload: customerUploadWithUrls }), function(err) {
       if (err) {
         console.error(err);
         res.status(500).json({ success: false, error: err.message });

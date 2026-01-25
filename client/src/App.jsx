@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Wifi, 
-  Clock, 
-  MapPin, 
-  ChevronRight, 
-  ChevronLeft, 
+import {
+  Wifi,
+  Clock,
+  MapPin,
+  ChevronRight,
+  ChevronLeft,
   CheckCircle2,
   Info,
   BellRing,
@@ -44,7 +44,9 @@ import {
   ImagePlus,
   Loader2,
   Server,
-  Search
+  Search,
+  Home,
+  Image
 } from 'lucide-react';
 
 // ----------------------------------------------------------------------
@@ -114,7 +116,7 @@ const DB = {
   exportCSV(records) {
     if (!records.length) return;
     const rows = [];
-    rows.push(['Date', 'Group ID', 'Name', 'Type', 'Resident?', 'Nationality', 'Passport No', 'Address', 'Occupation', 'Passport Image URL']);
+    rows.push(['Date', 'Group ID', 'Name', 'Type', 'Resident?', 'Nationality', 'Passport No', 'Address', 'Phone', 'Passport Image URL']);
     records.forEach(group => {
       group.guests.forEach(guest => {
         rows.push([
@@ -126,7 +128,7 @@ const DB = {
           guest.nationality || '-',
           guest.passportNumber || '-',
           guest.address || '-',
-          guest.occupation || '-',
+          guest.phone || '-',
           guest.passportPhoto || 'N/A'
         ]);
       });
@@ -241,7 +243,7 @@ const translations = {
   },
   'jp': {
     next: "次へ", prev: "戻る", finish: "確認して部屋番号を取得", agree: "上記の規則を読み同意しました",
-    zipLookup: "検索", zipPlaceholder: "7桁郵便番号", zipLoading: "検索中...", regFormAddr: "日本の住所", regFormZip: "郵便番号",
+    zipLookup: "検索", zipPlaceholder: "郵便番号", zipLoading: "検索中...", regFormAddr: "日本の住所", regFormZip: "郵便番号",
     roomNo: "あなたの部屋番号", wifi: "Wi-Fi パスワード", copy: "コピー", breakfast: "朝食時間", breakfastLoc: "2階レストラン",
     service: "緊急連絡", serviceDetail: "先に緊急電話、次に管理人へ連絡。", welcomeTitle: "ようこそ！", welcomeSub: "旅を始めましょう",
     footer: "安全と快適さが最優先です。", guideTitle: "チェックイン案内", changeLang: "言語", manualLink: "マニュアル PDF",
@@ -365,7 +367,15 @@ const RichTextEditor = ({ value, onChange, placeholder }) => {
   const handleAddLink = () => {
     const url = window.prompt('请输入链接地址');
     if (!url) return;
-    runCommand('createLink', url);
+
+    // 获取当前选中的文本
+    const selectedText = window.getSelection().toString();
+
+    // 构建带 target="_blank" 的 HTML 字符串
+    // 如果没选中文本，就把 URL 当做文本显示
+    const linkHtml = `<a href="${url}" target="_blank" rel="noopener noreferrer">${selectedText || url}</a>`;
+
+    runCommand('insertHTML', linkHtml);
   };
 
   const handleImageUpload = (event) => {
@@ -423,7 +433,7 @@ const RichTextEditor = ({ value, onChange, placeholder }) => {
 // 主程序入口
 // ----------------------------------------------------------------------
 const App = () => {
-  const [view, setView] = useState('guest'); 
+  const [view, setView] = useState('guest');
   const [loading, setLoading] = useState(false);
 
   const handleGuestSubmit = async (guestData) => {
@@ -441,9 +451,9 @@ const App = () => {
   if (view === 'admin') return <AdminDashboard onLogout={() => setView('guest')} />;
 
   return (
-    <GuestFlow 
-      onSubmit={handleGuestSubmit} 
-      onAdminRequest={() => setView('login')} 
+    <GuestFlow
+      onSubmit={handleGuestSubmit}
+      onAdminRequest={() => setView('login')}
       isSubmitting={loading}
     />
   );
@@ -457,7 +467,7 @@ const AdminLogin = ({ onLogin, onBack }) => {
   const [error, setError] = useState(false);
 
   const handleLogin = () => {
-    if (pin === '8808') { 
+    if (pin === '8808') {
       onLogin();
     } else {
       setError(true);
@@ -476,8 +486,8 @@ const AdminLogin = ({ onLogin, onBack }) => {
           <p className="text-slate-400 text-sm">請輸入安全密鑰以訪問後台</p>
         </div>
         <div className="space-y-4">
-          <input 
-            type="password" 
+          <input
+            type="password"
             value={pin}
             onChange={(e) => { setPin(e.target.value); setError(false); }}
             placeholder="PIN"
@@ -594,7 +604,7 @@ const AdminDashboard = ({ onLogout }) => {
       );
     }
 
-    switch(tab) {
+    switch (tab) {
       case 'data':
         return (
           <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden animate-in fade-in slide-in-from-bottom-4">
@@ -631,10 +641,10 @@ const AdminDashboard = ({ onLogout }) => {
                           </span>
                         </td>
                         <td className="p-4">
-                            {guest.isResident ? 
-                            <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-bold border border-emerald-100"><MapPin className="w-3 h-3"/> 居民</span> : 
-                            <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-amber-50 text-amber-700 text-[10px] font-bold border border-amber-100"><Globe className="w-3 h-3"/> 遊客</span>
-                            }
+                          {guest.isResident ?
+                            <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-bold border border-emerald-100"><MapPin className="w-3 h-3" /> 居民</span> :
+                            <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-amber-50 text-amber-700 text-[10px] font-bold border border-amber-100"><Globe className="w-3 h-3" /> 遊客</span>
+                          }
                         </td>
                         <td className="p-4 font-mono text-slate-600 text-xs">{guest.passportNumber || '-'}</td>
                         <td className="p-4 text-slate-600">{guest.nationality || 'Japan'}</td>
@@ -650,69 +660,69 @@ const AdminDashboard = ({ onLogout }) => {
         const dates = [...new Set(records.map(r => r.submittedAt.split('T')[0]))];
         return (
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4">
-             <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-bold text-xl text-slate-800">護照歸檔</h3>
-                  <p className="text-sm text-slate-500">文件存儲於本地 <code>/uploads</code> 文件夾</p>
-                </div>
-                <div className="flex gap-2 text-xs font-bold text-slate-500 bg-white px-3 py-1.5 rounded-lg border border-slate-200">
-                  <Server className="w-4 h-4" />
-                  <span>Local Server</span>
-                </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-xl text-slate-800">護照歸檔</h3>
+                <p className="text-sm text-slate-500">文件存儲於本地 <code>/uploads</code> 文件夾</p>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                 {dates.map(date => {
-                   const dayGuests = records.filter(r => r.submittedAt.startsWith(date)).flatMap(r => r.guests.filter(g => g.passportPhoto));
-                   if (dayGuests.length === 0) return null;
-                   return (
-                     <div key={date} className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm hover:shadow-lg transition-all group">
-                        <div className="flex items-center gap-3 mb-4">
-                          <div className="w-10 h-10 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-500 group-hover:scale-110 transition-transform">
-                            <FolderOpen className="w-5 h-5" />
-                          </div>
-                          <div>
-                            <p className="font-bold text-slate-800">{date}</p>
-                            <p className="text-xs text-slate-400">{dayGuests.length} 張護照照片</p>
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-4 gap-2">
-                          {dayGuests.map((g, i) => (
-                            <a href={g.passportPhoto} target="_blank" rel="noopener noreferrer" key={i} className="aspect-[3/4] bg-slate-100 rounded-lg overflow-hidden relative border border-slate-100 block">
-                               <img src={g.passportPhoto} alt={g.name} className="w-full h-full object-cover" />
-                               <div className="absolute inset-0 bg-black/50 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center">
-                                 <ExternalLink className="w-4 h-4 text-white" />
-                               </div>
-                            </a>
-                          ))}
-                        </div>
-                     </div>
-                   );
-                 })}
+              <div className="flex gap-2 text-xs font-bold text-slate-500 bg-white px-3 py-1.5 rounded-lg border border-slate-200">
+                <Server className="w-4 h-4" />
+                <span>Local Server</span>
               </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+              {dates.map(date => {
+                const dayGuests = records.filter(r => r.submittedAt.startsWith(date)).flatMap(r => r.guests.filter(g => g.passportPhoto));
+                if (dayGuests.length === 0) return null;
+                return (
+                  <div key={date} className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm hover:shadow-lg transition-all group">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-10 h-10 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-500 group-hover:scale-110 transition-transform">
+                        <FolderOpen className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <p className="font-bold text-slate-800">{date}</p>
+                        <p className="text-xs text-slate-400">{dayGuests.length} 張護照照片</p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-4 gap-2">
+                      {dayGuests.map((g, i) => (
+                        <a href={g.passportPhoto} target="_blank" rel="noopener noreferrer" key={i} className="aspect-[3/4] bg-slate-100 rounded-lg overflow-hidden relative border border-slate-100 block">
+                          <img src={g.passportPhoto} alt={g.name} className="w-full h-full object-cover" />
+                          <div className="absolute inset-0 bg-black/50 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <ExternalLink className="w-4 h-4 text-white" />
+                          </div>
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         );
       case 'settings':
         return (
           <div className="max-w-3xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4">
-             <div className="bg-white rounded-3xl border border-slate-200 p-8 shadow-sm">
-                <div className="flex items-center gap-4 mb-6">
-                   <div className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center text-white">
-                     <Server className="w-6 h-6" />
-                   </div>
-                   <div>
-                     <h3 className="font-bold text-xl text-slate-800">本地服務器狀態</h3>
-                     <p className="text-sm text-slate-500">Node.js + SQLite</p>
-                   </div>
+            <div className="bg-white rounded-3xl border border-slate-200 p-8 shadow-sm">
+              <div className="flex items-center gap-4 mb-6">
+                <div className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center text-white">
+                  <Server className="w-6 h-6" />
                 </div>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                     <span className="text-sm font-bold text-slate-700">連接狀態</span>
-                     <span className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-2 ${serverStatus === 'online' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
-                        {serverStatus === 'online' ? '已連接 (Online)' : '斷開 (Offline)'}
-                     </span>
-                  </div>
+                <div>
+                  <h3 className="font-bold text-xl text-slate-800">本地服務器狀態</h3>
+                  <p className="text-sm text-slate-500">Node.js + SQLite</p>
                 </div>
-             </div>
+              </div>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                  <span className="text-sm font-bold text-slate-700">連接狀態</span>
+                  <span className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-2 ${serverStatus === 'online' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                    {serverStatus === 'online' ? '已連接 (Online)' : '斷開 (Offline)'}
+                  </span>
+                </div>
+              </div>
+            </div>
           </div>
         );
       case 'steps':
@@ -837,7 +847,7 @@ const AdminDashboard = ({ onLogout }) => {
         </button>
       </div>
       <div className="flex-1 p-6 md:p-10 overflow-y-auto h-screen relative">
-          {renderContent()}
+        {renderContent()}
       </div>
     </div>
   );
@@ -861,7 +871,7 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
         id: Math.random().toString(36).substr(2, 9),
         type: 'adult',
         isResident: true,
-        name: '', age: '', occupation: '', address: '', postalCode: '', nationality: '', passportNumber: '', passportPhoto: null, guardianName: '', guardianPhone: ''
+        name: '', age: '', phone: '', address: '', postalCode: '', nationality: '', passportNumber: '', passportPhoto: null, guardianName: '', guardianPhone: ''
       }]);
     }
   }, []);
@@ -870,14 +880,14 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
     id: Math.random().toString(36).substr(2, 9),
     type,
     isResident: true,
-    name: '', age: '', occupation: '', address: '', postalCode: '', nationality: '', passportNumber: '', passportPhoto: null, guardianName: '', guardianPhone: ''
+    name: '', age: '', phone: '', address: '', postalCode: '', nationality: '', passportNumber: '', passportPhoto: null, guardianName: '', guardianPhone: ''
   });
 
   const [stepsConfig, setStepsConfig] = useState([]);
 
   useEffect(() => {
     let isActive = true;
-    if (!lang) return () => {};
+    if (!lang) return () => { };
     const storedSteps = loadSteps(lang);
     if (storedSteps) {
       setStepsConfig(storedSteps);
@@ -931,14 +941,14 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
     return guests.every(g => {
       const basic = g.name && g.age;
       const minorCheck = parseInt(g.age) < 18 ? (g.guardianName && g.guardianPhone) : true;
-      if (g.isResident) return basic && g.occupation && g.address && minorCheck;
+      if (g.isResident) return basic && g.phone && g.address && minorCheck;
       return basic && g.nationality && g.passportNumber && g.passportPhoto && minorCheck;
     });
   };
 
   const handleNext = async () => {
     const activeSteps = steps.length;
-    if (currentStep < activeSteps - 1) { setCurrentStep(currentStep + 1); } 
+    if (currentStep < activeSteps - 1) { setCurrentStep(currentStep + 1); }
     else {
       const requiresAgreement = steps.some((step) => step.id === 'rules');
       if (requiresAgreement && !hasAgreed) {
@@ -946,7 +956,7 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
       }
       const finalData = [
         ...guests,
-        ...Array.from({length: infantCount}).map((_, i) => ({ type: 'infant', id: `infant-${i}`, name: `Infant ${i+1}`, age: '0-2', isResident: true }))
+        ...Array.from({ length: infantCount }).map((_, i) => ({ type: 'infant', id: `infant-${i}`, name: `Infant ${i + 1}`, age: '0-2', isResident: true }))
       ];
       const success = await onSubmit(finalData);
       if (success) setIsCompleted(true);
@@ -990,13 +1000,25 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
         <h1 className="text-3xl font-bold mb-2">{t.welcomeTitle}</h1>
         <p className="text-slate-500 mb-6">{t.welcomeSub}</p>
         <div className="bg-slate-900 text-white p-8 rounded-[2rem] shadow-xl w-full max-w-sm">
-           <p className="text-xs uppercase font-bold opacity-50 mb-1">{t.roomNo}</p>
-           <p className="text-5xl font-black tracking-tighter">8808</p>
+          <div className="flex items-center gap-3">
+            <Wifi className="w-7 h-7 text-white-500" />
+            <p className="text-md text-left">
+              <b>Wi-Fi SSID:</b> OX <br></br>
+              <b>Password:</b> 13131515ox
+            </p>
+          </div>
+
+          {/* <p className="text-xs uppercase font-bold opacity-50 mb-1">{t.roomNo}</p> */}
+          {/* <p className="text-5xl font-black tracking-tighter">🎉</p> */}
         </div>
         <div className="mt-8 p-6 bg-white rounded-2xl border border-slate-100 max-w-sm w-full space-y-4 text-left">
-           <div className="flex items-center gap-3"><Wifi className="w-5 h-5 text-blue-500"/><p className="text-sm"><b>Wi-Fi:</b> 13131515ox</p></div>
-           <div className="flex items-center gap-3"><Wifi className="w-5 h-5 text-blue-500"/><p className="text-sm"><b>AC control</b> 13131515ox</p></div>
-           {/* <div className="flex items-center gap-3"><Coffee className="w-5 h-5 text-amber-500"/><p className="text-sm"><b>{t.breakfast}:</b> 07:00-10:30 ({t.breakfastLoc})</p></div> */}
+          <div className="flex items-center gap-3"><Home className="w-5 h-5 text-blue-500" />
+            <p className="text-sm"><b>AC control</b><br>
+            </br> <a className='text-xs' href='https://homeassistant.kawachinagano.ox.gy:8123/' target='_blank'>https://homeassistant.kawachinagano.ox.gy:8123/</a>
+            </p>
+          </div>
+          <img src="./ha-login-image.png"></img>
+          {/* <div className="flex items-center gap-3"><Coffee className="w-5 h-5 text-amber-500"/><p className="text-sm"><b>{t.breakfast}:</b> 07:00-10:30 ({t.breakfastLoc})</p></div> */}
         </div>
       </div>
     );
@@ -1005,7 +1027,7 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
   const progress = ((currentStep + 1) / steps.length) * 100;
 
   const getStepIcon = (id) => {
-    switch(id) {
+    switch (id) {
       case 'welcome': return <BellRing className="w-12 h-12 text-amber-600 animate-pulse" />;
       case 'count': return <Users className="w-12 h-12 text-blue-600" />;
       case 'registration': return <UserCheck className="w-12 h-12 text-blue-600" />;
@@ -1023,7 +1045,7 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
       <button onClick={() => setLang(null)} className="fixed top-6 right-6 z-50 flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-full shadow-sm text-xs font-bold"><Languages className="w-4 h-4" /> {t.changeLang}</button>
-      
+
       <div className="w-full max-w-lg">
         <div className="mb-8">
           <div className="flex justify-between items-end mb-2">
@@ -1040,7 +1062,7 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
             <div className="mb-6 p-4 bg-slate-50 rounded-2xl">{getStepIcon(stepConfig.id)}</div>
             <h2 className="text-2xl font-bold text-slate-900 mb-1 leading-tight">{stepConfig.title}</h2>
             <p className="text-sm font-medium text-slate-400 mb-8 uppercase tracking-wide">{stepConfig.subtitle}</p>
-            
+
             <div className="w-full text-left">
               {(hasContent || stepConfig?.type === 'custom') && (
                 <div className="step-content-surface">
@@ -1053,7 +1075,7 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
                   <div className="p-4 bg-slate-50 rounded-2xl flex items-center justify-between">
                     <div><p className="font-bold text-slate-800 text-sm">{t.countAdults}</p></div>
                     <div className="flex items-center gap-4">
-                      <button onClick={() => guests.length > 1 && removeGuest(guests[guests.length-1].id)} className="w-8 h-8 rounded-full border border-slate-300">-</button>
+                      <button onClick={() => guests.length > 1 && removeGuest(guests[guests.length - 1].id)} className="w-8 h-8 rounded-full border border-slate-300">-</button>
                       <span className="font-bold">{guests.length}</span>
                       <button onClick={addGuest} className="w-8 h-8 rounded-full border border-slate-300">+</button>
                     </div>
@@ -1076,8 +1098,8 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
                       <div className="flex justify-between items-center">
                         <span className="text-[10px] font-black uppercase text-slate-400">{t.guestLabel} {idx + 1}</span>
                         {guests.length > 1 && (
-                          <button 
-                            onClick={() => removeGuest(guest.id)} 
+                          <button
+                            onClick={() => removeGuest(guest.id)}
                             className="text-slate-300 hover:text-rose-500 transition-colors p-1"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -1099,36 +1121,36 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
                         </div>
                         <div>
                           <label className={`text-[10px] font-bold ml-1 uppercase ${parseInt(guest.age) < 18 ? 'text-slate-300' : 'text-slate-400'}`}>{t.regFormPhone}</label>
-                          <input 
-                            type="text" 
-                            value={parseInt(guest.age) < 16 ? "000-0000-0000" : guest.phone} 
+                          <input
+                            type="text"
+                            value={parseInt(guest.age) < 16 ? "000-0000-0000" : guest.phone}
                             disabled={parseInt(guest.age) < 16}
-                            onChange={(e) => updateGuest(guest.id, 'phone', e.target.value)} 
-                            className={`w-full p-3 border border-slate-100 rounded-xl text-sm shadow-sm outline-none transition-colors ${parseInt(guest.age) < 16 ? 'bg-slate-100/50 text-slate-300 cursor-not-allowed' : 'bg-white text-slate-900'}`} 
+                            onChange={(e) => updateGuest(guest.id, 'phone', e.target.value)}
+                            className={`w-full p-3 border border-slate-100 rounded-xl text-sm shadow-sm outline-none transition-colors ${parseInt(guest.age) < 16 ? 'bg-slate-100/50 text-slate-300 cursor-not-allowed' : 'bg-white text-slate-900'}`}
                           />
                         </div>
                         {guest.isResident ? (
                           <div className="col-span-2 space-y-3">
                             <div>
-                               <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormZip}</label>
-                               <div className="flex gap-2">
-                                 <input type="text" placeholder={t.zipPlaceholder} value={guest.postalCode} onChange={(e) => updateGuest(guest.id, 'postalCode', e.target.value.replace(/\D/g,''))} className="flex-1 p-3 bg-white border border-slate-100 rounded-xl text-sm font-mono" maxLength={7} />
-                                 <button onClick={() => lookupZipCode(guest.id, guest.postalCode)} disabled={guest.postalCode.length < 7 || isLookingUpZip === guest.id} className="px-4 bg-slate-900 text-white rounded-xl text-xs font-bold disabled:bg-slate-200 flex items-center gap-2">
-                                   {isLookingUpZip === guest.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />} {isLookingUpZip === guest.id ? t.zipLoading : t.zipLookup}
-                                 </button>
-                               </div>
+                              <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormZip}</label>
+                              <div className="flex gap-3">
+                                <input type="text" placeholder={t.zipPlaceholder} value={guest.postalCode} onChange={(e) => updateGuest(guest.id, 'postalCode', e.target.value.replace(/\D/g, ''))} className="flex-1 p-3 bg-white border border-slate-100 rounded-xl text-sm font-mono" maxLength={7} />
+                                <button onClick={() => lookupZipCode(guest.id, guest.postalCode)} disabled={guest.postalCode.length < 7 || isLookingUpZip === guest.id} className="flex-1 px-4 bg-slate-900 text-white rounded-xl text-xs font-bold disabled:bg-slate-200 flex items-center gap-2">
+                                  {isLookingUpZip === guest.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />} {isLookingUpZip === guest.id ? t.zipLoading : t.zipLookup}
+                                </button>
+                              </div>
                             </div>
                             <div>
                               <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormAddr}</label>
-                              <input type="text" value={guest.address} onChange={(e) => updateGuest(guest.id, 'address', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm" placeholder="Osaka-fu, Naniwa-ku..." />
+                              <input type="text" value={guest.address} onChange={(e) => updateGuest(guest.id, 'address', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm" placeholder="大阪府大阪市…" />
                             </div>
                           </div>
                         ) : (
                           <div className="col-span-2 grid grid-cols-2 gap-3">
                             <div className="col-span-2">
                               <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormNation}</label>
-                              <select 
-                                value={guest.nationality} 
+                              <select
+                                value={guest.nationality}
                                 onChange={(e) => updateGuest(guest.id, 'nationality', e.target.value)}
                                 className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none appearance-none cursor-pointer"
                               >
@@ -1143,20 +1165,20 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
                               <input type="text" value={guest.passportNumber} onChange={(e) => updateGuest(guest.id, 'passportNumber', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm" />
                             </div>
                             <div className="col-span-2 relative">
-                                <input type="file" accept="image/*" className="absolute inset-0 w-full h-full opacity-0 z-10 cursor-pointer" onChange={(e) => fileToBase64(e.target.files?.[0]).then(base64 => updateGuest(guest.id, 'passportPhoto', base64))} />
-                                <div className={`p-4 border-2 border-dashed rounded-xl flex items-center justify-center gap-2 ${guest.passportPhoto ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-slate-100 text-slate-300'}`}>
-                                  <Camera className="w-4 h-4" /> <span className="text-[10px] font-bold uppercase">{guest.passportPhoto ? 'Uploaded' : t.regPassportUpload}</span>
-                                </div>
+                              <input type="file" accept="image/*" className="absolute inset-0 w-full h-full opacity-0 z-10 cursor-pointer" onChange={(e) => fileToBase64(e.target.files?.[0]).then(base64 => updateGuest(guest.id, 'passportPhoto', base64))} />
+                              <div className={`p-4 border-2 border-dashed rounded-xl flex items-center justify-center gap-2 ${guest.passportPhoto ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-slate-100 text-slate-300'}`}>
+                                <Camera className="w-4 h-4" /> <span className="text-[10px] font-bold uppercase">{guest.passportPhoto ? 'Uploaded' : t.regPassportUpload}</span>
+                              </div>
                             </div>
                           </div>
                         )}
                         {guest.age && parseInt(guest.age) < 18 && (
                           <div className="col-span-2 bg-rose-50 p-4 rounded-xl border border-rose-100 space-y-3">
-                             <p className="text-[10px] font-bold text-rose-600 flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> {t.regMinorAlert}</p>
-                             <div className="grid grid-cols-2 gap-2">
-                                <input type="text" placeholder={t.regFormName} value={guest.guardianName} onChange={(e) => updateGuest(guest.id, 'guardianName', e.target.value)} className="w-full p-2 bg-white rounded-lg text-xs outline-none" />
-                                <input type="text" placeholder="Phone" value={guest.guardianPhone} onChange={(e) => updateGuest(guest.id, 'guardianPhone', e.target.value)} className="w-full p-2 bg-white rounded-lg text-xs outline-none" />
-                             </div>
+                            <p className="text-[10px] font-bold text-rose-600 flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> {t.regMinorAlert}</p>
+                            <div className="grid grid-cols-2 gap-2">
+                              <input type="text" placeholder={t.regFormName} value={guest.guardianName} onChange={(e) => updateGuest(guest.id, 'guardianName', e.target.value)} className="w-full p-2 bg-white rounded-lg text-xs outline-none" />
+                              <input type="text" placeholder="Phone" value={guest.guardianPhone} onChange={(e) => updateGuest(guest.id, 'guardianPhone', e.target.value)} className="w-full p-2 bg-white rounded-lg text-xs outline-none" />
+                            </div>
                           </div>
                         )}
                       </div>
@@ -1178,9 +1200,9 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
 
           <div className="mt-8 flex gap-4">
             {currentStep > 0 && <button onClick={() => setCurrentStep(currentStep - 1)} className="p-4 rounded-2xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"><ChevronLeft className="w-6 h-6" /></button>}
-            <button 
-              onClick={handleNext} 
-              disabled={(stepConfig.id === 'registration' && !isRegValid()) || (stepConfig.id === 'rules' && !hasAgreed) || isSubmitting} 
+            <button
+              onClick={handleNext}
+              disabled={(stepConfig.id === 'registration' && !isRegValid()) || (stepConfig.id === 'rules' && !hasAgreed) || isSubmitting}
               className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-2xl font-bold transition-all ${((stepConfig.id === 'registration' && !isRegValid()) || (stepConfig.id === 'rules' && !hasAgreed)) ? 'bg-slate-100 text-slate-300 cursor-not-allowed' : 'bg-slate-900 text-white shadow-lg hover:bg-slate-800'}`}
             >
               {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : (currentStep === steps.length - 1 ? t.finish : t.next)}
@@ -1189,25 +1211,6 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
           </div>
         </div>
       </div>
-      <style>{`
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
-        .step-content-surface { padding: 1.25rem; border-radius: 1rem; background: #f8fafc; border: 1px solid #f1f5f9; }
-        .step-content h1, .step-content h2, .step-content h3 { font-weight: 700; color: #0f172a; }
-        .step-content p { line-height: 1.6; }
-        .step-content ul { list-style: disc; padding-left: 1.25rem; }
-        .step-content ol { list-style: decimal; padding-left: 1.25rem; }
-        .step-content img { max-width: 100%; border-radius: 0.75rem; box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08); }
-        .step-content a { color: #2563eb; text-decoration: underline; }
-        .rich-text-editor:empty::before {
-          content: attr(data-placeholder);
-          color: #94a3b8;
-          pointer-events: none;
-        }
-        @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
-        .animate-shake { animation: shake 0.3s ease-in-out; }
-      `}</style>
     </div>
   );
 };

@@ -142,6 +142,9 @@ const bufferToBase64Url = (buffer) => {
 };
 
 const base64UrlToBuffer = (base64url) => {
+  if (!base64url || typeof base64url !== 'string') {
+    return new Uint8Array(0).buffer;
+  }
   const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
   const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=');
   const binary = atob(padded);
@@ -170,15 +173,17 @@ const toPublicKeyCredentialJSON = (credential) => {
     type: credential.type,
     authenticatorAttachment: credential.authenticatorAttachment || undefined,
     clientExtensionResults: credential.getClientExtensionResults ? credential.getClientExtensionResults() : {},
-    response: {}
+    response: {
+      clientDataJSON: toBase64Url(response.clientDataJSON),
+    }
   };
 
+  // 注册特有字段
   if (response.attestationObject) {
     payload.response.attestationObject = toBase64Url(response.attestationObject);
   }
-  if (response.clientDataJSON) {
-    payload.response.clientDataJSON = toBase64Url(response.clientDataJSON);
-  }
+  
+  // 认证特有字段 (signature 和 authenticatorData)
   if (response.authenticatorData) {
     payload.response.authenticatorData = toBase64Url(response.authenticatorData);
   }
@@ -188,25 +193,42 @@ const toPublicKeyCredentialJSON = (credential) => {
   if (response.userHandle) {
     payload.response.userHandle = toBase64Url(response.userHandle);
   }
-  if (response.transports && typeof response.transports === 'function') {
-    payload.response.transports = response.transports();
+  
+  // 传输渠道信息
+  if (response.getTransports) {
+    payload.response.transports = response.getTransports();
   }
 
   return payload;
 };
 
+const prepareRegisterOptions = (options) => {
+  if (!options) return {};
 
-const prepareRegisterOptions = (options) => ({
-  ...options,
-  challenge: base64UrlToBuffer(options.challenge),
-  user: options.user
-    ? { ...options.user, id: base64UrlToBuffer(options.user.id) }
-    : undefined,
-  excludeCredentials: (options.excludeCredentials || []).map((item) => ({
-    ...item,
-    id: base64UrlToBuffer(item.id)
-  }))
-});
+  return {
+    ...options,
+    // 確保 rp 存在，否則瀏覽器會報 Type Error
+    rp: options.rp || {
+      name: "Checkin Admin",
+      id: window.location.hostname
+    },
+    // 確保 user.id 從 Base64 轉回 ArrayBuffer
+    user: options.user ? {
+      ...options.user,
+      id: base64UrlToBuffer(options.user.id)
+    } : undefined,
+    // 補全算法參數，這是某些瀏覽器的必填項
+    pubKeyCredParams: options.pubKeyCredParams || [
+      { alg: -7, type: 'public-key' }, // ES256
+      { alg: -257, type: 'public-key' } // RS256
+    ],
+    challenge: base64UrlToBuffer(options.challenge),
+    excludeCredentials: (options.excludeCredentials || []).map((item) => ({
+      ...item,
+      id: base64UrlToBuffer(item.id)
+    }))
+  };
+};
 
 const prepareAuthOptions = (options) => ({
   ...options,

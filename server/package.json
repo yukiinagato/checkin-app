@@ -8,13 +8,14 @@
     "dev": "nodemon server.js"
   },
   "dependencies": {
+    "@simplewebauthn/server": "^10.0.1",
     "body-parser": "^1.20.2",
     "cors": "^2.8.5",
+    "dotenv": "^17.2.4",
     "express": "^4.19.2",
     "fs-extra": "^11.2.0",
     "sqlite3": "^5.1.7",
-    "uuid": "^9.0.1",
-    "@simplewebauthn/server": "^10.0.1"
+    "uuid": "^9.0.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"

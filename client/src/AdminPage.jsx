@@ -238,6 +238,31 @@ const prepareAuthOptions = (options) => ({
     id: base64UrlToBuffer(item.id)
   }))
 });
+
+const appendAdminTokenToPhotoUrl = (photoUrl, adminToken) => {
+  if (!photoUrl || !adminToken) {
+    return photoUrl;
+  }
+
+  try {
+    const parsedUrl = new URL(photoUrl, window.location.origin);
+    parsedUrl.searchParams.set('sessionToken', adminToken);
+    return parsedUrl.toString();
+  } catch (error) {
+    return photoUrl;
+  }
+};
+
+const hydrateRecordPhotoUrls = (records, adminToken) => {
+  return (records || []).map((group) => ({
+    ...group,
+    guests: (group.guests || []).map((guest) => ({
+      ...guest,
+      passportPhoto: appendAdminTokenToPhotoUrl(guest.passportPhoto, adminToken)
+    }))
+  }));
+};
+
 const AdminLogin = ({ db, onLogin, onBack }) => {
   const [bootstrapToken, setBootstrapToken] = useState('');
   const [error, setError] = useState(false);
@@ -401,7 +426,7 @@ const AdminDashboard = ({
   useEffect(() => {
     db.getAllRecords(adminToken)
       .then(data => {
-        setRecords(data);
+        setRecords(hydrateRecordPhotoUrls(data, adminToken));
         setServerStatus('online');
       })
       .catch(() => {

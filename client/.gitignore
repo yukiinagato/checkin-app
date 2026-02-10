@@ -11,6 +11,9 @@ dist
 dist-ssr
 *.local
 hotel.db
+*.db-journal
+*.db-shm
+*.db-wal
 .env
 .env.local
 .env.development.local

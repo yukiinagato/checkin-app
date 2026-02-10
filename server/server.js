@@ -5,36 +5,72 @@ const fs = require('fs-extra');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
+const {
+  generateRegistrationOptions,
+  verifyRegistrationResponse,
+  generateAuthenticationOptions,
+  verifyAuthenticationResponse
+} = require('@simplewebauthn/server');
 const STEP_TEMPLATES = require('./stepTemplates');
+require('dotenv').config();
+
+const encoder = new TextEncoder();
 
 const app = express();
 const PORT = 3001;
 
-// 1. 中間件配置
-app.use(cors()); // 允許 React 前端跨域訪問
+// ----------------------------------------------------------------------
+// 1. 環境變數檢查
+// ----------------------------------------------------------------------
+const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN;
+if (!ADMIN_API_TOKEN) {
+  throw new Error('ADMIN_API_TOKEN is required');
+}
+
+const RP_ID = process.env.WEBAUTHN_RP_ID || 'localhost';
+const RP_NAME = process.env.WEBAUTHN_RP_NAME || 'Checkin Admin';
+// 修復：移除 Origin 可能存在的末尾斜線
+const EXPECTED_ORIGIN = (process.env.WEBAUTHN_ORIGIN || 'http://localhost:5173').replace(/\/$/, '');
+
+const CORS_ORIGINS = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map((item) => item.trim())
+  .filter(Boolean);
+
+if (!CORS_ORIGINS.length) {
+  throw new Error('CORS_ORIGIN is required (comma-separated origins)');
+}
+
+// ----------------------------------------------------------------------
+// 2. 中間件配置
+// ----------------------------------------------------------------------
+app.use(cors({ origin: CORS_ORIGINS }));
 app.use(express.json({ limit: '50mb' })); // 允許大文件上傳(圖片)
 
-// 2. 初始化存儲路徑
+// ----------------------------------------------------------------------
+// 3. 初始化存儲路徑
+// ----------------------------------------------------------------------
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
 const DB_PATH = path.join(__dirname, 'hotel.db');
-const ALLOWED_IMAGE_TYPES = new Set([
+const ALLOWED_IMAGE_TYPES = new Map([
   'image/jpeg',
   'image/jpg',
   'image/png',
   'image/webp',
   'image/heic',
   'image/heif'
-]);
-const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN || '8808';
+].map((mime) => [mime, mime === 'image/jpg' ? 'jpg' : mime.split('/')[1]]));
 fs.ensureDirSync(UPLOAD_DIR);
 
-// 3. 初始化 SQLite 數據庫
+// ----------------------------------------------------------------------
+// 4. 初始化 SQLite 數據庫
+// ----------------------------------------------------------------------
 const db = new sqlite3.Database(DB_PATH, (err) => {
   if (err) console.error('數據庫連接失敗:', err.message);
   else console.log('已連接到本地 SQLite 數據庫');
 });
 
-// 創建表結構
+// 創建表結構 (保留原始詳細定義)
 db.run(`
   CREATE TABLE IF NOT EXISTS checkins (
     id TEXT PRIMARY KEY,
@@ -52,13 +88,41 @@ db.run(`
   )
 `);
 
-
 db.run(`
   CREATE TABLE IF NOT EXISTS admin_passkeys (
     credential_id TEXT PRIMARY KEY,
+    public_key TEXT NOT NULL,
+    counter INTEGER NOT NULL DEFAULT 0,
+    transports TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `);
+
+db.serialize(() => {
+  db.all('PRAGMA table_info(admin_passkeys)', [], (pragmaErr, columns) => {
+    if (pragmaErr) {
+      console.error('讀取 admin_passkeys 表結構失敗:', pragmaErr.message);
+      return;
+    }
+
+    const columnNames = new Set((columns || []).map((column) => column.name));
+    if (!columnNames.has('public_key')) {
+      db.run('ALTER TABLE admin_passkeys ADD COLUMN public_key TEXT', (err) => {
+        if (err) console.error('添加 public_key 欄位失敗:', err.message);
+      });
+    }
+    if (!columnNames.has('counter')) {
+      db.run('ALTER TABLE admin_passkeys ADD COLUMN counter INTEGER NOT NULL DEFAULT 0', (err) => {
+        if (err) console.error('添加 counter 欄位失敗:', err.message);
+      });
+    }
+    if (!columnNames.has('transports')) {
+      db.run('ALTER TABLE admin_passkeys ADD COLUMN transports TEXT', (err) => {
+        if (err) console.error('添加 transports 欄位失敗:', err.message);
+      });
+    }
+  });
+});
 
 const seedStepTemplates = () => {
   Object.entries(STEP_TEMPLATES).forEach(([lang, steps]) => {
@@ -85,7 +149,7 @@ const seedStepTemplates = () => {
 seedStepTemplates();
 
 // ----------------------------------------------------------------------
-// 輔助函數：處理 Base64 圖片並保存為文件
+// 5. 輔助函數：業務邏輯與安全驗證
 // ----------------------------------------------------------------------
 const saveImagesLocally = async (guests) => {
   const processedGuests = await Promise.all(guests.map(async (guest) => {
@@ -94,17 +158,21 @@ const saveImagesLocally = async (guests) => {
         // 解析 Base64
         const matches = guest.passportPhoto.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
         if (!matches || matches.length !== 3) return guest;
-        if (!ALLOWED_IMAGE_TYPES.has(matches[1])) return guest;
+        const extension = ALLOWED_IMAGE_TYPES.get(matches[1]);
+        if (!extension) return guest;
 
         const imageBuffer = Buffer.from(matches[2], 'base64');
-        const extension = matches[1].split('/')[1];
-        const filename = `${guest.id}_passport.${extension}`;
-        const filePath = path.join(UPLOAD_DIR, filename);
+        const filename = `${crypto.randomUUID()}_passport.${extension}`;
+        const safeUploadDir = path.resolve(UPLOAD_DIR);
+        const filePath = path.resolve(safeUploadDir, filename);
+        if (!filePath.startsWith(`${safeUploadDir}${path.sep}`)) {
+          throw new Error('Invalid upload path');
+        }
 
         // 寫入文件
-        await fs.outputFile(filePath, imageBuffer);
+        await fs.outputFile(filePath, imageBuffer, { flag: 'wx' });
 
-        // 更新 guest 對象中的圖片路徑為文件名（管理端按權限讀取）
+        // 更新 guest 對象中的圖片路徑為文件名
         return {
           ...guest,
           passportPhoto: filename
@@ -133,19 +201,61 @@ const adminSessions = new Map();
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
+// [新增] 統一 Challenge 格式化工具：防止編碼不一致導致的 400 錯誤
+const normalizeChallenge = (str) => {
+  if (!str) return '';
+  return str.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+};
+
 const createChallenge = (purpose) => {
-  const challenge = crypto.randomBytes(32).toString('base64url');
+  const raw = crypto.randomBytes(32).toString('base64url');
+  const challenge = normalizeChallenge(raw);
   adminChallenges.set(challenge, { purpose, expiresAt: Date.now() + CHALLENGE_TTL_MS });
   return challenge;
 };
 
 const consumeChallenge = (challenge, purpose) => {
-  const found = adminChallenges.get(challenge);
-  if (!found) return false;
-  adminChallenges.delete(challenge);
-  if (found.purpose !== purpose) return false;
-  if (found.expiresAt < Date.now()) return false;
-  return true;
+  const norm = normalizeChallenge(challenge);
+  
+  // 1. 直接匹配
+  if (adminChallenges.has(norm)) {
+    const found = adminChallenges.get(norm);
+    adminChallenges.delete(norm);
+    if (found.purpose !== purpose) {
+      console.error(`Challenge purpose mismatch: ${found.purpose} vs ${purpose}`);
+      return false;
+    }
+    if (found.expiresAt < Date.now()) {
+      console.error('Challenge expired');
+      return false;
+    }
+    return true;
+  }
+
+  // 2. 嘗試解碼匹配 (處理客戶端回傳雙重編碼的情況)
+  // 如果前端回傳的是 Base64(OriginalChallenge)，我們嘗試解碼它看看是否能對應到 Map 中的 Key
+  try {
+    const decoded = Buffer.from(norm, 'base64url').toString('utf-8');
+    const decodedNorm = normalizeChallenge(decoded);
+    if (adminChallenges.has(decodedNorm)) {
+      const found = adminChallenges.get(decodedNorm);
+      adminChallenges.delete(decodedNorm);
+      if (found.purpose !== purpose) {
+        console.error(`Challenge purpose mismatch (decoded): ${found.purpose} vs ${purpose}`);
+        return false;
+      }
+      if (found.expiresAt < Date.now()) {
+        console.error('Challenge expired (decoded)');
+        return false;
+      }
+      return true;
+    }
+  } catch (e) {
+    // 解碼失敗則忽略，繼續報錯
+  }
+
+  console.error(`Challenge not found in map. Key: ${norm}, Map keys: ${Array.from(adminChallenges.keys())}`);
+  return false;
 };
 
 const createSessionToken = () => {
@@ -154,22 +264,21 @@ const createSessionToken = () => {
   return token;
 };
 
-const getAdminSessionFromRequest = (req) => {
+const getBearerToken = (req) => {
   const authHeader = req.get('authorization');
   if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
-    return authHeader.slice('Bearer '.length);
+    return authHeader.slice('Bearer '.length).trim();
   }
-
-  const sessionHeader = req.get('x-admin-session');
-  if (typeof sessionHeader === 'string' && sessionHeader) {
-    return sessionHeader;
-  }
-
-  if (typeof req.query.token === 'string' && req.query.token) {
-    return req.query.token;
-  }
-
   return '';
+};
+
+const getAdminSessionFromRequest = (req) => {
+  const bearerToken = getBearerToken(req);
+  if (bearerToken) {
+    return bearerToken;
+  }
+  const sessionToken = typeof req.query?.sessionToken === 'string' ? req.query.sessionToken.trim() : '';
+  return sessionToken;
 };
 
 const requireAdminAuth = (req, res, next) => {
@@ -183,40 +292,48 @@ const requireAdminAuth = (req, res, next) => {
   next();
 };
 
-const toAdminImageUrl = (passportPhoto, sessionToken) => {
+const extractChallengeFromCredential = (credential) => {
+  try {
+    const clientDataJSON = credential?.response?.clientDataJSON;
+    if (!clientDataJSON) return '';
+    const decoded = Buffer.from(clientDataJSON, 'base64url').toString('utf8');
+    const parsed = JSON.parse(decoded);
+    // [修復] 提取時也進行標準化處理
+    return normalizeChallenge(parsed.challenge);
+  } catch (error) {
+    console.error('Error parsing clientDataJSON:', error);
+    return '';
+  }
+};
+
+const toAdminImageUrl = (passportPhoto) => {
   if (typeof passportPhoto !== 'string' || !passportPhoto) {
     return passportPhoto;
   }
-
   if (passportPhoto.startsWith('/api/admin/uploads/')) {
     return passportPhoto;
   }
-
   const rawName = passportPhoto
     .replace(/^https?:\/\/[^/]+\/uploads\//, '')
     .replace(/^\/uploads\//, '');
-
-  return `http://localhost:${PORT}/api/admin/uploads/${encodeURIComponent(rawName)}?token=${encodeURIComponent(sessionToken)}`;
+  return `http://localhost:${PORT}/api/admin/uploads/${encodeURIComponent(rawName)}`;
 };
 
 // ----------------------------------------------------------------------
-// API 路由
+// 6. API 路由
 // ----------------------------------------------------------------------
 
-// 獲取所有記錄
 app.get('/api/records', requireAdminAuth, (req, res) => {
-  const sessionToken = getAdminSessionFromRequest(req);
   db.all("SELECT * FROM checkins ORDER BY created_at DESC", [], (err, rows) => {
     if (err) {
       res.status(500).json({ error: err.message });
       return;
     }
-    // 將數據庫存儲的 JSON 字符串轉回對象
     const records = rows.map((row) => {
       const guests = parseRecordData(row).map((guest) => ({
         ...guest,
         deleted: guest.deleted === true,
-        passportPhoto: toAdminImageUrl(guest.passportPhoto, sessionToken)
+        passportPhoto: toAdminImageUrl(guest.passportPhoto)
       }));
       return {
         id: row.id,
@@ -259,93 +376,178 @@ app.get('/api/admin/passkeys/status', (req, res) => {
   });
 });
 
-app.post('/api/admin/passkeys/register/options', (req, res) => {
-  const bootstrapToken = req.get('x-admin-token') || req.body?.bootstrapToken || '';
-  db.get('SELECT COUNT(*) as count FROM admin_passkeys', [], (err, row) => {
-    if (err) {
-      res.status(500).json({ error: err.message });
-      return;
-    }
+// [修復] 註冊選項接口：使用 async/await 確保 generateRegistrationOptions 執行完成
+app.post('/api/admin/passkeys/register/options', async (req, res) => {
+  const bearerToken = getBearerToken(req);
+
+  try {
+    // 檢查管理員狀態
+    const row = await new Promise((resolve, reject) => {
+      db.get('SELECT COUNT(*) as count FROM admin_passkeys', [], (err, r) => err ? reject(err) : resolve(r));
+    });
+    
     const hasPasskey = Number(row?.count || 0) > 0;
-    if (hasPasskey) {
-      res.status(403).json({ error: 'Passkey already configured' });
-      return;
-    }
-    if (!bootstrapToken || bootstrapToken !== ADMIN_API_TOKEN) {
-      res.status(401).json({ error: 'Invalid bootstrap token' });
-      return;
+    if (!hasPasskey) {
+      if (!bearerToken || bearerToken !== ADMIN_API_TOKEN) return res.status(401).json({ error: 'Invalid bootstrap token' });
+    } else {
+      const expiresAt = adminSessions.get(bearerToken);
+      if (!bearerToken || !expiresAt || expiresAt < Date.now()) {
+        if (bearerToken) adminSessions.delete(bearerToken);
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
     }
 
     const challenge = createChallenge('register');
-    res.json({ challenge });
-  });
+    
+    // 獲取排除列表
+    const rowsForExclude = await new Promise((resolve, reject) => {
+      db.all('SELECT credential_id FROM admin_passkeys', [], (err, rows) => err ? reject(err) : resolve(rows));
+    });
+
+    // 生成選項 (await 是關鍵)
+    const options = await generateRegistrationOptions({
+      rpName: RP_NAME,
+      rpID: RP_ID,
+      userID: encoder.encode('admin'),
+      userName: 'admin@checkin.local',
+      attestationType: 'none',
+      challenge,
+      authenticatorSelection: {
+        residentKey: 'preferred',
+        userVerification: 'preferred'
+      },
+      excludeCredentials: (rowsForExclude || []).map((item) => ({
+        id: item.credential_id,
+        type: 'public-key'
+      }))
+    });
+
+    // 安全序列化 userID
+    const serializableOptions = {
+      ...options,
+      user: {
+        ...options.user,
+        id: Buffer.from(options.user.id).toString('base64url')
+      }
+    };
+
+    res.json(serializableOptions);
+  } catch (err) {
+    console.error('Registration Options Error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.post('/api/admin/passkeys/register/verify', (req, res) => {
-  const { challenge, credentialId } = req.body || {};
-  if (!challenge || !credentialId) {
-    res.status(400).json({ error: 'challenge and credentialId are required' });
-    return;
+// [修復] 註冊驗證接口：增加 Challenge 標準化處理，並適配新版 SimpleWebAuthn 結構
+app.post('/api/admin/passkeys/register/verify', async (req, res) => {
+  const { credential } = req.body || {};
+  if (!credential) return res.status(400).json({ error: 'credential is required' });
+
+  const challenge = extractChallengeFromCredential(credential);
+
+  if (!challenge || !consumeChallenge(challenge, 'register')) {
+    return res.status(400).json({ error: 'Invalid or expired challenge' });
   }
 
-  if (!consumeChallenge(challenge, 'register')) {
-    res.status(400).json({ error: 'Invalid or expired challenge' });
-    return;
-  }
+  try {
+    const verification = await verifyRegistrationResponse({
+      response: credential,
+      expectedChallenge: challenge,
+      expectedOrigin: EXPECTED_ORIGIN,
+      expectedRPID: RP_ID,
+      requireUserVerification: true
+    });
 
-  db.run('INSERT OR REPLACE INTO admin_passkeys (credential_id) VALUES (?)', [credentialId], function (err) {
-    if (err) {
-      res.status(500).json({ error: err.message });
-      return;
+    if (verification.verified && verification.registrationInfo) {
+      // 修正: 適配新版 @simplewebauthn/server 的回傳結構
+      // 舊版結構為 { credential: { id, publicKey, counter } }
+      // 新版結構直接展開為 { credentialID, credentialPublicKey, counter }
+      const { credentialID, credentialPublicKey, counter } = verification.registrationInfo;
+      const transports = Array.isArray(credential.response?.transports) ? JSON.stringify(credential.response.transports) : null;
+
+      db.run(
+        'INSERT OR REPLACE INTO admin_passkeys (credential_id, public_key, counter, transports) VALUES (?, ?, ?, ?)',
+        [credentialID, Buffer.from(credentialPublicKey).toString('base64url'), counter, transports],
+        (err) => {
+          if (err) return res.status(500).json({ error: err.message });
+          res.json({ success: true });
+        }
+      );
+    } else {
+      res.status(400).json({ error: 'Registration verification failed' });
     }
-    res.json({ success: true });
-  });
+  } catch (error) {
+    console.error('Verify Registration Error:', error);
+    res.status(400).json({ error: error.message });
+  }
 });
 
+// [修復] 認證選項接口：修復異步 Promise 問題
 app.post('/api/admin/passkeys/auth/options', (req, res) => {
-  db.all('SELECT credential_id FROM admin_passkeys', [], (err, rows) => {
-    if (err) {
-      res.status(500).json({ error: err.message });
-      return;
-    }
-
-    if (!rows?.length) {
-      res.status(404).json({ error: 'No passkey registered' });
-      return;
-    }
+  db.all('SELECT credential_id FROM admin_passkeys', [], async (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!rows?.length) return res.status(404).json({ error: 'No passkey registered' });
 
     const challenge = createChallenge('auth');
-    res.json({
-      challenge,
-      allowCredentials: rows.map((row) => ({ id: row.credential_id, type: 'public-key' }))
-    });
+    try {
+      const options = await generateAuthenticationOptions({
+        rpID: RP_ID,
+        challenge,
+        userVerification: 'preferred',
+        allowCredentials: rows.map((row) => ({
+          id: row.credential_id,
+          type: 'public-key'
+        }))
+      });
+      res.json(options);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
   });
 });
 
-app.post('/api/admin/passkeys/auth/verify', (req, res) => {
-  const { challenge, credentialId } = req.body || {};
-  if (!challenge || !credentialId) {
-    res.status(400).json({ error: 'challenge and credentialId are required' });
-    return;
+// [修復] 認證驗證接口：修復異步問題與 Challenge 匹配
+app.post('/api/admin/passkeys/auth/verify', async (req, res) => {
+  const { credential } = req.body || {};
+  if (!credential || !credential.id) return res.status(400).json({ error: 'credential is required' });
+
+  const challenge = extractChallengeFromCredential(credential);
+  if (!challenge || !consumeChallenge(challenge, 'auth')) {
+    return res.status(400).json({ error: 'Invalid or expired challenge' });
   }
 
-  if (!consumeChallenge(challenge, 'auth')) {
-    res.status(400).json({ error: 'Invalid or expired challenge' });
-    return;
-  }
+  db.get('SELECT * FROM admin_passkeys WHERE credential_id = ?', [credential.id], async (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row) return res.status(401).json({ error: 'Unknown passkey' });
 
-  db.get('SELECT credential_id FROM admin_passkeys WHERE credential_id = ?', [credentialId], (err, row) => {
-    if (err) {
-      res.status(500).json({ error: err.message });
-      return;
-    }
-    if (!row) {
-      res.status(401).json({ error: 'Unknown passkey' });
-      return;
-    }
+    try {
+      const verification = await verifyAuthenticationResponse({
+        response: credential,
+        expectedChallenge: challenge,
+        expectedOrigin: EXPECTED_ORIGIN,
+        expectedRPID: RP_ID,
+        authenticator: {
+          credentialID: row.credential_id,
+          credentialPublicKey: Buffer.from(row.public_key, 'base64url'),
+          counter: Number(row.counter || 0),
+          transports: row.transports ? JSON.parse(row.transports) : undefined
+        },
+        requireUserVerification: true
+      });
 
-    const sessionToken = createSessionToken();
-    res.json({ success: true, sessionToken });
+      if (verification.verified) {
+        const newCounter = verification.authenticationInfo.newCounter;
+        db.run('UPDATE admin_passkeys SET counter = ? WHERE credential_id = ?', [newCounter, row.credential_id]);
+        
+        const sessionToken = createSessionToken();
+        res.json({ success: true, sessionToken });
+      } else {
+        res.status(401).json({ error: 'Authentication verification failed' });
+      }
+    } catch (verifyErr) {
+      console.error('Verify Auth Error:', verifyErr);
+      res.status(400).json({ error: verifyErr.message });
+    }
   });
 });
 
@@ -359,14 +561,8 @@ app.get('/api/steps', (req, res) => {
   const { lang } = req.query;
   const targetLang = typeof lang === 'string' ? lang : 'zh-hans';
   db.get('SELECT steps FROM step_templates WHERE lang = ?', [targetLang], (err, row) => {
-    if (err) {
-      res.status(500).json({ error: err.message });
-      return;
-    }
-    if (!row) {
-      res.status(404).json({ error: 'Steps not found' });
-      return;
-    }
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row) return res.status(404).json({ error: 'Steps not found' });
     try {
       res.json(JSON.parse(row.steps));
     } catch (parseErr) {
@@ -375,75 +571,43 @@ app.get('/api/steps', (req, res) => {
   });
 });
 
-
 app.patch('/api/records/:recordId/guests/:guestId', requireAdminAuth, (req, res) => {
   const { recordId, guestId } = req.params;
   const { deleted } = req.body || {};
-
-  if (typeof deleted !== 'boolean') {
-    res.status(400).json({ error: 'Invalid deleted flag' });
-    return;
-  }
+  if (typeof deleted !== 'boolean') return res.status(400).json({ error: 'Invalid deleted flag' });
 
   db.get('SELECT data FROM checkins WHERE id = ?', [recordId], (err, row) => {
-    if (err) {
-      res.status(500).json({ error: err.message });
-      return;
-    }
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row) return res.status(404).json({ error: 'Record not found' });
 
-    if (!row) {
-      res.status(404).json({ error: 'Record not found' });
-      return;
-    }
-
-    let guests = [];
     try {
-      guests = JSON.parse(row.data);
+      const guests = JSON.parse(row.data);
+      let found = false;
+      const updatedGuests = guests.map((guest) => {
+        if (String(guest.id) !== String(guestId)) return guest;
+        found = true;
+        return { ...guest, deleted };
+      });
+
+      if (!found) return res.status(404).json({ error: 'Guest not found' });
+
+      db.run('UPDATE checkins SET data = ? WHERE id = ?', [JSON.stringify(updatedGuests), recordId], (updateErr) => {
+        if (updateErr) return res.status(500).json({ error: updateErr.message });
+        res.json({ success: true });
+      });
     } catch (parseErr) {
       res.status(500).json({ error: 'Invalid record data' });
-      return;
     }
-
-    let found = false;
-    const updatedGuests = guests.map((guest) => {
-      if (String(guest.id) !== String(guestId)) return guest;
-      found = true;
-      return {
-        ...guest,
-        deleted
-      };
-    });
-
-    if (!found) {
-      res.status(404).json({ error: 'Guest not found' });
-      return;
-    }
-
-    db.run('UPDATE checkins SET data = ? WHERE id = ?', [JSON.stringify(updatedGuests), recordId], function (updateErr) {
-      if (updateErr) {
-        res.status(500).json({ error: updateErr.message });
-        return;
-      }
-      res.json({ success: true });
-    });
   });
 });
-
 
 app.put('/api/admin/steps', requireAdminAuth, (req, res) => {
   const { lang } = req.query;
   const { steps } = req.body || {};
-
   const targetLang = typeof lang === 'string' ? lang : '';
-  if (!targetLang) {
-    res.status(400).json({ error: 'lang is required' });
-    return;
-  }
-
-  if (!Array.isArray(steps)) {
-    res.status(400).json({ error: 'steps must be an array' });
-    return;
-  }
+  
+  if (!targetLang) return res.status(400).json({ error: 'lang is required' });
+  if (!Array.isArray(steps)) return res.status(400).json({ error: 'steps must be an array' });
 
   db.run(
     `INSERT INTO step_templates (lang, steps, updated_at)
@@ -452,17 +616,13 @@ app.put('/api/admin/steps', requireAdminAuth, (req, res) => {
        steps = excluded.steps,
        updated_at = CURRENT_TIMESTAMP`,
     [targetLang, JSON.stringify(steps)],
-    function (err) {
-      if (err) {
-        res.status(500).json({ error: err.message });
-        return;
-      }
+    (err) => {
+      if (err) return res.status(500).json({ error: err.message });
       res.json({ success: true });
     }
   );
 });
 
-// 提交入住信息
 app.post('/api/submit', async (req, res) => {
   try {
     const { guests } = req.body;
@@ -473,10 +633,8 @@ app.post('/api/submit', async (req, res) => {
     const submitId = uuidv4();
     const today = new Date().toISOString().split('T')[0];
 
-    // 1. 先處理圖片，保存到本地，獲取 URL
     const guestsWithUrls = (await saveImagesLocally(guests)).map((guest) => ({ ...guest, deleted: guest.deleted === true }));
 
-    // 2. 存入數據庫
     const stmt = db.prepare("INSERT INTO checkins (id, date, data) VALUES (?, ?, ?)");
     stmt.run(submitId, today, JSON.stringify(guestsWithUrls), function(err) {
       if (err) {
@@ -488,19 +646,18 @@ app.post('/api/submit', async (req, res) => {
       }
     });
     stmt.finalize();
-
   } catch (error) {
     console.error('服務器錯誤:', error);
     res.status(500).json({ success: false, error: 'Internal Server Error' });
   }
 });
 
-// 啟動服務
 app.listen(PORT, () => {
   console.log(`--------------------------------------------------`);
-  console.log(`🏨 飯店管理後台服務已啟動`);
+  console.log(`🏨 飯店管理後台服務已啟動 (完整增強版)`);
   console.log(`📡 API 地址: http://localhost:${PORT}`);
   console.log(`📂 圖片存儲: ${UPLOAD_DIR}`);
   console.log(`💾 數據庫: ${DB_PATH}`);
+  console.log(`🌐 WebAuthn Origin: ${EXPECTED_ORIGIN}`);
   console.log(`--------------------------------------------------`);
 });

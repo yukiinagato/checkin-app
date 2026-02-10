@@ -11,6 +11,8 @@ dist
 dist-ssr
 *.local
 server/uploads/*
+*.db
+.env
 
 .vscode/*
 !.vscode/extensions.json
@@ -21,3 +23,5 @@ server/uploads/*
 *.njsproj
 *.sln
 *.sw?
+server/.env
+server/hotel.db

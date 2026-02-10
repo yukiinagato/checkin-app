@@ -37,6 +37,49 @@ const fileToBase64 = (file) => {
   });
 };
 
+const sanitizeRichHtml = (html) => {
+  const template = document.createElement('template');
+  template.innerHTML = html || '';
+
+  const allowedTags = new Set(['P', 'B', 'STRONG', 'I', 'U', 'UL', 'OL', 'LI', 'A', 'IMG', 'BR', 'SPAN']);
+  const allowedAttrs = {
+    A: new Set(['href', 'target', 'rel']),
+    IMG: new Set(['src', 'alt'])
+  };
+
+  const walk = (node) => {
+    [...node.children].forEach((child) => {
+      if (!allowedTags.has(child.tagName)) {
+        child.replaceWith(...child.childNodes);
+        return;
+      }
+
+      [...child.attributes].forEach((attr) => {
+        const allowedForTag = allowedAttrs[child.tagName] || new Set();
+        if (!allowedForTag.has(attr.name)) {
+          child.removeAttribute(attr.name);
+        }
+      });
+
+      if (child.tagName === 'A') {
+        const href = child.getAttribute('href') || '';
+        if (!/^https?:\/\//i.test(href)) child.removeAttribute('href');
+      }
+
+      if (child.tagName === 'IMG') {
+        const src = child.getAttribute('src') || '';
+        if (!/^(data:image\/|https?:\/\/)/i.test(src)) child.removeAttribute('src');
+      }
+
+      walk(child);
+    });
+  };
+
+  walk(template.content);
+  return template.innerHTML;
+};
+
+
 const RichTextEditor = ({ value, onChange, placeholder }) => {
   const editorRef = useRef(null);
 
@@ -49,7 +92,7 @@ const RichTextEditor = ({ value, onChange, placeholder }) => {
 
   const updateValue = () => {
     if (!editorRef.current) return;
-    onChange(editorRef.current.innerHTML);
+    onChange(sanitizeRichHtml(editorRef.current.innerHTML));
   };
 
   const runCommand = (command, commandValue) => {
@@ -144,6 +187,70 @@ const base64UrlToBuffer = (base64url) => {
   return bytes.buffer;
 };
 
+
+const toBase64Url = (input) => {
+  if (input == null) return undefined;
+  if (input instanceof ArrayBuffer) return bufferToBase64Url(input);
+  if (ArrayBuffer.isView(input)) return bufferToBase64Url(input.buffer);
+  return input;
+};
+
+const toPublicKeyCredentialJSON = (credential) => {
+  if (!credential) return null;
+
+  const response = credential.response || {};
+  const payload = {
+    id: credential.id,
+    rawId: toBase64Url(credential.rawId),
+    type: credential.type,
+    authenticatorAttachment: credential.authenticatorAttachment || undefined,
+    clientExtensionResults: credential.getClientExtensionResults ? credential.getClientExtensionResults() : {},
+    response: {}
+  };
+
+  if (response.attestationObject) {
+    payload.response.attestationObject = toBase64Url(response.attestationObject);
+  }
+  if (response.clientDataJSON) {
+    payload.response.clientDataJSON = toBase64Url(response.clientDataJSON);
+  }
+  if (response.authenticatorData) {
+    payload.response.authenticatorData = toBase64Url(response.authenticatorData);
+  }
+  if (response.signature) {
+    payload.response.signature = toBase64Url(response.signature);
+  }
+  if (response.userHandle) {
+    payload.response.userHandle = toBase64Url(response.userHandle);
+  }
+  if (response.transports && typeof response.transports === 'function') {
+    payload.response.transports = response.transports();
+  }
+
+  return payload;
+};
+
+
+const prepareRegisterOptions = (options) => ({
+  ...options,
+  challenge: base64UrlToBuffer(options.challenge),
+  user: options.user
+    ? { ...options.user, id: base64UrlToBuffer(options.user.id) }
+    : undefined,
+  excludeCredentials: (options.excludeCredentials || []).map((item) => ({
+    ...item,
+    id: base64UrlToBuffer(item.id)
+  }))
+});
+
+const prepareAuthOptions = (options) => ({
+  ...options,
+  challenge: base64UrlToBuffer(options.challenge),
+  allowCredentials: (options.allowCredentials || []).map((item) => ({
+    ...item,
+    id: base64UrlToBuffer(item.id)
+  }))
+});
 const AdminLogin = ({ db, onLogin, onBack }) => {
   const [bootstrapToken, setBootstrapToken] = useState('');
   const [error, setError] = useState(false);
@@ -189,32 +296,13 @@ const AdminLogin = ({ db, onLogin, onBack }) => {
     try {
       const options = await db.getPasskeyRegisterOptions(bootstrapToken);
       const credential = await navigator.credentials.create({
-        publicKey: {
-          challenge: base64UrlToBuffer(options.challenge),
-          rp: { name: 'Checkin Admin' },
-          user: {
-            id: new TextEncoder().encode('admin-user'),
-            name: 'admin@checkin.local',
-            displayName: 'Hotel Admin'
-          },
-          pubKeyCredParams: [
-            { alg: -7, type: 'public-key' },
-            { alg: -257, type: 'public-key' }
-          ],
-          timeout: 60000,
-          attestation: 'none',
-          authenticatorSelection: {
-            residentKey: 'preferred',
-            userVerification: 'preferred'
-          }
-        }
+        publicKey: prepareRegisterOptions(options)
       });
 
       if (!credential) throw new Error('credential_create_failed');
 
       await db.verifyPasskeyRegistration({
-        challenge: options.challenge,
-        credentialId: bufferToBase64Url(credential.rawId)
+        credential: toPublicKeyCredentialJSON(credential)
       });
 
       setHasPasskey(true);
@@ -241,22 +329,13 @@ const AdminLogin = ({ db, onLogin, onBack }) => {
     try {
       const options = await db.getPasskeyAuthOptions();
       const assertion = await navigator.credentials.get({
-        publicKey: {
-          challenge: base64UrlToBuffer(options.challenge),
-          allowCredentials: (options.allowCredentials || []).map((item) => ({
-            type: 'public-key',
-            id: base64UrlToBuffer(item.id)
-          })),
-          timeout: 60000,
-          userVerification: 'preferred'
-        }
+        publicKey: prepareAuthOptions(options)
       });
 
       if (!assertion) throw new Error('credential_get_failed');
 
       const payload = await db.verifyPasskeyAuth({
-        challenge: options.challenge,
-        credentialId: bufferToBase64Url(assertion.rawId)
+        credential: toPublicKeyCredentialJSON(assertion)
       });
 
       onLogin(payload.sessionToken);
@@ -331,17 +410,66 @@ const AdminDashboard = ({
   const [stepsSaved, setStepsSaved] = useState(false);
   const [showDeletedRows, setShowDeletedRows] = useState(false);
   const [pendingActionKey, setPendingActionKey] = useState('');
+  const imageObjectUrlsRef = useRef([]);
+
+  const revokeImageObjectUrls = () => {
+    imageObjectUrlsRef.current.forEach((url) => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        // noop
+      }
+    });
+    imageObjectUrlsRef.current = [];
+  };
+
+  const hydrateRecordImages = async (inputRecords) => {
+    const hydrated = await Promise.all((inputRecords || []).map(async (group) => {
+      const nextGuests = await Promise.all((group.guests || []).map(async (guest) => {
+        if (!guest.passportPhoto) return guest;
+        const previewUrl = await db.fetchAdminImageBlobUrl(adminToken, guest.passportPhoto);
+        if (typeof previewUrl === 'string' && previewUrl.startsWith('blob:')) {
+          imageObjectUrlsRef.current.push(previewUrl);
+        }
+        return {
+          ...guest,
+          passportPhotoPreview: previewUrl
+        };
+      }));
+
+      return {
+        ...group,
+        guests: nextGuests
+      };
+    }));
+
+    return hydrated;
+  };
 
   useEffect(() => {
+    let active = true;
     db.getAllRecords(adminToken)
-      .then(data => {
-        setRecords(data);
+      .then(async (data) => {
+        revokeImageObjectUrls();
+        const hydrated = await hydrateRecordImages(data);
+        if (!active) {
+          revokeImageObjectUrls();
+          return;
+        }
+        setRecords(hydrated);
         setServerStatus('online');
       })
       .catch(() => {
+        if (!active) return;
+        revokeImageObjectUrls();
         setRecords([]);
         setServerStatus('offline');
       });
+
+    return () => {
+      active = false;
+      revokeImageObjectUrls();
+    };
   }, [adminToken]);
 
   useEffect(() => {
@@ -519,7 +647,7 @@ const AdminDashboard = ({
                         <td className="p-3">{guest.guardianName || '-'}</td>
                         <td className="p-3">{guest.guardianPhone || '-'}</td>
                         <td className="p-3">
-                          {guest.passportPhoto ? <a href={guest.passportPhoto} target="_blank" rel="noreferrer" className="text-emerald-700 underline">查看</a> : '-'}
+                          {guest.passportPhoto ? <a href={guest.passportPhotoPreview || guest.passportPhoto} target="_blank" rel="noreferrer" className="text-emerald-700 underline">查看</a> : '-'}
                         </td>
                         <td className="p-3 pr-6 text-right">
                           {showDeletedRows ? (
@@ -592,8 +720,8 @@ const AdminDashboard = ({
                     </div>
                     <div className="grid grid-cols-4 gap-2">
                       {dayGuests.map((g, i) => (
-                        <a href={g.passportPhoto} target="_blank" rel="noopener noreferrer" key={i} className="aspect-[3/4] bg-slate-100 rounded-lg overflow-hidden relative border border-slate-100 block">
-                          <img src={g.passportPhoto} alt={g.name} className="w-full h-full object-cover" />
+                        <a href={g.passportPhotoPreview || g.passportPhoto} target="_blank" rel="noopener noreferrer" key={i} className="aspect-[3/4] bg-slate-100 rounded-lg overflow-hidden relative border border-slate-100 block">
+                          <img src={g.passportPhotoPreview || g.passportPhoto} alt={g.name} className="w-full h-full object-cover" />
                           <div className="absolute inset-0 bg-black/50 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center">
                             <ExternalLink className="w-4 h-4 text-white" />
                           </div>

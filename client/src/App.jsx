@@ -55,12 +55,13 @@ const COUNTRY_DATA = [
 const API_URL = import.meta.env.DEV ? 'http://localhost:3001/api' : '/api';
 const STEP_STORAGE_KEY = 'checkin.steps';
 const DEFAULT_LANG = 'jp';
+const ADMIN_SESSION_KEY = 'checkin.admin.session';
 
 const DB = {
   async getAllRecords(adminToken) {
     const res = await fetch(`${API_URL}/records`, {
       headers: {
-        'x-admin-session': adminToken
+        Authorization: `Bearer ${adminToken}`
       }
     });
     if (!res.ok) throw new Error('Failed to fetch records');
@@ -70,7 +71,7 @@ const DB = {
   async validateAdminToken(adminToken) {
     const res = await fetch(`${API_URL}/admin/session`, {
       headers: {
-        'x-admin-session': adminToken
+        Authorization: `Bearer ${adminToken}`
       }
     });
     return res.ok;
@@ -87,9 +88,9 @@ const DB = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-admin-token': bootstrapToken
+        Authorization: `Bearer ${bootstrapToken}`
       },
-      body: JSON.stringify({ bootstrapToken })
+      body: JSON.stringify({})
     });
     if (!res.ok) throw new Error('Failed to get register options');
     return await res.json();
@@ -125,7 +126,7 @@ const DB = {
     const res = await fetch(`${API_URL}/admin/logout`, {
       method: 'POST',
       headers: {
-        'x-admin-session': adminToken
+        Authorization: `Bearer ${adminToken}`
       }
     });
     return res.ok;
@@ -142,7 +143,7 @@ const DB = {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
-        'x-admin-session': adminToken
+        Authorization: `Bearer ${adminToken}`
       },
       body: JSON.stringify({ steps })
     });
@@ -174,12 +175,28 @@ const DB = {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
-        'x-admin-session': adminToken
+        Authorization: `Bearer ${adminToken}`
       },
       body: JSON.stringify({ deleted })
     });
     if (!res.ok) throw new Error('Failed to update guest deletion state');
     return await res.json();
+  },
+
+  async fetchAdminImageBlobUrl(adminToken, imageUrl) {
+    if (!imageUrl || !adminToken) return imageUrl;
+    try {
+      const res = await fetch(imageUrl, {
+        headers: {
+          Authorization: `Bearer ${adminToken}`
+        }
+      });
+      if (!res.ok) return imageUrl;
+      const blob = await res.blob();
+      return URL.createObjectURL(blob);
+    } catch {
+      return imageUrl;
+    }
   },
 
   exportCSV(records) {
@@ -456,8 +473,50 @@ const saveSteps = (lang, steps) => {
   localStorage.setItem(`${STEP_STORAGE_KEY}.${lang}`, JSON.stringify(steps));
 };
 
+const sanitizeRichHtml = (html) => {
+  const template = document.createElement('template');
+  template.innerHTML = html || '';
+
+  const allowedTags = new Set(['P', 'B', 'STRONG', 'I', 'U', 'UL', 'OL', 'LI', 'A', 'IMG', 'BR', 'SPAN']);
+  const allowedAttrs = {
+    A: new Set(['href', 'target', 'rel']),
+    IMG: new Set(['src', 'alt'])
+  };
+
+  const walk = (node) => {
+    [...node.children].forEach((child) => {
+      if (!allowedTags.has(child.tagName)) {
+        child.replaceWith(...child.childNodes);
+        return;
+      }
+
+      [...child.attributes].forEach((attr) => {
+        const allowedForTag = allowedAttrs[child.tagName] || new Set();
+        if (!allowedForTag.has(attr.name)) {
+          child.removeAttribute(attr.name);
+        }
+      });
+
+      if (child.tagName === 'A') {
+        const href = child.getAttribute('href') || '';
+        if (!/^https?:\/\//i.test(href)) child.removeAttribute('href');
+      }
+
+      if (child.tagName === 'IMG') {
+        const src = child.getAttribute('src') || '';
+        if (!/^(data:image\/|https?:\/\/)/i.test(src)) child.removeAttribute('src');
+      }
+
+      walk(child);
+    });
+  };
+
+  walk(template.content);
+  return template.innerHTML;
+};
+
 const StepContent = ({ content, fallback }) => {
-  const html = (content || fallback || '').trim();
+  const html = sanitizeRichHtml((content || fallback || '').trim());
   if (!html) {
     return <p className="text-sm text-slate-500">暂无内容</p>;
   }
@@ -478,6 +537,16 @@ const App = () => {
   const [loading, setLoading] = useState(false);
   const [adminToken, setAdminToken] = useState('');
 
+  const updateAdminToken = (token) => {
+    const nextToken = typeof token === 'string' ? token : '';
+    setAdminToken(nextToken);
+    if (nextToken) {
+      sessionStorage.setItem(ADMIN_SESSION_KEY, nextToken);
+    } else {
+      sessionStorage.removeItem(ADMIN_SESSION_KEY);
+    }
+  };
+
   useEffect(() => {
     const handleRouteChange = () => {
       setView(getViewFromPath());
@@ -486,6 +555,23 @@ const App = () => {
     return () => {
       window.removeEventListener('popstate', handleRouteChange);
     };
+  }, []);
+
+  useEffect(() => {
+    const cached = sessionStorage.getItem(ADMIN_SESSION_KEY);
+    if (!cached) return;
+
+    DB.validateAdminToken(cached)
+      .then((ok) => {
+        if (ok) {
+          setAdminToken(cached);
+        } else {
+          sessionStorage.removeItem(ADMIN_SESSION_KEY);
+        }
+      })
+      .catch(() => {
+        sessionStorage.removeItem(ADMIN_SESSION_KEY);
+      });
   }, []);
 
   const navigateTo = (path) => {
@@ -510,7 +596,7 @@ const App = () => {
     return (
       <AdminPage
         adminToken={adminToken}
-        onAdminTokenChange={setAdminToken}
+        onAdminTokenChange={updateAdminToken}
         onExitAdmin={() => navigateTo('/')}
         db={DB}
         defaultLang={DEFAULT_LANG}

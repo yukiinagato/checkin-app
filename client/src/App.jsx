@@ -55,6 +55,7 @@ const COUNTRY_DATA = [
 // ----------------------------------------------------------------------
 const API_URL = import.meta.env.DEV ? 'http://localhost:3001/api' : '/api';
 const STEP_STORAGE_KEY = 'checkin.steps';
+const ADMIN_TOKEN_STORAGE_KEY = 'checkin.adminSessionToken';
 const DEFAULT_LANG = 'jp';
 
 const DB = {
@@ -483,7 +484,16 @@ const App = () => {
   const getViewFromPath = () => window.location.pathname.startsWith('/admin') ? 'admin' : 'guest';
   const [view, setView] = useState(getViewFromPath);
   const [loading, setLoading] = useState(false);
-  const [adminToken, setAdminToken] = useState('');
+  const [adminToken, setAdminToken] = useState(() => sessionStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) || '');
+
+  const handleAdminTokenChange = (token) => {
+    setAdminToken(token);
+    if (token) {
+      sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, token);
+      return;
+    }
+    sessionStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
+  };
 
   useEffect(() => {
     const handleRouteChange = () => {
@@ -517,7 +527,7 @@ const App = () => {
     return (
       <AdminPage
         adminToken={adminToken}
-        onAdminTokenChange={setAdminToken}
+        onAdminTokenChange={handleAdminTokenChange}
         onExitAdmin={() => navigateTo('/')}
         db={DB}
         defaultLang={DEFAULT_LANG}

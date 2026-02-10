@@ -5,27 +5,50 @@ const fs = require('fs-extra');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
+const {
+  generateRegistrationOptions,
+  verifyRegistrationResponse,
+  generateAuthenticationOptions,
+  verifyAuthenticationResponse
+} = require('@simplewebauthn/server');
 const STEP_TEMPLATES = require('./stepTemplates');
 
 const app = express();
 const PORT = 3001;
 
+const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN;
+if (!ADMIN_API_TOKEN) {
+  throw new Error('ADMIN_API_TOKEN is required');
+}
+
+const RP_ID = process.env.WEBAUTHN_RP_ID || 'localhost';
+const RP_NAME = process.env.WEBAUTHN_RP_NAME || 'Checkin Admin';
+const EXPECTED_ORIGIN = process.env.WEBAUTHN_ORIGIN || 'http://localhost:5173';
+
+const CORS_ORIGINS = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map((item) => item.trim())
+  .filter(Boolean);
+
+if (!CORS_ORIGINS.length) {
+  throw new Error('CORS_ORIGIN is required (comma-separated origins)');
+}
+
 // 1. 中間件配置
-app.use(cors()); // 允許 React 前端跨域訪問
+app.use(cors({ origin: CORS_ORIGINS }));
 app.use(express.json({ limit: '50mb' })); // 允許大文件上傳(圖片)
 
 // 2. 初始化存儲路徑
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
 const DB_PATH = path.join(__dirname, 'hotel.db');
-const ALLOWED_IMAGE_TYPES = new Set([
+const ALLOWED_IMAGE_TYPES = new Map([
   'image/jpeg',
   'image/jpg',
   'image/png',
   'image/webp',
   'image/heic',
   'image/heif'
-]);
-const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN || '8808';
+].map((mime) => [mime, mime === 'image/jpg' ? 'jpg' : mime.split('/')[1]]));
 fs.ensureDirSync(UPLOAD_DIR);
 
 // 3. 初始化 SQLite 數據庫
@@ -56,9 +79,38 @@ db.run(`
 db.run(`
   CREATE TABLE IF NOT EXISTS admin_passkeys (
     credential_id TEXT PRIMARY KEY,
+    public_key TEXT NOT NULL,
+    counter INTEGER NOT NULL DEFAULT 0,
+    transports TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `);
+
+db.serialize(() => {
+  db.all('PRAGMA table_info(admin_passkeys)', [], (pragmaErr, columns) => {
+    if (pragmaErr) {
+      console.error('讀取 admin_passkeys 表結構失敗:', pragmaErr.message);
+      return;
+    }
+
+    const columnNames = new Set((columns || []).map((column) => column.name));
+    if (!columnNames.has('public_key')) {
+      db.run('ALTER TABLE admin_passkeys ADD COLUMN public_key TEXT', (err) => {
+        if (err) console.error('添加 public_key 欄位失敗:', err.message);
+      });
+    }
+    if (!columnNames.has('counter')) {
+      db.run('ALTER TABLE admin_passkeys ADD COLUMN counter INTEGER NOT NULL DEFAULT 0', (err) => {
+        if (err) console.error('添加 counter 欄位失敗:', err.message);
+      });
+    }
+    if (!columnNames.has('transports')) {
+      db.run('ALTER TABLE admin_passkeys ADD COLUMN transports TEXT', (err) => {
+        if (err) console.error('添加 transports 欄位失敗:', err.message);
+      });
+    }
+  });
+});
 
 const seedStepTemplates = () => {
   Object.entries(STEP_TEMPLATES).forEach(([lang, steps]) => {
@@ -94,15 +146,19 @@ const saveImagesLocally = async (guests) => {
         // 解析 Base64
         const matches = guest.passportPhoto.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
         if (!matches || matches.length !== 3) return guest;
-        if (!ALLOWED_IMAGE_TYPES.has(matches[1])) return guest;
+        const extension = ALLOWED_IMAGE_TYPES.get(matches[1]);
+        if (!extension) return guest;
 
         const imageBuffer = Buffer.from(matches[2], 'base64');
-        const extension = matches[1].split('/')[1];
-        const filename = `${guest.id}_passport.${extension}`;
-        const filePath = path.join(UPLOAD_DIR, filename);
+        const filename = `${crypto.randomUUID()}_passport.${extension}`;
+        const safeUploadDir = path.resolve(UPLOAD_DIR);
+        const filePath = path.resolve(safeUploadDir, filename);
+        if (!filePath.startsWith(`${safeUploadDir}${path.sep}`)) {
+          throw new Error('Invalid upload path');
+        }
 
         // 寫入文件
-        await fs.outputFile(filePath, imageBuffer);
+        await fs.outputFile(filePath, imageBuffer, { flag: 'wx' });
 
         // 更新 guest 對象中的圖片路徑為文件名（管理端按權限讀取）
         return {
@@ -154,23 +210,16 @@ const createSessionToken = () => {
   return token;
 };
 
-const getAdminSessionFromRequest = (req) => {
+const getBearerToken = (req) => {
   const authHeader = req.get('authorization');
   if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
-    return authHeader.slice('Bearer '.length);
-  }
-
-  const sessionHeader = req.get('x-admin-session');
-  if (typeof sessionHeader === 'string' && sessionHeader) {
-    return sessionHeader;
-  }
-
-  if (typeof req.query.token === 'string' && req.query.token) {
-    return req.query.token;
+    return authHeader.slice('Bearer '.length).trim();
   }
 
   return '';
 };
+
+const getAdminSessionFromRequest = (req) => getBearerToken(req);
 
 const requireAdminAuth = (req, res, next) => {
   const token = getAdminSessionFromRequest(req);
@@ -183,7 +232,19 @@ const requireAdminAuth = (req, res, next) => {
   next();
 };
 
-const toAdminImageUrl = (passportPhoto, sessionToken) => {
+const extractChallengeFromCredential = (credential) => {
+  try {
+    const clientDataJSON = credential?.response?.clientDataJSON;
+    if (!clientDataJSON) return '';
+    const decoded = Buffer.from(clientDataJSON, 'base64url').toString('utf8');
+    const parsed = JSON.parse(decoded);
+    return typeof parsed.challenge === 'string' ? parsed.challenge : '';
+  } catch (error) {
+    return '';
+  }
+};
+
+const toAdminImageUrl = (passportPhoto) => {
   if (typeof passportPhoto !== 'string' || !passportPhoto) {
     return passportPhoto;
   }
@@ -196,7 +257,7 @@ const toAdminImageUrl = (passportPhoto, sessionToken) => {
     .replace(/^https?:\/\/[^/]+\/uploads\//, '')
     .replace(/^\/uploads\//, '');
 
-  return `http://localhost:${PORT}/api/admin/uploads/${encodeURIComponent(rawName)}?token=${encodeURIComponent(sessionToken)}`;
+  return `http://localhost:${PORT}/api/admin/uploads/${encodeURIComponent(rawName)}`;
 };
 
 // ----------------------------------------------------------------------
@@ -205,7 +266,6 @@ const toAdminImageUrl = (passportPhoto, sessionToken) => {
 
 // 獲取所有記錄
 app.get('/api/records', requireAdminAuth, (req, res) => {
-  const sessionToken = getAdminSessionFromRequest(req);
   db.all("SELECT * FROM checkins ORDER BY created_at DESC", [], (err, rows) => {
     if (err) {
       res.status(500).json({ error: err.message });
@@ -216,7 +276,7 @@ app.get('/api/records', requireAdminAuth, (req, res) => {
       const guests = parseRecordData(row).map((guest) => ({
         ...guest,
         deleted: guest.deleted === true,
-        passportPhoto: toAdminImageUrl(guest.passportPhoto, sessionToken)
+        passportPhoto: toAdminImageUrl(guest.passportPhoto)
       }));
       return {
         id: row.id,
@@ -260,46 +320,107 @@ app.get('/api/admin/passkeys/status', (req, res) => {
 });
 
 app.post('/api/admin/passkeys/register/options', (req, res) => {
-  const bootstrapToken = req.get('x-admin-token') || req.body?.bootstrapToken || '';
+  const bearerToken = getBearerToken(req);
   db.get('SELECT COUNT(*) as count FROM admin_passkeys', [], (err, row) => {
     if (err) {
       res.status(500).json({ error: err.message });
       return;
     }
     const hasPasskey = Number(row?.count || 0) > 0;
-    if (hasPasskey) {
-      res.status(403).json({ error: 'Passkey already configured' });
-      return;
-    }
-    if (!bootstrapToken || bootstrapToken !== ADMIN_API_TOKEN) {
-      res.status(401).json({ error: 'Invalid bootstrap token' });
-      return;
+    if (!hasPasskey) {
+      if (!bearerToken || bearerToken !== ADMIN_API_TOKEN) {
+        res.status(401).json({ error: 'Invalid bootstrap token' });
+        return;
+      }
+    } else {
+      const expiresAt = adminSessions.get(bearerToken);
+      if (!bearerToken || !expiresAt || expiresAt < Date.now()) {
+        if (bearerToken) adminSessions.delete(bearerToken);
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
     }
 
     const challenge = createChallenge('register');
-    res.json({ challenge });
+    db.all('SELECT credential_id FROM admin_passkeys', [], (queryErr, rowsForExclude) => {
+      if (queryErr) {
+        res.status(500).json({ error: queryErr.message });
+        return;
+      }
+
+      const options = generateRegistrationOptions({
+        rpName: RP_NAME,
+        rpID: RP_ID,
+        userID: 'admin-user',
+        userName: 'admin@checkin.local',
+        attestationType: 'none',
+        challenge,
+        authenticatorSelection: {
+          residentKey: 'preferred',
+          userVerification: 'preferred'
+        },
+        excludeCredentials: (rowsForExclude || []).map((item) => ({
+          id: item.credential_id,
+          type: 'public-key'
+        }))
+      });
+
+      res.json(options);
+    });
   });
 });
 
 app.post('/api/admin/passkeys/register/verify', (req, res) => {
-  const { challenge, credentialId } = req.body || {};
-  if (!challenge || !credentialId) {
-    res.status(400).json({ error: 'challenge and credentialId are required' });
+  const { credential } = req.body || {};
+  if (!credential) {
+    res.status(400).json({ error: 'credential is required' });
     return;
   }
 
-  if (!consumeChallenge(challenge, 'register')) {
+  const challenge = extractChallengeFromCredential(credential);
+
+  if (!challenge || !consumeChallenge(challenge, 'register')) {
     res.status(400).json({ error: 'Invalid or expired challenge' });
     return;
   }
 
-  db.run('INSERT OR REPLACE INTO admin_passkeys (credential_id) VALUES (?)', [credentialId], function (err) {
-    if (err) {
-      res.status(500).json({ error: err.message });
-      return;
-    }
-    res.json({ success: true });
-  });
+  verifyRegistrationResponse({
+    response: credential,
+    expectedChallenge: challenge,
+    expectedOrigin: EXPECTED_ORIGIN,
+    expectedRPID: RP_ID,
+    requireUserVerification: true
+  })
+    .then((verification) => {
+      if (!verification.verified || !verification.registrationInfo) {
+        res.status(401).json({ error: 'Registration verification failed' });
+        return;
+      }
+
+      const { credential: credentialInfo } = verification.registrationInfo;
+      const transports = Array.isArray(credential.response?.transports)
+        ? JSON.stringify(credential.response.transports)
+        : null;
+      db.run(
+        'INSERT OR REPLACE INTO admin_passkeys (credential_id, public_key, counter, transports) VALUES (?, ?, ?, ?)',
+        [
+          credentialInfo.id,
+          Buffer.from(credentialInfo.publicKey).toString('base64url'),
+          Number(credentialInfo.counter || 0),
+          transports
+        ],
+        function (err) {
+          if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+          }
+          res.json({ success: true });
+        }
+      );
+    })
+    .catch((error) => {
+      res.status(400).json({ error: error.message || 'Invalid registration response' });
+    });
 });
 
 app.post('/api/admin/passkeys/auth/options', (req, res) => {
@@ -315,26 +436,34 @@ app.post('/api/admin/passkeys/auth/options', (req, res) => {
     }
 
     const challenge = createChallenge('auth');
-    res.json({
+    const options = generateAuthenticationOptions({
+      rpID: RP_ID,
       challenge,
-      allowCredentials: rows.map((row) => ({ id: row.credential_id, type: 'public-key' }))
+      userVerification: 'preferred',
+      allowCredentials: rows.map((row) => ({
+        id: row.credential_id,
+        type: 'public-key'
+      }))
     });
+    res.json(options);
   });
 });
 
 app.post('/api/admin/passkeys/auth/verify', (req, res) => {
-  const { challenge, credentialId } = req.body || {};
-  if (!challenge || !credentialId) {
-    res.status(400).json({ error: 'challenge and credentialId are required' });
+  const { credential } = req.body || {};
+  if (!credential || !credential.id) {
+    res.status(400).json({ error: 'credential is required' });
     return;
   }
 
-  if (!consumeChallenge(challenge, 'auth')) {
+  const challenge = extractChallengeFromCredential(credential);
+
+  if (!challenge || !consumeChallenge(challenge, 'auth')) {
     res.status(400).json({ error: 'Invalid or expired challenge' });
     return;
   }
 
-  db.get('SELECT credential_id FROM admin_passkeys WHERE credential_id = ?', [credentialId], (err, row) => {
+  db.get('SELECT credential_id, public_key, counter, transports FROM admin_passkeys WHERE credential_id = ?', [credential.id], (err, row) => {
     if (err) {
       res.status(500).json({ error: err.message });
       return;
@@ -344,8 +473,45 @@ app.post('/api/admin/passkeys/auth/verify', (req, res) => {
       return;
     }
 
-    const sessionToken = createSessionToken();
-    res.json({ success: true, sessionToken });
+    const authenticator = {
+      credentialID: row.credential_id,
+      credentialPublicKey: Buffer.from(row.public_key, 'base64url'),
+      counter: Number(row.counter || 0),
+      transports: row.transports ? JSON.parse(row.transports) : undefined
+    };
+
+    verifyAuthenticationResponse({
+      response: credential,
+      expectedChallenge: challenge,
+      expectedOrigin: EXPECTED_ORIGIN,
+      expectedRPID: RP_ID,
+      authenticator,
+      requireUserVerification: true
+    })
+      .then((verification) => {
+        if (!verification.verified) {
+          res.status(401).json({ error: 'Authentication verification failed' });
+          return;
+        }
+
+        const newCounter = Number(verification.authenticationInfo?.newCounter || 0);
+        db.run(
+          'UPDATE admin_passkeys SET counter = ? WHERE credential_id = ?',
+          [newCounter, row.credential_id],
+          (updateErr) => {
+            if (updateErr) {
+              res.status(500).json({ error: updateErr.message });
+              return;
+            }
+
+            const sessionToken = createSessionToken();
+            res.json({ success: true, sessionToken });
+          }
+        );
+      })
+      .catch((verifyErr) => {
+        res.status(400).json({ error: verifyErr.message || 'Invalid authentication response' });
+      });
   });
 });
 

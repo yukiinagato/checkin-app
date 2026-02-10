@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import DOMPurify from 'dompurify';
 import {
   AlertTriangle,
   Lock,
@@ -37,6 +38,13 @@ const fileToBase64 = (file) => {
   });
 };
 
+const sanitizeRichHtml = (html) => DOMPurify.sanitize(html || '', {
+  ALLOWED_TAGS: ['p', 'b', 'strong', 'i', 'u', 'ul', 'ol', 'li', 'a', 'img', 'br', 'span'],
+  ALLOWED_ATTR: ['href', 'target', 'rel', 'src', 'alt'],
+  ALLOW_UNKNOWN_PROTOCOLS: false
+});
+
+
 const RichTextEditor = ({ value, onChange, placeholder }) => {
   const editorRef = useRef(null);
 
@@ -49,7 +57,7 @@ const RichTextEditor = ({ value, onChange, placeholder }) => {
 
   const updateValue = () => {
     if (!editorRef.current) return;
-    onChange(editorRef.current.innerHTML);
+    onChange(sanitizeRichHtml(editorRef.current.innerHTML));
   };
 
   const runCommand = (command, commandValue) => {
@@ -144,6 +152,70 @@ const base64UrlToBuffer = (base64url) => {
   return bytes.buffer;
 };
 
+
+const toBase64Url = (input) => {
+  if (input == null) return undefined;
+  if (input instanceof ArrayBuffer) return bufferToBase64Url(input);
+  if (ArrayBuffer.isView(input)) return bufferToBase64Url(input.buffer);
+  return input;
+};
+
+const toPublicKeyCredentialJSON = (credential) => {
+  if (!credential) return null;
+
+  const response = credential.response || {};
+  const payload = {
+    id: credential.id,
+    rawId: toBase64Url(credential.rawId),
+    type: credential.type,
+    authenticatorAttachment: credential.authenticatorAttachment || undefined,
+    clientExtensionResults: credential.getClientExtensionResults ? credential.getClientExtensionResults() : {},
+    response: {}
+  };
+
+  if (response.attestationObject) {
+    payload.response.attestationObject = toBase64Url(response.attestationObject);
+  }
+  if (response.clientDataJSON) {
+    payload.response.clientDataJSON = toBase64Url(response.clientDataJSON);
+  }
+  if (response.authenticatorData) {
+    payload.response.authenticatorData = toBase64Url(response.authenticatorData);
+  }
+  if (response.signature) {
+    payload.response.signature = toBase64Url(response.signature);
+  }
+  if (response.userHandle) {
+    payload.response.userHandle = toBase64Url(response.userHandle);
+  }
+  if (response.transports && typeof response.transports === 'function') {
+    payload.response.transports = response.transports();
+  }
+
+  return payload;
+};
+
+
+const prepareRegisterOptions = (options) => ({
+  ...options,
+  challenge: base64UrlToBuffer(options.challenge),
+  user: options.user
+    ? { ...options.user, id: base64UrlToBuffer(options.user.id) }
+    : undefined,
+  excludeCredentials: (options.excludeCredentials || []).map((item) => ({
+    ...item,
+    id: base64UrlToBuffer(item.id)
+  }))
+});
+
+const prepareAuthOptions = (options) => ({
+  ...options,
+  challenge: base64UrlToBuffer(options.challenge),
+  allowCredentials: (options.allowCredentials || []).map((item) => ({
+    ...item,
+    id: base64UrlToBuffer(item.id)
+  }))
+});
 const AdminLogin = ({ db, onLogin, onBack }) => {
   const [bootstrapToken, setBootstrapToken] = useState('');
   const [error, setError] = useState(false);
@@ -189,32 +261,13 @@ const AdminLogin = ({ db, onLogin, onBack }) => {
     try {
       const options = await db.getPasskeyRegisterOptions(bootstrapToken);
       const credential = await navigator.credentials.create({
-        publicKey: {
-          challenge: base64UrlToBuffer(options.challenge),
-          rp: { name: 'Checkin Admin' },
-          user: {
-            id: new TextEncoder().encode('admin-user'),
-            name: 'admin@checkin.local',
-            displayName: 'Hotel Admin'
-          },
-          pubKeyCredParams: [
-            { alg: -7, type: 'public-key' },
-            { alg: -257, type: 'public-key' }
-          ],
-          timeout: 60000,
-          attestation: 'none',
-          authenticatorSelection: {
-            residentKey: 'preferred',
-            userVerification: 'preferred'
-          }
-        }
+        publicKey: prepareRegisterOptions(options)
       });
 
       if (!credential) throw new Error('credential_create_failed');
 
       await db.verifyPasskeyRegistration({
-        challenge: options.challenge,
-        credentialId: bufferToBase64Url(credential.rawId)
+        credential: toPublicKeyCredentialJSON(credential)
       });
 
       setHasPasskey(true);
@@ -241,22 +294,13 @@ const AdminLogin = ({ db, onLogin, onBack }) => {
     try {
       const options = await db.getPasskeyAuthOptions();
       const assertion = await navigator.credentials.get({
-        publicKey: {
-          challenge: base64UrlToBuffer(options.challenge),
-          allowCredentials: (options.allowCredentials || []).map((item) => ({
-            type: 'public-key',
-            id: base64UrlToBuffer(item.id)
-          })),
-          timeout: 60000,
-          userVerification: 'preferred'
-        }
+        publicKey: prepareAuthOptions(options)
       });
 
       if (!assertion) throw new Error('credential_get_failed');
 
       const payload = await db.verifyPasskeyAuth({
-        challenge: options.challenge,
-        credentialId: bufferToBase64Url(assertion.rawId)
+        credential: toPublicKeyCredentialJSON(assertion)
       });
 
       onLogin(payload.sessionToken);

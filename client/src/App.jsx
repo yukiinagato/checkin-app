@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import DOMPurify from 'dompurify';
 import {
   Wifi,
   MapPin,
@@ -60,7 +61,7 @@ const DB = {
   async getAllRecords(adminToken) {
     const res = await fetch(`${API_URL}/records`, {
       headers: {
-        'x-admin-session': adminToken
+        Authorization: `Bearer ${adminToken}`
       }
     });
     if (!res.ok) throw new Error('Failed to fetch records');
@@ -70,7 +71,7 @@ const DB = {
   async validateAdminToken(adminToken) {
     const res = await fetch(`${API_URL}/admin/session`, {
       headers: {
-        'x-admin-session': adminToken
+        Authorization: `Bearer ${adminToken}`
       }
     });
     return res.ok;
@@ -87,9 +88,9 @@ const DB = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-admin-token': bootstrapToken
+        Authorization: `Bearer ${bootstrapToken}`
       },
-      body: JSON.stringify({ bootstrapToken })
+      body: JSON.stringify({})
     });
     if (!res.ok) throw new Error('Failed to get register options');
     return await res.json();
@@ -125,7 +126,7 @@ const DB = {
     const res = await fetch(`${API_URL}/admin/logout`, {
       method: 'POST',
       headers: {
-        'x-admin-session': adminToken
+        Authorization: `Bearer ${adminToken}`
       }
     });
     return res.ok;
@@ -142,7 +143,7 @@ const DB = {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
-        'x-admin-session': adminToken
+        Authorization: `Bearer ${adminToken}`
       },
       body: JSON.stringify({ steps })
     });
@@ -174,7 +175,7 @@ const DB = {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
-        'x-admin-session': adminToken
+        Authorization: `Bearer ${adminToken}`
       },
       body: JSON.stringify({ deleted })
     });
@@ -456,8 +457,14 @@ const saveSteps = (lang, steps) => {
   localStorage.setItem(`${STEP_STORAGE_KEY}.${lang}`, JSON.stringify(steps));
 };
 
+const sanitizeRichHtml = (html) => DOMPurify.sanitize(html || '', {
+  ALLOWED_TAGS: ['p', 'b', 'strong', 'i', 'u', 'ul', 'ol', 'li', 'a', 'img', 'br', 'span'],
+  ALLOWED_ATTR: ['href', 'target', 'rel', 'src', 'alt'],
+  ALLOW_UNKNOWN_PROTOCOLS: false
+});
+
 const StepContent = ({ content, fallback }) => {
-  const html = (content || fallback || '').trim();
+  const html = sanitizeRichHtml((content || fallback || '').trim());
   if (!html) {
     return <p className="text-sm text-slate-500">暂无内容</p>;
   }

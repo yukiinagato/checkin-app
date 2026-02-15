@@ -24,7 +24,8 @@ server/uploads/*
 *.sln
 *.sw?
 server/.env
-server/hotel.db
-server/.env.production
 server/.env.development
-server/uploads*
+server/.env.production
+server/hotel_dev.db
+server/hotel.db
+server/uploads*/

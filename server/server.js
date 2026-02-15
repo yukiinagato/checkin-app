@@ -12,12 +12,13 @@ const {
   verifyAuthenticationResponse
 } = require('@simplewebauthn/server');
 const STEP_TEMPLATES = require('./stepTemplates');
-require('dotenv').config();
+const envPath = process.env.NODE_ENV === 'development' ? '.env.development' : '.env.production';
+require('dotenv').config({ path: path.resolve(__dirname, envPath) });
 
 const encoder = new TextEncoder();
 
 const app = express();
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 
 // ----------------------------------------------------------------------
 // 1. 環境變數檢查
@@ -50,8 +51,8 @@ app.use(express.json({ limit: '50mb' })); // 允許大文件上傳(圖片)
 // ----------------------------------------------------------------------
 // 3. 初始化存儲路徑
 // ----------------------------------------------------------------------
-const UPLOAD_DIR = path.join(__dirname, 'uploads');
-const DB_PATH = path.join(__dirname, 'hotel.db');
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'hotel.db');
 const ALLOWED_IMAGE_TYPES = new Map([
   'image/jpeg',
   'image/jpg',
@@ -201,7 +202,6 @@ const adminSessions = new Map();
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
-// [新增] 統一 Challenge 格式化工具：防止編碼不一致導致的 400 錯誤
 const normalizeChallenge = (str) => {
   if (!str) return '';
   return str.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
@@ -216,8 +216,7 @@ const createChallenge = (purpose) => {
 
 const consumeChallenge = (challenge, purpose) => {
   const norm = normalizeChallenge(challenge);
-  
-  // 1. 直接匹配
+
   if (adminChallenges.has(norm)) {
     const found = adminChallenges.get(norm);
     adminChallenges.delete(norm);
@@ -316,7 +315,7 @@ const toAdminImageUrl = (passportPhoto) => {
   const rawName = passportPhoto
     .replace(/^https?:\/\/[^/]+\/uploads\//, '')
     .replace(/^\/uploads\//, '');
-  return `http://localhost:${PORT}/api/admin/uploads/${encodeURIComponent(rawName)}`;
+  return process.env.WEBAUTHN_ORIGIN + `/api/admin/uploads/${encodeURIComponent(rawName)}`;
 };
 
 // ----------------------------------------------------------------------
@@ -347,15 +346,17 @@ app.get('/api/records', requireAdminAuth, (req, res) => {
 
 app.get('/api/admin/uploads/:filename', requireAdminAuth, async (req, res) => {
   const filename = path.basename(req.params.filename || '');
-  const filePath = path.join(UPLOAD_DIR, filename);
+  const absoluteUploadDir = path.resolve(UPLOAD_DIR);
+  const filePath = path.resolve(path.join(absoluteUploadDir, filename));
 
-  if (!filePath.startsWith(UPLOAD_DIR)) {
-    res.status(400).json({ error: 'Invalid file path' });
-    return;
+  if (!filePath.startsWith(absoluteUploadDir)) {
+    console.error('路徑安全檢查失敗:', { filePath, absoluteUploadDir });
+    return res.status(403).json({ error: 'Invalid file path' });
   }
 
   const exists = await fs.pathExists(filePath);
   if (!exists) {
+    console.error('請求檔案不存在:', { filePath });
     res.status(404).json({ error: 'File not found' });
     return;
   }
@@ -376,7 +377,6 @@ app.get('/api/admin/passkeys/status', (req, res) => {
   });
 });
 
-// [修復] 註冊選項接口：使用 async/await 確保 generateRegistrationOptions 執行完成
 app.post('/api/admin/passkeys/register/options', async (req, res) => {
   const bearerToken = getBearerToken(req);
 
@@ -385,7 +385,7 @@ app.post('/api/admin/passkeys/register/options', async (req, res) => {
     const row = await new Promise((resolve, reject) => {
       db.get('SELECT COUNT(*) as count FROM admin_passkeys', [], (err, r) => err ? reject(err) : resolve(r));
     });
-    
+
     const hasPasskey = Number(row?.count || 0) > 0;
     if (!hasPasskey) {
       if (!bearerToken || bearerToken !== ADMIN_API_TOKEN) return res.status(401).json({ error: 'Invalid bootstrap token' });
@@ -398,18 +398,17 @@ app.post('/api/admin/passkeys/register/options', async (req, res) => {
     }
 
     const challenge = createChallenge('register');
-    
+
     // 獲取排除列表
     const rowsForExclude = await new Promise((resolve, reject) => {
       db.all('SELECT credential_id FROM admin_passkeys', [], (err, rows) => err ? reject(err) : resolve(rows));
     });
 
-    // 生成選項 (await 是關鍵)
     const options = await generateRegistrationOptions({
       rpName: RP_NAME,
       rpID: RP_ID,
       userID: encoder.encode('admin'),
-      userName: 'admin@checkin.local',
+      userName: 'checkin-admin',
       attestationType: 'none',
       challenge,
       authenticatorSelection: {
@@ -422,7 +421,6 @@ app.post('/api/admin/passkeys/register/options', async (req, res) => {
       }))
     });
 
-    // 安全序列化 userID
     const serializableOptions = {
       ...options,
       user: {
@@ -438,7 +436,6 @@ app.post('/api/admin/passkeys/register/options', async (req, res) => {
   }
 });
 
-// [修復] 註冊驗證接口：增加 Challenge 標準化處理，並適配新版 SimpleWebAuthn 結構
 app.post('/api/admin/passkeys/register/verify', async (req, res) => {
   const { credential } = req.body || {};
   if (!credential) return res.status(400).json({ error: 'credential is required' });
@@ -459,9 +456,6 @@ app.post('/api/admin/passkeys/register/verify', async (req, res) => {
     });
 
     if (verification.verified && verification.registrationInfo) {
-      // 修正: 適配新版 @simplewebauthn/server 的回傳結構
-      // 舊版結構為 { credential: { id, publicKey, counter } }
-      // 新版結構直接展開為 { credentialID, credentialPublicKey, counter }
       const { credentialID, credentialPublicKey, counter } = verification.registrationInfo;
       const transports = Array.isArray(credential.response?.transports) ? JSON.stringify(credential.response.transports) : null;
 
@@ -482,7 +476,6 @@ app.post('/api/admin/passkeys/register/verify', async (req, res) => {
   }
 });
 
-// [修復] 認證選項接口：修復異步 Promise 問題
 app.post('/api/admin/passkeys/auth/options', (req, res) => {
   db.all('SELECT credential_id FROM admin_passkeys', [], async (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -506,7 +499,6 @@ app.post('/api/admin/passkeys/auth/options', (req, res) => {
   });
 });
 
-// [修復] 認證驗證接口：修復異步問題與 Challenge 匹配
 app.post('/api/admin/passkeys/auth/verify', async (req, res) => {
   const { credential } = req.body || {};
   if (!credential || !credential.id) return res.status(400).json({ error: 'credential is required' });
@@ -538,7 +530,7 @@ app.post('/api/admin/passkeys/auth/verify', async (req, res) => {
       if (verification.verified) {
         const newCounter = verification.authenticationInfo.newCounter;
         db.run('UPDATE admin_passkeys SET counter = ? WHERE credential_id = ?', [newCounter, row.credential_id]);
-        
+
         const sessionToken = createSessionToken();
         res.json({ success: true, sessionToken });
       } else {
@@ -605,7 +597,7 @@ app.put('/api/admin/steps', requireAdminAuth, (req, res) => {
   const { lang } = req.query;
   const { steps } = req.body || {};
   const targetLang = typeof lang === 'string' ? lang : '';
-  
+
   if (!targetLang) return res.status(400).json({ error: 'lang is required' });
   if (!Array.isArray(steps)) return res.status(400).json({ error: 'steps must be an array' });
 
@@ -636,7 +628,7 @@ app.post('/api/submit', async (req, res) => {
     const guestsWithUrls = (await saveImagesLocally(guests)).map((guest) => ({ ...guest, deleted: guest.deleted === true }));
 
     const stmt = db.prepare("INSERT INTO checkins (id, date, data) VALUES (?, ?, ?)");
-    stmt.run(submitId, today, JSON.stringify(guestsWithUrls), function(err) {
+    stmt.run(submitId, today, JSON.stringify(guestsWithUrls), function (err) {
       if (err) {
         console.error(err);
         res.status(500).json({ success: false, error: err.message });
@@ -654,7 +646,7 @@ app.post('/api/submit', async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`--------------------------------------------------`);
-  console.log(`🏨 飯店管理後台服務已啟動 (完整增強版)`);
+  console.log(`🏨 飯店管理後台服務已啟動`);
   console.log(`📡 API 地址: http://localhost:${PORT}`);
   console.log(`📂 圖片存儲: ${UPLOAD_DIR}`);
   console.log(`💾 數據庫: ${DB_PATH}`);

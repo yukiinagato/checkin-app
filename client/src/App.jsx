@@ -21,7 +21,8 @@ import {
   Lock,
   Loader2,
   Search,
-  Home} from 'lucide-react';
+  Home
+} from 'lucide-react';
 import AdminPage from './AdminPage';
 
 // ----------------------------------------------------------------------
@@ -53,7 +54,7 @@ const COUNTRY_DATA = [
 // ----------------------------------------------------------------------
 // 後端 API 服務
 // ----------------------------------------------------------------------
-const API_URL = import.meta.env.DEV ? 'http://localhost:3001/api' : '/api';
+const API_URL = '/api';
 const STEP_STORAGE_KEY = 'checkin.steps';
 const ADMIN_TOKEN_STORAGE_KEY = 'checkin.adminSessionToken';
 const DEFAULT_LANG = 'jp';
@@ -740,26 +741,31 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
 
   const getStepIcon = (id) => {
     switch (id) {
-      case 'welcome': return <BellRing className="w-12 h-12 text-amber-600 animate-pulse" />;
-      case 'count': return <Users className="w-12 h-12 text-blue-600" />;
-      case 'registration': return <UserCheck className="w-12 h-12 text-blue-600" />;
-      case 'emergency': return <AlertTriangle className="w-12 h-12 text-rose-500" />;
-      case 'child': return <Baby className="w-12 h-12 text-sky-500" />;
-      case 'outdoor': return <MapPin className="w-12 h-12 text-teal-500" />;
-      case 'water': return <Flame className="w-12 h-12 text-orange-500" />;
-      case 'trash': return <Trash2 className="w-12 h-12 text-emerald-500" />;
-      case 'laundry': return <Wrench className="w-12 h-12 text-blue-500" />;
-      case 'rules': return <UserCheck className="w-12 h-12 text-slate-600" />;
-      default: return <Info className="w-12 h-12 text-slate-400" />;
+      case 'welcome': return <BellRing className="w-8 h-8 text-amber-600 animate-pulse" />;
+      case 'count': return <Users className="w-8 h-8 text-blue-600" />;
+      case 'registration': return <UserCheck className="w-8 h-8 text-blue-600" />;
+      case 'emergency': return <AlertTriangle className="w-8 h-8 text-rose-500" />;
+      case 'child': return <Baby className="w-8 h-8 text-sky-500" />;
+      case 'outdoor': return <MapPin className="w-8 h-8 text-teal-500" />;
+      case 'water': return <Flame className="w-8 h-8 text-orange-500" />;
+      case 'trash': return <Trash2 className="w-8 h-8 text-emerald-500" />;
+      case 'laundry': return <Wrench className="w-8 h-8 text-blue-500" />;
+      case 'rules': return <UserCheck className="w-8 h-8 text-slate-600" />;
+      default: return <Info className="w-8 h-8 text-slate-400" />;
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
-      <button onClick={() => setLang(null)} className="fixed top-6 right-6 z-50 flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-full shadow-sm text-xs font-bold"><Languages className="w-4 h-4" /> {t.changeLang}</button>
-
-      <div className="w-full max-w-lg">
-        <div className="mb-8">
+    <div className="max-h-screen min-h-screen overflow-scroll bg-slate-50 flex flex-col items-center md:p-4">
+      <div className="sticky flex-row bottom-0 right-0 w-full p-4 flex justify-center gap-4">
+        <div className="flex justify-center items-center gap-2">
+          <div className="bg-slate-50 rounded-2xl">{getStepIcon(stepConfig.id)}</div>
+          <div className='flex flex-col'>
+            <h2 className="text-md text-nowrap font-bold text-slate-900 mb-1 leading-tight">{stepConfig.title}</h2>
+            <p className="hidden md:block text-xs text-nowrap font-medium text-slate-400 uppercase tracking-wide">{stepConfig.subtitle}</p>
+          </div>
+        </div>
+        <div className="w-full">
           <div className="flex justify-between items-end mb-2">
             <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">{t.guideTitle}</span>
             <span className="text-xs font-bold text-slate-900">{currentStep + 1} / {steps.length}</span>
@@ -768,12 +774,14 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
             <div className="h-full bg-slate-900 transition-all duration-500" style={{ width: `${progress}%` }} />
           </div>
         </div>
-
-        <div className="bg-white rounded-[2rem] shadow-2xl border border-slate-100 p-8 md:p-10 flex flex-col min-h-[580px]">
-          <div className="flex-1 flex flex-col items-center text-center">
-            <div className="mb-6 p-4 bg-slate-50 rounded-2xl">{getStepIcon(stepConfig.id)}</div>
-            <h2 className="text-2xl font-bold text-slate-900 mb-1 leading-tight">{stepConfig.title}</h2>
-            <p className="text-sm font-medium text-slate-400 mb-8 uppercase tracking-wide">{stepConfig.subtitle}</p>
+        <button onClick={() => setLang(null)} className="flex flex-row text-nowrap items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-full shadow-sm text-xs font-bold">
+          <Languages className="w-4 h-4" />
+          <span className='hidden sm:block'>{t.changeLang}</span>
+        </button>
+      </div>
+      <div className="top-0 flex-1 flex w-full max-w-lg min-h-max p-2">
+        <div className="w-full bg-white p-2 rounded-xl border border-slate-100 md:p-10 flex flex-col pt-4">
+          <div className="flex flex-col items-center text-center justify-center">
 
             <div className="w-full text-left">
               {(hasContent || stepConfig?.type === 'custom' || builtinFallbackContent) && (
@@ -804,7 +812,7 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
               )}
 
               {stepConfig.id === 'registration' && (
-                <div className="space-y-6 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                <div className="space-y-6 custom-scrollbar">
                   {guests.map((guest, idx) => (
                     <div key={guest.id} className="p-5 bg-slate-50/50 rounded-2xl border border-slate-100 space-y-4 shadow-sm relative">
                       <div className="flex justify-between items-center">
@@ -901,7 +909,7 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
               )}
               {stepConfig.id === 'rules' && (
                 <div className="space-y-6">
-                  <label className="flex items-center gap-4 p-6 bg-emerald-50 rounded-2xl border border-emerald-100 cursor-pointer shadow-sm group transition-all hover:bg-emerald-100">
+                  <label className="flex items-center gap-4 bg-emerald-50 rounded-2xl border border-emerald-100 cursor-pointer shadow-sm group transition-all hover:bg-emerald-100">
                     <input type="checkbox" className="w-6 h-6 rounded text-emerald-600 transition-transform group-hover:scale-110" checked={hasAgreed} onChange={(e) => setHasAgreed(e.target.checked)} />
                     <span className="text-emerald-900 font-bold text-sm">{t.agree}</span>
                   </label>
@@ -909,21 +917,21 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
               )}
             </div>
           </div>
-
-          <div className="mt-8 flex gap-4">
-            {currentStep > 0 && <button onClick={() => setCurrentStep(currentStep - 1)} className="p-4 rounded-2xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"><ChevronLeft className="w-6 h-6" /></button>}
-            <button
-              onClick={handleNext}
-              disabled={(stepConfig.id === 'registration' && !isRegValid()) || (stepConfig.id === 'rules' && !hasAgreed) || isSubmitting}
-              className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-2xl font-bold transition-all ${((stepConfig.id === 'registration' && !isRegValid()) || (stepConfig.id === 'rules' && !hasAgreed)) ? 'bg-slate-100 text-slate-300 cursor-not-allowed' : 'bg-slate-900 text-white shadow-lg hover:bg-slate-800'}`}
-            >
-              {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : (currentStep === steps.length - 1 ? t.finish : t.next)}
-              {!isSubmitting && <ChevronRight className="w-5 h-5" />}
-            </button>
-          </div>
         </div>
+
       </div>
-    </div>
+      <div className="sticky bottom-0 w-full p-2 mb-4 flex gap-4">
+        {currentStep > 0 && <button onClick={() => setCurrentStep(currentStep - 1)} className="p-4 rounded-2xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"><ChevronLeft className="w-6 h-6" /></button>}
+        <button
+          onClick={handleNext}
+          disabled={(stepConfig.id === 'registration' && !isRegValid()) || (stepConfig.id === 'rules' && !hasAgreed) || isSubmitting}
+          className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-2xl font-bold transition-all ${((stepConfig.id === 'registration' && !isRegValid()) || (stepConfig.id === 'rules' && !hasAgreed)) ? 'bg-slate-100 text-slate-300 cursor-not-allowed' : 'bg-slate-900 text-white shadow-lg hover:bg-slate-800'}`}
+        >
+          {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : (currentStep === steps.length - 1 ? t.finish : t.next)}
+          {!isSubmitting && <ChevronRight className="w-5 h-5" />}
+        </button>
+      </div>
+    </div >
   );
 };
 

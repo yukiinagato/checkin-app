@@ -25,3 +25,6 @@ server/uploads/*
 *.sw?
 server/.env
 server/hotel.db
+server/.env.production
+server/.env.development
+server/uploads*

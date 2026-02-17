@@ -806,6 +806,13 @@ const GuestFlow = ({
   const handlePassportUpload = async (guestId, file) => {
     if (!file) return;
 
+    console.debug('[PassportOCR] upload-start', {
+      guestId,
+      name: file.name,
+      type: file.type,
+      size: file.size
+    });
+
     updateGuest(guestId, 'passportPhoto', null);
     updateGuest(guestId, 'passportOcrStatus', 'idle');
     updateGuest(guestId, 'passportOcrMessage', '');
@@ -814,7 +821,15 @@ const GuestFlow = ({
 
     try {
       const ocrResult = await runLocalPassportOCR(file);
+      console.debug('[PassportOCR] ocr-result', {
+        guestId,
+        success: ocrResult.success,
+        isPassport: ocrResult.isPassport,
+        passportNumber: ocrResult.passportNumber,
+        attempts: ocrResult.attempts
+      });
       if (!ocrResult.isPassport) {
+        console.debug('[PassportOCR] rejected-non-passport', { guestId });
         updateGuest(guestId, 'passportPhoto', null);
         updateGuest(guestId, 'passportOcrStatus', 'failed');
         updateGuest(guestId, 'passportOcrMessage', t.ocrInvalidDoc);
@@ -825,17 +840,23 @@ const GuestFlow = ({
       updateGuest(guestId, 'passportPhoto', base64);
 
       if (ocrResult.passportNumber) {
+        console.debug('[PassportOCR] auto-filled-passport-number', {
+          guestId,
+          passportNumber: ocrResult.passportNumber
+        });
         updateGuest(guestId, 'passportNumber', ocrResult.passportNumber);
         updateGuest(guestId, 'passportOcrStatus', 'success');
         updateGuest(guestId, 'passportOcrMessage', t.ocrAutoFillSuccess);
         return;
       }
 
+      console.debug('[PassportOCR] manual-entry-required', { guestId });
       updateGuest(guestId, 'passportOcrStatus', 'manual-required');
       updateGuest(guestId, 'passportOcrMessage', t.ocrManualNeeded);
     } catch (error) {
-      console.error('Passport OCR failed', error);
+      console.error('[PassportOCR] upload-failed', { guestId, error });
       if (error?.message === 'TEXT_DETECTOR_UNAVAILABLE') {
+        console.debug('[PassportOCR] textdetector-unavailable-fallback', { guestId });
         const base64 = await fileToBase64(file);
         updateGuest(guestId, 'passportPhoto', base64);
         updateGuest(guestId, 'passportOcrStatus', 'manual-required');

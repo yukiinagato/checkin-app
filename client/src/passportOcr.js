@@ -71,6 +71,7 @@ const canvasFromImage = async (file, transform = 'none') => {
 
 const detectTextLocally = async (canvas) => {
   if (typeof window === 'undefined' || typeof window.TextDetector !== 'function') {
+    console.debug('[PassportOCR] TextDetector not available in this browser');
     throw new Error('TEXT_DETECTOR_UNAVAILABLE');
   }
 
@@ -96,12 +97,26 @@ export const runLocalPassportOCR = async (file) => {
   const transforms = ['none', 'grayscale', 'none'];
   let bestText = '';
 
+  console.debug('[PassportOCR] local-ocr-start', {
+    name: file?.name,
+    type: file?.type,
+    size: file?.size,
+    transforms
+  });
+
   for (let attempt = 0; attempt < transforms.length; attempt += 1) {
     const canvas = await canvasFromImage(file, transforms[attempt]);
     const text = await detectTextLocally(canvas);
     bestText = text || bestText;
     const isPassport = isLikelyPassportDocument(text);
     const passportNumber = extractPassportNumberFromText(text);
+    console.debug('[PassportOCR] attempt-finished', {
+      attempt: attempt + 1,
+      transform: transforms[attempt],
+      textLength: text?.length || 0,
+      isPassport,
+      passportNumber
+    });
     if (isPassport && passportNumber) {
       return { success: true, isPassport: true, passportNumber, text, attempts: attempt + 1 };
     }

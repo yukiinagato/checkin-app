@@ -251,14 +251,27 @@ const runLocalPaddleOcr = async (dataImage) => {
 
   try {
     await fs.writeFile(imagePath, parsed.buffer);
-    const { stdout } = await execFileAsync(PADDLE_OCR_PYTHON, [PADDLE_OCR_RUNNER, imagePath], {
+    const { stdout, stderr } = await execFileAsync(PADDLE_OCR_PYTHON, [PADDLE_OCR_RUNNER, imagePath], {
       maxBuffer: 10 * 1024 * 1024,
       timeout: 120000
     });
 
-    const output = String(stdout || '').trim();
-    const parsedJson = JSON.parse(output || '{}');
-    return parsedJson;
+    const outputLines = `${String(stdout || '')}\n${String(stderr || '')}`
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    for (let index = outputLines.length - 1; index >= 0; index -= 1) {
+      const line = outputLines[index];
+      if (!line.startsWith('{') || !line.endsWith('}')) continue;
+      try {
+        return JSON.parse(line);
+      } catch {
+        // ignore and continue searching previous lines
+      }
+    }
+
+    throw new Error('PaddleOCR output does not contain JSON payload');
   } catch (error) {
     console.error('PaddleOCR 本地識別失敗:', error.message || error);
     return {

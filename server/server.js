@@ -5,6 +5,9 @@ const fs = require('fs-extra');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
+const os = require('os');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
 const {
   generateRegistrationOptions,
   verifyRegistrationResponse,
@@ -17,6 +20,7 @@ const envPath = process.env.NODE_ENV === 'development' ? '.env.development' : '.
 require('dotenv').config({ path: path.resolve(__dirname, envPath) });
 
 const encoder = new TextEncoder();
+const execFileAsync = promisify(execFile);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -54,6 +58,8 @@ app.use(express.json({ limit: '50mb' })); // 允許大文件上傳(圖片)
 // ----------------------------------------------------------------------
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'hotel.db');
+const PADDLE_OCR_PYTHON = process.env.PADDLE_OCR_PYTHON || 'python3';
+const PADDLE_OCR_RUNNER = process.env.PADDLE_OCR_RUNNER || path.join(__dirname, 'tools', 'paddle_ocr_runner.py');
 const ALLOWED_IMAGE_TYPES = new Map([
   'image/jpeg',
   'image/jpg',
@@ -219,6 +225,63 @@ const saveImagesLocally = async (guests) => {
     return guest;
   }));
   return processedGuests;
+};
+
+const parseDataImage = (dataImage) => {
+  if (typeof dataImage !== 'string') return null;
+  const matches = dataImage.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+  if (!matches || matches.length !== 3) return null;
+  const extension = ALLOWED_IMAGE_TYPES.get(matches[1]);
+  if (!extension) return null;
+  return {
+    extension,
+    mime: matches[1],
+    buffer: Buffer.from(matches[2], 'base64')
+  };
+};
+
+const runLocalPaddleOcr = async (dataImage) => {
+  const parsed = parseDataImage(dataImage);
+  if (!parsed) {
+    return { success: false, unsupported: true, error: 'Invalid image payload' };
+  }
+
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'passport-ocr-'));
+  const imagePath = path.join(tempDir, `passport.${parsed.extension}`);
+
+  try {
+    await fs.writeFile(imagePath, parsed.buffer);
+    const { stdout, stderr } = await execFileAsync(PADDLE_OCR_PYTHON, [PADDLE_OCR_RUNNER, imagePath], {
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: 120000
+    });
+
+    const outputLines = `${String(stdout || '')}\n${String(stderr || '')}`
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    for (let index = outputLines.length - 1; index >= 0; index -= 1) {
+      const line = outputLines[index];
+      if (!line.startsWith('{') || !line.endsWith('}')) continue;
+      try {
+        return JSON.parse(line);
+      } catch {
+        // ignore and continue searching previous lines
+      }
+    }
+
+    throw new Error('PaddleOCR output does not contain JSON payload');
+  } catch (error) {
+    console.error('PaddleOCR 本地識別失敗:', error.message || error);
+    return {
+      success: false,
+      unsupported: true,
+      error: error.message || 'PaddleOCR execution failed'
+    };
+  } finally {
+    await fs.remove(tempDir);
+  }
 };
 
 const parseRecordData = (row) => {
@@ -758,6 +821,22 @@ app.post('/api/submit', async (req, res) => {
   } catch (error) {
     console.error('服務器錯誤:', error);
     res.status(500).json({ success: false, error: 'Internal Server Error' });
+  }
+});
+
+app.post('/api/ocr/passport', async (req, res) => {
+  try {
+    const { image } = req.body || {};
+    if (typeof image !== 'string' || !image.startsWith('data:image')) {
+      res.status(400).json({ success: false, error: 'Invalid image payload' });
+      return;
+    }
+
+    const ocrResult = await runLocalPaddleOcr(image);
+    res.json(ocrResult);
+  } catch (error) {
+    console.error('護照 OCR 接口錯誤:', error);
+    res.status(500).json({ success: false, error: 'Passport OCR failed' });
   }
 });
 

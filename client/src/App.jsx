@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import AdminPage from './AdminPage';
 import { isRegistrationValid } from './formValidation';
+import { fileToBase64, runLocalPassportOCR } from './passportOcr';
 
 // ----------------------------------------------------------------------
 // 輔助函數與常量
@@ -34,7 +35,9 @@ const createGuestTemplate = (type = 'adult') => ({
   id: Math.random().toString(36).substr(2, 9),
   type,
   isResident: true,
-  name: '', age: '', phone: '', address: '', postalCode: '', nationality: '', passportNumber: '', passportPhoto: null, guardianName: '', guardianPhone: '',
+  name: '', age: '', phone: '', address: '', postalCode: '', nationality: '', nationalityDetected: '', passportNumber: '', passportPhoto: null, guardianName: '', guardianPhone: '',
+  passportOcrStatus: 'idle',
+  passportOcrMessage: '',
   isEditable: true
 });
 
@@ -59,8 +62,46 @@ const COUNTRY_DATA = [
   { code: 'DE', names: { 'zh-hans': '德国', 'zh-hant': '德國', 'en': 'Germany', 'jp': 'ドイツ', 'ko': '독일' } },
   { code: 'IT', names: { 'zh-hans': '意大利', 'zh-hant': '義大利', 'en': 'Italy', 'jp': 'イタリア', 'ko': '이탈리아' } },
   { code: 'ES', names: { 'zh-hans': '西班牙', 'zh-hant': '西班牙', 'en': 'Spain', 'jp': 'スペイン', 'ko': '스페인' } },
+  { code: 'JP', names: { 'zh-hans': '日本', 'zh-hant': '日本', 'en': 'Japan', 'jp': '日本', 'ko': '일본' } },
+  { code: 'IN', names: { 'zh-hans': '印度', 'zh-hant': '印度', 'en': 'India', 'jp': 'インド', 'ko': '인도' } },
+  { code: 'RU', names: { 'zh-hans': '俄罗斯', 'zh-hant': '俄羅斯', 'en': 'Russia', 'jp': 'ロシア', 'ko': '러시아' } },
+  { code: 'NL', names: { 'zh-hans': '荷兰', 'zh-hant': '荷蘭', 'en': 'Netherlands', 'jp': 'オランダ', 'ko': '네덜란드' } },
+  { code: 'CH', names: { 'zh-hans': '瑞士', 'zh-hant': '瑞士', 'en': 'Switzerland', 'jp': 'スイス', 'ko': '스위스' } },
+  { code: 'SE', names: { 'zh-hans': '瑞典', 'zh-hant': '瑞典', 'en': 'Sweden', 'jp': 'スウェーデン', 'ko': '스웨덴' } },
+  { code: 'NO', names: { 'zh-hans': '挪威', 'zh-hant': '挪威', 'en': 'Norway', 'jp': 'ノルウェー', 'ko': '노르웨이' } },
+  { code: 'DK', names: { 'zh-hans': '丹麦', 'zh-hant': '丹麥', 'en': 'Denmark', 'jp': 'デンマーク', 'ko': '덴마크' } },
+  { code: 'FI', names: { 'zh-hans': '芬兰', 'zh-hant': '芬蘭', 'en': 'Finland', 'jp': 'フィンランド', 'ko': '핀란드' } },
+  { code: 'NZ', names: { 'zh-hans': '新西兰', 'zh-hant': '紐西蘭', 'en': 'New Zealand', 'jp': 'ニュージーランド', 'ko': '뉴질랜드' } },
+  { code: 'BR', names: { 'zh-hans': '巴西', 'zh-hant': '巴西', 'en': 'Brazil', 'jp': 'ブラジル', 'ko': '브라질' } },
+  { code: 'MX', names: { 'zh-hans': '墨西哥', 'zh-hant': '墨西哥', 'en': 'Mexico', 'jp': 'メキシコ', 'ko': '멕시코' } },
+  { code: 'AR', names: { 'zh-hans': '阿根廷', 'zh-hant': '阿根廷', 'en': 'Argentina', 'jp': 'アルゼンチン', 'ko': '아르헨티나' } },
+  { code: 'TR', names: { 'zh-hans': '土耳其', 'zh-hant': '土耳其', 'en': 'Turkey', 'jp': 'トルコ', 'ko': '튀르키예' } },
+  { code: 'SA', names: { 'zh-hans': '沙特阿拉伯', 'zh-hant': '沙烏地阿拉伯', 'en': 'Saudi Arabia', 'jp': 'サウジアラビア', 'ko': '사우디아라비아' } },
+  { code: 'AE', names: { 'zh-hans': '阿联酋', 'zh-hant': '阿聯酋', 'en': 'UAE', 'jp': 'アラブ首長国連邦', 'ko': '아랍에미리트' } },
+  { code: 'ZA', names: { 'zh-hans': '南非', 'zh-hant': '南非', 'en': 'South Africa', 'jp': '南アフリカ', 'ko': '남아프리카공화국' } },
   { code: 'OTHER', names: { 'zh-hans': '其他', 'zh-hant': '其他', 'en': 'Other', 'jp': 'その他', 'ko': '기타' } },
 ];
+
+const COUNTRY_CODE_SET = new Set(COUNTRY_DATA.map((item) => item.code));
+
+const resolveNationalityForForm = (ocrResult) => {
+  const code = typeof ocrResult?.nationalityCode === 'string' ? ocrResult.nationalityCode.trim().toUpperCase() : '';
+  const raw = typeof ocrResult?.nationalityRaw === 'string' ? ocrResult.nationalityRaw.trim().toUpperCase() : '';
+
+  if (code && COUNTRY_CODE_SET.has(code)) {
+    return { nationality: code, nationalityDetected: '' };
+  }
+
+  if (code) {
+    return { nationality: 'OTHER', nationalityDetected: code };
+  }
+
+  if (raw) {
+    return { nationality: 'OTHER', nationalityDetected: raw };
+  }
+
+  return { nationality: '', nationalityDetected: '' };
+};
 
 // ----------------------------------------------------------------------
 // 後端 API 服務
@@ -204,6 +245,19 @@ const DB = {
     }
   },
 
+  async recognizePassport(imageData) {
+    const res = await fetch(`${API_URL}/ocr/passport`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: imageData })
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(payload.error || 'Passport OCR request failed');
+    }
+    return payload;
+  },
+
 
   async setGuestDeleted(adminToken, recordId, guestId, deleted) {
     const res = await fetch(`${API_URL}/records/${encodeURIComponent(recordId)}/guests/${encodeURIComponent(guestId)}`, {
@@ -250,19 +304,6 @@ const DB = {
   }
 };
 
-const fileToBase64 = (file) => {
-  return new Promise((resolve, reject) => {
-    if (!file) {
-      resolve('');
-      return;
-    }
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = error => reject(error);
-  });
-};
-
 const createStepId = () => `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
 const LANG_OPTIONS = [
@@ -282,8 +323,9 @@ const translations = {
     footer: "您的安全与舒适是我们的最高宗旨。", guideTitle: "入住导览", changeLang: "语言", manualLink: "说明书 PDF",
     regResident: "日本居民", regTourist: "访日游客", startNewCheckin: "开始新登记", regFormName: "姓名", regFormAge: "年龄", regFormOcc: "职业", regFormPhone: "电话号码",
     regFormNation: "国籍", regFormPass: "护照号码", regPassportUpload: "拍摄/上传护照照片", regMinorAlert: "未成年人需填监护人信息",
+    ocrChecking: "正在本地识别证件...", ocrAutoFillSuccess: "已识别护照并自动填充护照号码。", ocrManualNeeded: "已检测到护照，但多次识别失败，请手动补充信息。", ocrInvalidDoc: "上传内容未通过证件校验，请上传护照照片或扫描件。", ocrFailed: "识别失败，请重试。", ocrUnsupported: "当前浏览器不支持本地OCR，已保留照片，请手动补充护照信息。",
     addGuest: "增加人员", guestLabel: "住客", petLabel: "宠物数量", countAdults: "住客人数 (成人/未成年)",
-    selectCountry: "选择国家/地区",
+    selectCountry: "选择国家/地区", detectedNationHint: "已识别国籍",
     customStepEmpty: "此步骤暂无内容。",
     steps: [
       { id: 'welcome', title: "欢迎入住", subtitle: "Welcome" },
@@ -306,8 +348,9 @@ const translations = {
     footer: "您的安全與舒適是我們的最高宗旨。", guideTitle: "入住導覽", changeLang: "語言", manualLink: "說明書 PDF",
     regResident: "日本居民", regTourist: "訪日遊客", startNewCheckin: "開始新登記", regFormName: "姓名", regFormAge: "年齡", regFormOcc: "職業", regFormPhone: "電話號碼",
     regFormNation: "國籍", regFormPass: "護照號碼", regPassportUpload: "拍攝/上傳護照照片", regMinorAlert: "未成年人需填監護人資訊",
+    ocrChecking: "正在本地辨識證件...", ocrAutoFillSuccess: "已辨識護照並自動填入護照號碼。", ocrManualNeeded: "已檢測到護照，但多次辨識失敗，請手動補充資訊。", ocrInvalidDoc: "上傳內容未通過證件校驗，請上傳護照照片或掃描件。", ocrFailed: "辨識失敗，請重試。", ocrUnsupported: "目前瀏覽器不支援本地OCR，已保留照片，請手動補充護照資訊。",
     addGuest: "增加人員", guestLabel: "住客", petLabel: "寵物數量", countAdults: "住客人數 (成人/未成年)",
-    selectCountry: "選擇國家/地區",
+    selectCountry: "選擇國家/地區", detectedNationHint: "已辨識國籍",
     customStepEmpty: "此步驟目前沒有內容。",
     steps: [
       { id: 'welcome', title: "歡迎入住", subtitle: "Welcome" },
@@ -330,8 +373,9 @@ const translations = {
     footer: "Your safety and comfort are our top priority.", guideTitle: "Check-in Guide", changeLang: "Language", manualLink: "Manual PDF",
     regResident: "Japan Resident", regTourist: "Visitor", startNewCheckin: "Start New Check-in", regFormName: "Name", regFormAge: "Age", regFormOcc: "Occupation", regFormPhone: "Phone Number",
     regFormNation: "Nationality", regFormPass: "Passport No.", regPassportUpload: "Upload passport photo", regMinorAlert: "Minors need guardian info",
+    ocrChecking: "Running local document OCR...", ocrAutoFillSuccess: "Passport detected and number auto-filled.", ocrManualNeeded: "Passport detected, but OCR failed multiple times. Please enter the remaining fields manually.", ocrInvalidDoc: "Upload rejected: this image does not look like a passport document.", ocrFailed: "OCR failed. Please try again.", ocrUnsupported: "This browser does not support local OCR. Photo is kept, please complete passport details manually.",
     addGuest: "Add Guest", guestLabel: "Guest", petLabel: "Number of Pets", countAdults: "Guest Count (adult/minor)",
-    selectCountry: "Select country/region",
+    selectCountry: "Select country/region", detectedNationHint: "Detected nationality",
     customStepEmpty: "No content for this step yet.",
     steps: [
       { id: 'welcome', title: "Welcome", subtitle: "Welcome" },
@@ -354,8 +398,9 @@ const translations = {
     footer: "安全と快適さが最優先です。", guideTitle: "チェックイン案内", changeLang: "言語", manualLink: "マニュアル PDF",
     regResident: "日本在住", regTourist: "訪日観光客", startNewCheckin: "新しいチェックインを開始", regFormName: "氏名", regFormAge: "年齢", regFormOcc: "職業", regFormPhone: "電話番号",
     regFormNation: "国籍", regFormPass: "パスポート番号", regPassportUpload: "パスポート写真をアップロード", regMinorAlert: "未成年は保護者情報が必要",
+    ocrChecking: "ローカルで書類をOCR中...", ocrAutoFillSuccess: "パスポートを検出し、番号を自動入力しました。", ocrManualNeeded: "パスポートは検出されましたが、OCRが複数回失敗しました。残りは手入力してください。", ocrInvalidDoc: "アップロード不可：パスポート画像/スキャンではありません。", ocrFailed: "OCRに失敗しました。再試行してください。", ocrUnsupported: "このブラウザはローカルOCRに未対応です。画像は保持したので、パスポート情報を手入力してください。",
     addGuest: "追加", guestLabel: "ゲスト", petLabel: "ペットの数", countAdults: "人数 (成人/未成年)",
-    selectCountry: "国/地域を選択",
+    selectCountry: "国/地域を選択", detectedNationHint: "OCR検出の国籍",
     customStepEmpty: "このステップにはまだ内容がありません。",
     steps: [
       { id: 'welcome', title: "ようこそ", subtitle: "Welcome" },
@@ -378,8 +423,9 @@ const translations = {
     footer: "안전과 편안함이 최우선입니다.", guideTitle: "체크인 안내", changeLang: "언어", manualLink: "매뉴얼 PDF",
     regResident: "일본 거주자", regTourist: "방문객", startNewCheckin: "새 체크인 시작", regFormName: "이름", regFormAge: "나이", regFormOcc: "직업", regFormPhone: "전화번호",
     regFormNation: "국적", regFormPass: "여권 번호", regPassportUpload: "여권 사진 업로드", regMinorAlert: "미성년자는 보호자 정보 필요",
+    ocrChecking: "로컬 OCR로 문서를 분석하는 중...", ocrAutoFillSuccess: "여권을 인식해 여권번호를 자동 입력했습니다.", ocrManualNeeded: "여권은 감지했지만 OCR이 여러 번 실패했습니다. 남은 정보는 수동 입력해 주세요.", ocrInvalidDoc: "업로드 거절: 여권 사진/스캔으로 확인되지 않았습니다.", ocrFailed: "OCR 실패. 다시 시도해 주세요.", ocrUnsupported: "현재 브라우저는 로컬 OCR을 지원하지 않습니다. 사진은 보관되며 여권 정보를 수동 입력해 주세요.",
     addGuest: "인원 추가", guestLabel: "게스트", petLabel: "반려동물 수", countAdults: "인원 수 (성인/미성년)",
-    selectCountry: "국가/지역 선택",
+    selectCountry: "국가/지역 선택", detectedNationHint: "OCR 인식 국적",
     customStepEmpty: "이 단계에는 아직 내용이 없습니다.",
     steps: [
       { id: 'welcome', title: "환영", subtitle: "Welcome" },
@@ -804,9 +850,97 @@ const GuestFlow = ({
     }
   }, [stepsConfig, currentStep, setCurrentStep]);
 
-  const addGuest = () => setGuests([...guests, createGuestTemplate('adult')]);
-  const removeGuest = (id) => setGuests(guests.filter(g => g.id !== id));
-  const updateGuest = (id, field, value) => setGuests(guests.map(g => g.id === id ? { ...g, [field]: value } : g));
+  const addGuest = () => setGuests((prevGuests) => [...prevGuests, createGuestTemplate('adult')]);
+  const removeGuest = (id) => setGuests((prevGuests) => prevGuests.filter((guest) => guest.id !== id));
+  const updateGuest = (id, field, value) => setGuests((prevGuests) => prevGuests.map((guest) => (guest.id === id ? { ...guest, [field]: value } : guest)));
+
+  const handlePassportUpload = async (guestId, file) => {
+    if (!file) return;
+
+    console.debug('[PassportOCR] upload-start', {
+      guestId,
+      name: file.name,
+      type: file.type,
+      size: file.size
+    });
+
+    updateGuest(guestId, 'passportPhoto', null);
+    updateGuest(guestId, 'passportOcrStatus', 'idle');
+    updateGuest(guestId, 'passportOcrMessage', '');
+    updateGuest(guestId, 'passportOcrStatus', 'processing');
+    updateGuest(guestId, 'passportOcrMessage', t.ocrChecking);
+
+    try {
+      const base64 = await fileToBase64(file);
+
+      let ocrResult;
+      try {
+        ocrResult = await DB.recognizePassport(base64);
+      } catch (apiError) {
+        console.warn('[PassportOCR] server-paddleocr-failed-fallback-local', { guestId, apiError });
+        ocrResult = await runLocalPassportOCR(file);
+      }
+
+      console.debug('[PassportOCR] ocr-result', {
+        guestId,
+        success: ocrResult.success,
+        isPassport: ocrResult.isPassport,
+        passportNumber: ocrResult.passportNumber,
+        attempts: ocrResult.attempts
+      });
+
+      if (ocrResult.unsupported) {
+        console.warn('[PassportOCR] local-ocr-unsupported-fallback', { guestId });
+        updateGuest(guestId, 'passportPhoto', base64);
+        updateGuest(guestId, 'passportOcrStatus', 'manual-required');
+        updateGuest(guestId, 'passportOcrMessage', t.ocrUnsupported);
+        return;
+      }
+
+      if (!ocrResult.isPassport) {
+        console.debug('[PassportOCR] rejected-non-passport', { guestId });
+        updateGuest(guestId, 'passportPhoto', null);
+        updateGuest(guestId, 'passportOcrStatus', 'failed');
+        updateGuest(guestId, 'passportOcrMessage', t.ocrInvalidDoc);
+        return;
+      }
+
+      updateGuest(guestId, 'passportPhoto', base64);
+
+      if (ocrResult.fullName) {
+        updateGuest(guestId, 'name', ocrResult.fullName);
+      }
+      if (Number.isInteger(ocrResult.age) && ocrResult.age >= 0 && ocrResult.age <= 120) {
+        updateGuest(guestId, 'age', String(ocrResult.age));
+      }
+
+      const resolvedNationality = resolveNationalityForForm(ocrResult);
+      if (resolvedNationality.nationality) {
+        updateGuest(guestId, 'nationality', resolvedNationality.nationality);
+        updateGuest(guestId, 'nationalityDetected', resolvedNationality.nationalityDetected);
+      }
+
+      if (ocrResult.passportNumber) {
+        console.debug('[PassportOCR] auto-filled-passport-number', {
+          guestId,
+          passportNumber: ocrResult.passportNumber
+        });
+        updateGuest(guestId, 'passportNumber', ocrResult.passportNumber);
+        updateGuest(guestId, 'passportOcrStatus', 'success');
+        updateGuest(guestId, 'passportOcrMessage', t.ocrAutoFillSuccess);
+        return;
+      }
+
+      console.debug('[PassportOCR] manual-entry-required', { guestId });
+      updateGuest(guestId, 'passportOcrStatus', 'manual-required');
+      updateGuest(guestId, 'passportOcrMessage', t.ocrManualNeeded);
+    } catch (error) {
+      console.error('[PassportOCR] upload-failed', { guestId, error });
+      updateGuest(guestId, 'passportPhoto', null);
+      updateGuest(guestId, 'passportOcrStatus', 'failed');
+      updateGuest(guestId, 'passportOcrMessage', t.ocrFailed);
+    }
+  };
 
   const lookupZipCode = async (guestId, zip) => {
     if (!zip || zip.length < 7) return;
@@ -940,7 +1074,7 @@ const GuestFlow = ({
   };
 
   const menuContent = (
-    <div className="p-4 space-y-2 overflow-y-scroll">
+    <div className="p-4 space-y-2 h-full overflow-y-auto overscroll-contain [webkit-overflow-scrolling:touch]">
       <h3 className="text-sm font-bold px-4 text-slate-500">{t.guideTitle}</h3>
       {steps.map((step, index) => (
         <button
@@ -977,7 +1111,7 @@ const GuestFlow = ({
       {/* Mobile Menu (Overlay) */}
       {isMenuOpen && (
         <div className="fixed inset-0 bg-black/30 z-40 md:hidden" onClick={() => setIsMenuOpen(false)}>
-          <div className="w-72 bg-white h-full shadow-xl" onClick={(e) => e.stopPropagation()}>
+          <div className="w-72 bg-white h-full shadow-xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
             {menuContent}
           </div>
         </div>
@@ -1091,7 +1225,10 @@ const GuestFlow = ({
                               <select
                                 disabled={!guest.isEditable}
                                 value={guest.nationality}
-                                onChange={(e) => updateGuest(guest.id, 'nationality', e.target.value)}
+                                onChange={(e) => {
+                                  updateGuest(guest.id, 'nationality', e.target.value);
+                                  updateGuest(guest.id, 'nationalityDetected', '');
+                                }}
                                 className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none appearance-none cursor-pointer disabled:bg-slate-100"
                               >
                                 <option value="">-- {t.selectCountry} --</option>
@@ -1099,16 +1236,29 @@ const GuestFlow = ({
                                   <option key={c.code} value={c.code}>{c.names[lang] || c.names['en']}</option>
                                 ))}
                               </select>
+                              {guest.nationalityDetected && (
+                                <p className="text-[11px] text-amber-600 mt-1">{t.detectedNationHint}: {guest.nationalityDetected}</p>
+                              )}
                             </div>
                             <div className="col-span-2">
                               <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormPass}</label>
                               <input disabled={!guest.isEditable} type="text" value={guest.passportNumber} onChange={(e) => updateGuest(guest.id, 'passportNumber', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm disabled:bg-slate-100" />
                             </div>
-                            <div className="col-span-2 relative">
-                              <input disabled={!guest.isEditable} type="file" accept="image/*" className="absolute inset-0 w-full h-full opacity-0 z-10 cursor-pointer" onChange={(e) => fileToBase64(e.target.files?.[0]).then(base64 => updateGuest(guest.id, 'passportPhoto', base64))} />
+                            <div className="col-span-2 relative space-y-2">
+                              <input
+                                disabled={!guest.isEditable || guest.passportOcrStatus === 'processing'}
+                                type="file"
+                                accept="image/*"
+                                className="absolute inset-0 w-full h-full opacity-0 z-10 cursor-pointer"
+                                onChange={(e) => handlePassportUpload(guest.id, e.target.files?.[0])}
+                              />
                               <div className={`p-4 border-2 border-dashed rounded-xl flex items-center justify-center gap-2 ${guest.passportPhoto ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-slate-100 text-slate-300'}`}>
-                                <Camera className="w-4 h-4" /> <span className="text-[10px] font-bold uppercase">{guest.passportPhoto ? 'Uploaded' : t.regPassportUpload}</span>
+                                {guest.passportOcrStatus === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+                                <span className="text-[10px] font-bold uppercase">{guest.passportPhoto ? 'Uploaded' : t.regPassportUpload}</span>
                               </div>
+                              {guest.passportOcrMessage && (
+                                <p className={`text-[11px] ${guest.passportOcrStatus === 'failed' ? 'text-rose-500' : guest.passportOcrStatus === 'manual-required' ? 'text-amber-600' : 'text-emerald-600'}`}>{guest.passportOcrMessage}</p>
+                              )}
                             </div>
                           </div>
                         )}

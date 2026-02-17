@@ -1,5 +1,6 @@
 const PASSPORT_KEYWORDS = ['passport', 'pasport', 'passeport', '旅券', '护照', '護照'];
 const DOC_HINTS = ['nationality', 'surname', 'given', 'sex', 'date of birth', 'issuing'];
+const TESSERACT_CDN_SRC = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 
 const normalizeText = (value = '') => value.toUpperCase().replace(/\s+/g, ' ').trim();
 
@@ -69,15 +70,64 @@ const canvasFromImage = async (file, transform = 'none') => {
   return canvas;
 };
 
-const detectTextLocally = async (canvas) => {
-  if (typeof window === 'undefined' || typeof window.TextDetector !== 'function') {
-    console.debug('[PassportOCR] TextDetector not available in this browser');
-    throw new Error('TEXT_DETECTOR_UNAVAILABLE');
+const loadTesseractFromCDN = () => {
+  if (typeof window === 'undefined') {
+    throw new Error('TESSERACT_WINDOW_UNAVAILABLE');
   }
 
+  if (window.Tesseract?.createWorker) {
+    return Promise.resolve(window.Tesseract);
+  }
+
+  if (window.__tesseractScriptPromise) {
+    return window.__tesseractScriptPromise;
+  }
+
+  window.__tesseractScriptPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = TESSERACT_CDN_SRC;
+    script.async = true;
+    script.onload = () => {
+      if (window.Tesseract?.createWorker) {
+        resolve(window.Tesseract);
+      } else {
+        reject(new Error('TESSERACT_INIT_FAILED'));
+      }
+    };
+    script.onerror = () => reject(new Error('TESSERACT_CDN_LOAD_FAILED'));
+    document.head.appendChild(script);
+  });
+
+  return window.__tesseractScriptPromise;
+};
+
+const detectTextWithTextDetector = async (canvas) => {
   const detector = new window.TextDetector();
   const blocks = await detector.detect(canvas);
   return blocks.map((block) => block.rawValue || '').join('\n');
+};
+
+const detectTextWithTesseract = async (canvas) => {
+  const Tesseract = await loadTesseractFromCDN();
+  const worker = await Tesseract.createWorker('eng');
+  try {
+    const { data } = await worker.recognize(canvas);
+    return data?.text || '';
+  } finally {
+    await worker.terminate();
+  }
+};
+
+const detectTextLocally = async (canvas) => {
+  const hasTextDetector = typeof window !== 'undefined' && typeof window.TextDetector === 'function';
+
+  if (hasTextDetector) {
+    console.debug('[PassportOCR] detect-engine:text-detector');
+    return detectTextWithTextDetector(canvas);
+  }
+
+  console.debug('[PassportOCR] detect-engine:tesseract-cdn-fallback');
+  return detectTextWithTesseract(canvas);
 };
 
 export const fileToBase64 = (file) => {
@@ -97,8 +147,7 @@ export const runLocalPassportOCR = async (file) => {
   const transforms = ['none', 'grayscale', 'none'];
   let bestText = '';
 
-  if (typeof window === 'undefined' || typeof window.TextDetector !== 'function') {
-    console.debug('[PassportOCR] local-ocr-unsupported');
+  if (typeof window === 'undefined') {
     return {
       success: false,
       isPassport: false,
@@ -116,25 +165,38 @@ export const runLocalPassportOCR = async (file) => {
     transforms
   });
 
-  for (let attempt = 0; attempt < transforms.length; attempt += 1) {
-    const canvas = await canvasFromImage(file, transforms[attempt]);
-    const text = await detectTextLocally(canvas);
-    bestText = text || bestText;
-    const isPassport = isLikelyPassportDocument(text);
-    const passportNumber = extractPassportNumberFromText(text);
-    console.debug('[PassportOCR] attempt-finished', {
-      attempt: attempt + 1,
-      transform: transforms[attempt],
-      textLength: text?.length || 0,
-      isPassport,
-      passportNumber
-    });
-    if (isPassport && passportNumber) {
-      return { success: true, isPassport: true, passportNumber, text, attempts: attempt + 1 };
+  try {
+    for (let attempt = 0; attempt < transforms.length; attempt += 1) {
+      const canvas = await canvasFromImage(file, transforms[attempt]);
+      const text = await detectTextLocally(canvas);
+      bestText = text || bestText;
+      const isPassport = isLikelyPassportDocument(text);
+      const passportNumber = extractPassportNumberFromText(text);
+      console.debug('[PassportOCR] attempt-finished', {
+        attempt: attempt + 1,
+        transform: transforms[attempt],
+        textLength: text?.length || 0,
+        isPassport,
+        passportNumber
+      });
+      if (isPassport && passportNumber) {
+        return { success: true, isPassport: true, passportNumber, text, attempts: attempt + 1 };
+      }
+      if (!isPassport && attempt === transforms.length - 1) {
+        return { success: false, isPassport: false, passportNumber: '', text, attempts: transforms.length };
+      }
     }
-    if (!isPassport && attempt === transforms.length - 1) {
-      return { success: false, isPassport: false, passportNumber: '', text, attempts: transforms.length };
-    }
+  } catch (error) {
+    console.warn('[PassportOCR] local-ocr-unavailable', error);
+    return {
+      success: false,
+      isPassport: false,
+      passportNumber: '',
+      text: '',
+      attempts: 0,
+      unsupported: true,
+      reason: error?.message || 'UNKNOWN_OCR_ERROR'
+    };
   }
 
   return {

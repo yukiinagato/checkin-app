@@ -66,10 +66,12 @@ const COUNTRY_DATA = [
 // ----------------------------------------------------------------------
 const API_URL = '/api';
 const STEP_STORAGE_KEY = 'checkin.steps';
+const COMPLETION_TEMPLATE_STORAGE_KEY = 'checkin.completionTemplate';
 const ADMIN_TOKEN_STORAGE_KEY = 'checkin.adminSessionToken';
 const DEFAULT_LANG = 'jp';
 const CHECKIN_STORAGE_KEY = 'checkin.completed';
 const GUEST_STORAGE_KEY = 'checkin.guests';
+const FLOW_COMPLETED_STORAGE_KEY = 'checkin.flowCompleted';
 
 const DB = {
   async getAllRecords(adminToken) {
@@ -162,6 +164,25 @@ const DB = {
       body: JSON.stringify({ steps })
     });
     if (!res.ok) throw new Error('Failed to save steps');
+    return await res.json();
+  },
+
+  async getCompletionTemplate(lang) {
+    const res = await fetch(`${API_URL}/completion-template?lang=${encodeURIComponent(lang)}`);
+    if (!res.ok) throw new Error('Failed to fetch completion template');
+    return await res.json();
+  },
+
+  async updateCompletionTemplate(adminToken, lang, template) {
+    const res = await fetch(`${API_URL}/admin/completion-template?lang=${encodeURIComponent(lang)}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${adminToken}`
+      },
+      body: JSON.stringify({ template })
+    });
+    if (!res.ok) throw new Error('Failed to save completion template');
     return await res.json();
   },
 
@@ -471,6 +492,36 @@ const saveSteps = (lang, steps) => {
   localStorage.setItem(`${STEP_STORAGE_KEY}.${lang}`, JSON.stringify(steps));
 };
 
+const buildDefaultCompletionTemplate = (lang) => ({
+  title: translations[lang]?.welcomeTitle || translations[DEFAULT_LANG].welcomeTitle,
+  subtitle: translations[lang]?.welcomeSub || translations[DEFAULT_LANG].welcomeSub,
+  cardHtml: '<p><strong>Wi-Fi SSID:</strong> Hotel Wifi<br><strong>Password:</strong> password</p>',
+  extraHtml: '<p><strong>AC control</strong><br><a href="https://homeassistant.kawachinagano.ox.gy:8123/" target="_blank" rel="noopener noreferrer">https://homeassistant.kawachinagano.ox.gy:8123/</a></p><img src="./ha-login-image.png" alt="HA Login" />'
+});
+
+const normalizeCompletionTemplate = (template, fallback) => ({
+  title: template?.title || fallback.title,
+  subtitle: template?.subtitle || fallback.subtitle,
+  cardHtml: template?.cardHtml || fallback.cardHtml,
+  extraHtml: template?.extraHtml || fallback.extraHtml
+});
+
+const loadCompletionTemplate = (lang) => {
+  try {
+    const raw = localStorage.getItem(`${COMPLETION_TEMPLATE_STORAGE_KEY}.${lang}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return normalizeCompletionTemplate(parsed, buildDefaultCompletionTemplate(lang));
+  } catch (error) {
+    console.warn('無法讀取完成頁設定:', error);
+    return null;
+  }
+};
+
+const saveCompletionTemplate = (lang, template) => {
+  localStorage.setItem(`${COMPLETION_TEMPLATE_STORAGE_KEY}.${lang}`, JSON.stringify(template));
+};
+
 const sanitizeRichHtml = (html) => DOMPurify.sanitize(html || '', {
   ALLOWED_TAGS: ['p', 'b', 'strong', 'i', 'u', 'ul', 'ol', 'li', 'a', 'img', 'br', 'span'],
   ALLOWED_ATTR: ['href', 'target', 'rel', 'src', 'alt'],
@@ -513,9 +564,11 @@ const App = () => {
   // 歷史記錄狀態管理
   // ----------------------------------------------------------------
   const [hasHistory, setHasHistory] = useState(false);
+  const [hasCompletedFlow, setHasCompletedFlow] = useState(false);
 
   useEffect(() => {
     const hasRecord = localStorage.getItem(CHECKIN_STORAGE_KEY);
+    const flowCompleted = localStorage.getItem(FLOW_COMPLETED_STORAGE_KEY) === 'true';
     if (hasRecord) {
       setHasHistory(true);
       const savedGuestsJSON = localStorage.getItem(GUEST_STORAGE_KEY);
@@ -523,6 +576,11 @@ const App = () => {
         const savedGuests = JSON.parse(savedGuestsJSON);
         const loadedGuests = savedGuests.map(g => ({ ...g, isEditable: false }));
         setGuests(loadedGuests);
+      }
+      if (flowCompleted) {
+        setHasCompletedFlow(true);
+        setHasAgreed(true);
+        setIsCompleted(true);
       }
     } else {
       setGuests([createGuestTemplate('adult')]);
@@ -591,8 +649,10 @@ const App = () => {
     setIsCompleted(false);
     setPetCount(0);
     setHasAgreed(false);
+    setHasCompletedFlow(false);
     localStorage.removeItem(CHECKIN_STORAGE_KEY);
     localStorage.removeItem(GUEST_STORAGE_KEY);
+    localStorage.removeItem(FLOW_COMPLETED_STORAGE_KEY);
     setHasHistory(false);
   };
 
@@ -612,6 +672,10 @@ const App = () => {
         createStepId={createStepId}
         StepContent={StepContent}
         langOptions={LANG_OPTIONS}
+        buildDefaultCompletionTemplate={buildDefaultCompletionTemplate}
+        loadCompletionTemplate={loadCompletionTemplate}
+        saveCompletionTemplate={saveCompletionTemplate}
+        normalizeCompletionTemplate={normalizeCompletionTemplate}
       />
     );
   }
@@ -656,6 +720,12 @@ const App = () => {
       hasAgreed={hasAgreed}
       setHasAgreed={setHasAgreed}
       hasHistory={hasHistory}
+      hasCompletedFlow={hasCompletedFlow}
+      onCompleteFlow={() => {
+        setHasCompletedFlow(true);
+        setHasAgreed(true);
+        localStorage.setItem(FLOW_COMPLETED_STORAGE_KEY, 'true');
+      }}
       onAdminRequest={() => navigateTo('/admin')}
       onStartNewCheckin={resetCheckinProcess}
     />
@@ -675,11 +745,15 @@ const GuestFlow = ({
   petCount, setPetCount,
   hasAgreed, setHasAgreed,
   hasHistory,
+  hasCompletedFlow,
+  onCompleteFlow,
   onAdminRequest,
   onStartNewCheckin
 }) => {
   const [isLookingUpZip, setIsLookingUpZip] = useState(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [showStepReview, setShowStepReview] = useState(false);
+  const [reviewStepIndex, setReviewStepIndex] = useState(0);
 
   const parseAge = (ageValue) => Number.parseInt(String(ageValue ?? '').trim(), 10);
 
@@ -690,6 +764,7 @@ const GuestFlow = ({
   }, [guests.length, setGuests]);
 
   const [stepsConfig, setStepsConfig] = useState([]);
+  const [completionTemplate, setCompletionTemplate] = useState(() => buildDefaultCompletionTemplate(lang || DEFAULT_LANG));
 
   useEffect(() => {
     let isActive = true;
@@ -710,6 +785,32 @@ const GuestFlow = ({
           return;
         }
         setStepsConfig(buildDefaultSteps(lang));
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [lang]);
+
+  useEffect(() => {
+    let isActive = true;
+    if (!lang) return () => {};
+
+    DB.getCompletionTemplate(lang)
+      .then((template) => {
+        if (!isActive) return;
+        const normalized = normalizeCompletionTemplate(template, buildDefaultCompletionTemplate(lang));
+        setCompletionTemplate(normalized);
+        saveCompletionTemplate(lang, normalized);
+      })
+      .catch(() => {
+        if (!isActive) return;
+        const stored = loadCompletionTemplate(lang);
+        if (stored) {
+          setCompletionTemplate(stored);
+          return;
+        }
+        setCompletionTemplate(buildDefaultCompletionTemplate(lang));
       });
 
     return () => {
@@ -777,6 +878,7 @@ const GuestFlow = ({
 
       if (isLastStep) {
         setIsCompleted(true);
+        onCompleteFlow();
       } else {
         setCurrentStep(currentStep + 1);
       }
@@ -794,6 +896,7 @@ const GuestFlow = ({
     }
 
     setIsCompleted(true);
+    onCompleteFlow();
   };
 
   if (!lang) {
@@ -826,29 +929,54 @@ const GuestFlow = ({
   const stepConfig = steps[currentStep];
   const hasContent = Boolean(stepConfig?.content?.trim());
   const builtinFallbackContent = stepConfig?.type === 'builtin' ? getBuiltinStepFallback(lang, stepConfig?.id) : '';
+  const reviewStep = steps[reviewStepIndex] || steps[0];
+  const reviewFallback = reviewStep?.type === 'builtin' ? getBuiltinStepFallback(lang, reviewStep?.id) : '';
 
   if (isCompleted) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center animate-in fade-in">
         <CheckCircle2 className="w-16 h-16 text-emerald-500 mb-6 mx-auto" />
-        <h1 className="text-3xl font-bold mb-2">{t.welcomeTitle}</h1>
-        <p className="text-slate-500 mb-6">{t.welcomeSub}</p>
+        <h1 className="text-3xl font-bold mb-2">{completionTemplate.title}</h1>
+        <p className="text-slate-500 mb-6">{completionTemplate.subtitle}</p>
         <div className="bg-slate-900 text-white p-8 rounded-[2rem] shadow-xl w-full max-w-sm">
           <div className="flex items-center gap-3">
             <Wifi className="w-7 h-7 text-white-500" />
-            <p className="text-md text-left">
-              <b>Wi-Fi SSID:</b> Hotel Wifi <br></br>
-              <b>Password:</b> password
-            </p>
+            <div className="text-md text-left step-content text-white" dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(completionTemplate.cardHtml) }} />
           </div>
         </div>
         <div className="mt-8 p-6 bg-white rounded-2xl border border-slate-100 max-w-sm w-full space-y-4 text-left">
-          <div className="flex items-center gap-3"><Home className="w-5 h-5 text-blue-500" />
-            <p className="text-sm"><b>AC control</b><br/>
-             <a className='text-xs' href='https://homeassistant.kawachinagano.ox.gy:8123/' target='_blank' rel="noreferrer">https://homeassistant.kawachinagano.ox.gy:8123/</a>
-            </p>
+          <div className="flex items-start gap-3"><Home className="w-5 h-5 text-blue-500 mt-1" />
+            <div className="text-sm step-content" dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(completionTemplate.extraHtml) }} />
           </div>
-          <img src="./ha-login-image.png" alt="HA Login"></img>
+        </div>
+
+        <div className="mt-6 max-w-3xl w-full">
+          <button
+            onClick={() => setShowStepReview((prev) => !prev)}
+            className="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-bold"
+          >
+            {showStepReview ? '收起步骤内容 / Hide Steps' : '查看步骤内容 / View Step Guides'}
+          </button>
+
+          {showStepReview && (
+            <div className="mt-4 bg-white rounded-2xl border border-slate-100 p-5 text-left shadow-sm">
+              <div className="flex flex-wrap gap-2 mb-4">
+                {steps.map((step, idx) => (
+                  <button
+                    key={`review-${step.id}`}
+                    onClick={() => setReviewStepIndex(idx)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold ${reviewStepIndex === idx ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600'}`}
+                  >
+                    {step.title}
+                  </button>
+                ))}
+              </div>
+              <div className="step-content-surface">
+                <p className="text-xs font-bold text-slate-500 mb-2">{reviewStep?.title}</p>
+                <StepContent content={reviewStep?.content || reviewFallback} fallback={t.customStepEmpty} />
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -1075,7 +1203,7 @@ const GuestFlow = ({
               {stepConfig.id === 'rules' && (
                 <div className="space-y-6">
                   <label className="flex items-center gap-4 p-4 bg-emerald-50 rounded-2xl border border-emerald-100 cursor-pointer shadow-sm group transition-all hover:bg-emerald-100">
-                    <input type="checkbox" className="w-6 h-6 rounded text-emerald-600 transition-transform group-hover:scale-110" checked={hasAgreed} onChange={(e) => setHasAgreed(e.target.checked)} />
+                    <input type="checkbox" className="w-6 h-6 rounded text-emerald-600 transition-transform group-hover:scale-110 disabled:opacity-70 disabled:cursor-not-allowed" checked={hasCompletedFlow ? true : hasAgreed} disabled={hasCompletedFlow} onChange={(e) => setHasAgreed(e.target.checked)} />
                     <span className="text-emerald-900 font-bold text-sm">{t.agree}</span>
                   </label>
                 </div>

@@ -412,7 +412,11 @@ const AdminDashboard = ({
   normalizeSteps,
   createStepId,
   StepContent,
-  langOptions
+  langOptions,
+  buildDefaultCompletionTemplate,
+  loadCompletionTemplate,
+  saveCompletionTemplate,
+  normalizeCompletionTemplate
 }) => {
   const [tab, setTab] = useState('data');
   const [records, setRecords] = useState([]);
@@ -420,6 +424,8 @@ const AdminDashboard = ({
   const [stepLang, setStepLang] = useState(defaultLang);
   const [editableSteps, setEditableSteps] = useState(() => buildDefaultSteps(defaultLang));
   const [stepsSaved, setStepsSaved] = useState(false);
+  const [completionTemplate, setCompletionTemplate] = useState(() => buildDefaultCompletionTemplate(defaultLang));
+  const [completionSaved, setCompletionSaved] = useState(false);
   const [showDeletedRows, setShowDeletedRows] = useState(false);
   const [pendingActionKey, setPendingActionKey] = useState('');
 
@@ -455,6 +461,32 @@ const AdminDashboard = ({
         }
         setEditableSteps(buildDefaultSteps(stepLang));
         setStepsSaved(false);
+      });
+    return () => {
+      isActive = false;
+    };
+  }, [stepLang]);
+
+  useEffect(() => {
+    let isActive = true;
+    db.getCompletionTemplate(stepLang)
+      .then((template) => {
+        if (!isActive) return;
+        const normalized = normalizeCompletionTemplate(template, buildDefaultCompletionTemplate(stepLang));
+        setCompletionTemplate(normalized);
+        saveCompletionTemplate(stepLang, normalized);
+        setCompletionSaved(false);
+      })
+      .catch(() => {
+        if (!isActive) return;
+        const stored = loadCompletionTemplate(stepLang);
+        if (stored) {
+          setCompletionTemplate(stored);
+          setCompletionSaved(false);
+          return;
+        }
+        setCompletionTemplate(buildDefaultCompletionTemplate(stepLang));
+        setCompletionSaved(false);
       });
     return () => {
       isActive = false;
@@ -533,6 +565,27 @@ const AdminDashboard = ({
   const handleResetSteps = () => {
     setEditableSteps(buildDefaultSteps(stepLang));
     setStepsSaved(false);
+  };
+
+  const updateCompletionField = (field, value) => {
+    setCompletionTemplate((prev) => ({ ...prev, [field]: value }));
+    setCompletionSaved(false);
+  };
+
+  const handleSaveCompletion = async () => {
+    try {
+      await db.updateCompletionTemplate(adminToken, stepLang, completionTemplate);
+      saveCompletionTemplate(stepLang, completionTemplate);
+      setCompletionSaved(true);
+    } catch (error) {
+      alert('完成页保存失败，请稍后重试');
+      setCompletionSaved(false);
+    }
+  };
+
+  const handleResetCompletion = () => {
+    setCompletionTemplate(buildDefaultCompletionTemplate(stepLang));
+    setCompletionSaved(false);
   };
 
   const renderContent = () => {
@@ -809,6 +862,46 @@ const AdminDashboard = ({
               <button onClick={handleResetSteps} className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-bold">恢复默认</button>
               {stepsSaved && <span className="text-sm text-emerald-600 font-bold">已保存</span>}
             </div>
+
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+              <h4 className="font-bold text-slate-800">完成页内容（获取房号页面）</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">主标题</label>
+                  <input type="text" value={completionTemplate.title} onChange={(e) => updateCompletionField('title', e.target.value)} className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">副标题</label>
+                  <input type="text" value={completionTemplate.subtitle} onChange={(e) => updateCompletionField('subtitle', e.target.value)} className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm" />
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase">卡片内容（Wi‑Fi等）</label>
+                <div className="mt-3">
+                  <RichTextEditor value={completionTemplate.cardHtml} onChange={(value) => updateCompletionField('cardHtml', value)} placeholder="输入完成页顶部卡片内容..." />
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase">附加内容（如空调控制）</label>
+                <div className="mt-3">
+                  <RichTextEditor value={completionTemplate.extraHtml} onChange={(value) => updateCompletionField('extraHtml', value)} placeholder="输入完成页下方卡片内容..." />
+                </div>
+              </div>
+              <div className="step-content-surface">
+                <p className="text-[10px] font-bold text-slate-400 uppercase mb-3">预览</p>
+                <p className="text-lg font-bold text-slate-900 mb-1">{completionTemplate.title}</p>
+                <p className="text-sm text-slate-500 mb-3">{completionTemplate.subtitle}</p>
+                <StepContent content={completionTemplate.cardHtml} fallback={stepLangText.customStepEmpty} />
+                <div className="mt-3">
+                  <StepContent content={completionTemplate.extraHtml} fallback={stepLangText.customStepEmpty} />
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <button onClick={handleSaveCompletion} className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-bold">保存完成页</button>
+                <button onClick={handleResetCompletion} className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-bold">恢复默认</button>
+                {completionSaved && <span className="text-sm text-emerald-600 font-bold">已保存</span>}
+              </div>
+            </div>
           </div>
         );
       default: return null;
@@ -862,7 +955,11 @@ const AdminPage = ({
   normalizeSteps,
   createStepId,
   StepContent,
-  langOptions
+  langOptions,
+  buildDefaultCompletionTemplate,
+  loadCompletionTemplate,
+  saveCompletionTemplate,
+  normalizeCompletionTemplate
 }) => {
   if (!adminToken) {
     return (
@@ -894,6 +991,10 @@ const AdminPage = ({
       createStepId={createStepId}
       StepContent={StepContent}
       langOptions={langOptions}
+      buildDefaultCompletionTemplate={buildDefaultCompletionTemplate}
+      loadCompletionTemplate={loadCompletionTemplate}
+      saveCompletionTemplate={saveCompletionTemplate}
+      normalizeCompletionTemplate={normalizeCompletionTemplate}
     />
   );
 };

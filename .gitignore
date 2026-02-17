@@ -29,3 +29,4 @@ server/.env.production
 server/hotel_dev.db
 server/hotel.db
 server/uploads*/
+venv

@@ -58,7 +58,7 @@ app.use(express.json({ limit: '50mb' })); // 允許大文件上傳(圖片)
 // ----------------------------------------------------------------------
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'hotel.db');
-const PADDLE_OCR_PYTHON = process.env.PADDLE_OCR_PYTHON || 'python3';
+const PADDLE_OCR_PYTHON_PATH = process.env.PADDLE_OCR_PYTHON_PATH || 'python3';
 const PADDLE_OCR_RUNNER = process.env.PADDLE_OCR_RUNNER || path.join(__dirname, 'tools', 'paddle_ocr_runner.py');
 const ALLOWED_IMAGE_TYPES = new Map([
   'image/jpeg',
@@ -251,7 +251,7 @@ const runLocalPaddleOcr = async (dataImage) => {
 
   try {
     await fs.writeFile(imagePath, parsed.buffer);
-    const { stdout, stderr } = await execFileAsync(PADDLE_OCR_PYTHON, [PADDLE_OCR_RUNNER, imagePath], {
+    const { stdout, stderr } = await execFileAsync(PADDLE_OCR_PYTHON_PATH, [PADDLE_OCR_RUNNER, imagePath], {
       maxBuffer: 10 * 1024 * 1024,
       timeout: 120000
     });

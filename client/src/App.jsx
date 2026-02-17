@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import AdminPage from './AdminPage';
 import { isRegistrationValid } from './formValidation';
+import { fileToBase64, runLocalPassportOCR } from './passportOcr';
 
 // ----------------------------------------------------------------------
 // 輔助函數與常量
@@ -35,6 +36,8 @@ const createGuestTemplate = (type = 'adult') => ({
   type,
   isResident: true,
   name: '', age: '', phone: '', address: '', postalCode: '', nationality: '', passportNumber: '', passportPhoto: null, guardianName: '', guardianPhone: '',
+  passportOcrStatus: 'idle',
+  passportOcrMessage: '',
   isEditable: true
 });
 
@@ -250,19 +253,6 @@ const DB = {
   }
 };
 
-const fileToBase64 = (file) => {
-  return new Promise((resolve, reject) => {
-    if (!file) {
-      resolve('');
-      return;
-    }
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = error => reject(error);
-  });
-};
-
 const createStepId = () => `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
 const LANG_OPTIONS = [
@@ -282,6 +272,7 @@ const translations = {
     footer: "您的安全与舒适是我们的最高宗旨。", guideTitle: "入住导览", changeLang: "语言", manualLink: "说明书 PDF",
     regResident: "日本居民", regTourist: "访日游客", startNewCheckin: "开始新登记", regFormName: "姓名", regFormAge: "年龄", regFormOcc: "职业", regFormPhone: "电话号码",
     regFormNation: "国籍", regFormPass: "护照号码", regPassportUpload: "拍摄/上传护照照片", regMinorAlert: "未成年人需填监护人信息",
+    ocrChecking: "正在本地识别证件...", ocrAutoFillSuccess: "已识别护照并自动填充护照号码。", ocrManualNeeded: "已检测到护照，但多次识别失败，请手动补充信息。", ocrInvalidDoc: "上传内容未通过证件校验，请上传护照照片或扫描件。", ocrFailed: "识别失败，请重试。",
     addGuest: "增加人员", guestLabel: "住客", petLabel: "宠物数量", countAdults: "住客人数 (成人/未成年)",
     selectCountry: "选择国家/地区",
     customStepEmpty: "此步骤暂无内容。",
@@ -306,6 +297,7 @@ const translations = {
     footer: "您的安全與舒適是我們的最高宗旨。", guideTitle: "入住導覽", changeLang: "語言", manualLink: "說明書 PDF",
     regResident: "日本居民", regTourist: "訪日遊客", startNewCheckin: "開始新登記", regFormName: "姓名", regFormAge: "年齡", regFormOcc: "職業", regFormPhone: "電話號碼",
     regFormNation: "國籍", regFormPass: "護照號碼", regPassportUpload: "拍攝/上傳護照照片", regMinorAlert: "未成年人需填監護人資訊",
+    ocrChecking: "正在本地辨識證件...", ocrAutoFillSuccess: "已辨識護照並自動填入護照號碼。", ocrManualNeeded: "已檢測到護照，但多次辨識失敗，請手動補充資訊。", ocrInvalidDoc: "上傳內容未通過證件校驗，請上傳護照照片或掃描件。", ocrFailed: "辨識失敗，請重試。",
     addGuest: "增加人員", guestLabel: "住客", petLabel: "寵物數量", countAdults: "住客人數 (成人/未成年)",
     selectCountry: "選擇國家/地區",
     customStepEmpty: "此步驟目前沒有內容。",
@@ -330,6 +322,7 @@ const translations = {
     footer: "Your safety and comfort are our top priority.", guideTitle: "Check-in Guide", changeLang: "Language", manualLink: "Manual PDF",
     regResident: "Japan Resident", regTourist: "Visitor", startNewCheckin: "Start New Check-in", regFormName: "Name", regFormAge: "Age", regFormOcc: "Occupation", regFormPhone: "Phone Number",
     regFormNation: "Nationality", regFormPass: "Passport No.", regPassportUpload: "Upload passport photo", regMinorAlert: "Minors need guardian info",
+    ocrChecking: "Running local document OCR...", ocrAutoFillSuccess: "Passport detected and number auto-filled.", ocrManualNeeded: "Passport detected, but OCR failed multiple times. Please enter the remaining fields manually.", ocrInvalidDoc: "Upload rejected: this image does not look like a passport document.", ocrFailed: "OCR failed. Please try again.",
     addGuest: "Add Guest", guestLabel: "Guest", petLabel: "Number of Pets", countAdults: "Guest Count (adult/minor)",
     selectCountry: "Select country/region",
     customStepEmpty: "No content for this step yet.",
@@ -354,6 +347,7 @@ const translations = {
     footer: "安全と快適さが最優先です。", guideTitle: "チェックイン案内", changeLang: "言語", manualLink: "マニュアル PDF",
     regResident: "日本在住", regTourist: "訪日観光客", startNewCheckin: "新しいチェックインを開始", regFormName: "氏名", regFormAge: "年齢", regFormOcc: "職業", regFormPhone: "電話番号",
     regFormNation: "国籍", regFormPass: "パスポート番号", regPassportUpload: "パスポート写真をアップロード", regMinorAlert: "未成年は保護者情報が必要",
+    ocrChecking: "ローカルで書類をOCR中...", ocrAutoFillSuccess: "パスポートを検出し、番号を自動入力しました。", ocrManualNeeded: "パスポートは検出されましたが、OCRが複数回失敗しました。残りは手入力してください。", ocrInvalidDoc: "アップロード不可：パスポート画像/スキャンではありません。", ocrFailed: "OCRに失敗しました。再試行してください。",
     addGuest: "追加", guestLabel: "ゲスト", petLabel: "ペットの数", countAdults: "人数 (成人/未成年)",
     selectCountry: "国/地域を選択",
     customStepEmpty: "このステップにはまだ内容がありません。",
@@ -378,6 +372,7 @@ const translations = {
     footer: "안전과 편안함이 최우선입니다.", guideTitle: "체크인 안내", changeLang: "언어", manualLink: "매뉴얼 PDF",
     regResident: "일본 거주자", regTourist: "방문객", startNewCheckin: "새 체크인 시작", regFormName: "이름", regFormAge: "나이", regFormOcc: "직업", regFormPhone: "전화번호",
     regFormNation: "국적", regFormPass: "여권 번호", regPassportUpload: "여권 사진 업로드", regMinorAlert: "미성년자는 보호자 정보 필요",
+    ocrChecking: "로컬 OCR로 문서를 분석하는 중...", ocrAutoFillSuccess: "여권을 인식해 여권번호를 자동 입력했습니다.", ocrManualNeeded: "여권은 감지했지만 OCR이 여러 번 실패했습니다. 남은 정보는 수동 입력해 주세요.", ocrInvalidDoc: "업로드 거절: 여권 사진/스캔으로 확인되지 않았습니다.", ocrFailed: "OCR 실패. 다시 시도해 주세요.",
     addGuest: "인원 추가", guestLabel: "게스트", petLabel: "반려동물 수", countAdults: "인원 수 (성인/미성년)",
     selectCountry: "국가/지역 선택",
     customStepEmpty: "이 단계에는 아직 내용이 없습니다.",
@@ -808,6 +803,48 @@ const GuestFlow = ({
   const removeGuest = (id) => setGuests(guests.filter(g => g.id !== id));
   const updateGuest = (id, field, value) => setGuests(guests.map(g => g.id === id ? { ...g, [field]: value } : g));
 
+  const handlePassportUpload = async (guestId, file) => {
+    if (!file) return;
+
+    updateGuest(guestId, 'passportOcrStatus', 'processing');
+    updateGuest(guestId, 'passportOcrMessage', t.ocrChecking);
+
+    try {
+      const ocrResult = await runLocalPassportOCR(file);
+      if (!ocrResult.isPassport) {
+        updateGuest(guestId, 'passportPhoto', null);
+        updateGuest(guestId, 'passportOcrStatus', 'failed');
+        updateGuest(guestId, 'passportOcrMessage', t.ocrInvalidDoc);
+        return;
+      }
+
+      const base64 = await fileToBase64(file);
+      updateGuest(guestId, 'passportPhoto', base64);
+
+      if (ocrResult.passportNumber) {
+        updateGuest(guestId, 'passportNumber', ocrResult.passportNumber);
+        updateGuest(guestId, 'passportOcrStatus', 'success');
+        updateGuest(guestId, 'passportOcrMessage', t.ocrAutoFillSuccess);
+        return;
+      }
+
+      updateGuest(guestId, 'passportOcrStatus', 'manual-required');
+      updateGuest(guestId, 'passportOcrMessage', t.ocrManualNeeded);
+    } catch (error) {
+      console.error('Passport OCR failed', error);
+      if (error?.message === 'TEXT_DETECTOR_UNAVAILABLE') {
+        const base64 = await fileToBase64(file);
+        updateGuest(guestId, 'passportPhoto', base64);
+        updateGuest(guestId, 'passportOcrStatus', 'manual-required');
+        updateGuest(guestId, 'passportOcrMessage', t.ocrManualNeeded);
+        return;
+      }
+      updateGuest(guestId, 'passportPhoto', null);
+      updateGuest(guestId, 'passportOcrStatus', 'failed');
+      updateGuest(guestId, 'passportOcrMessage', t.ocrFailed);
+    }
+  };
+
   const lookupZipCode = async (guestId, zip) => {
     if (!zip || zip.length < 7) return;
     setIsLookingUpZip(guestId);
@@ -1104,11 +1141,21 @@ const GuestFlow = ({
                               <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormPass}</label>
                               <input disabled={!guest.isEditable} type="text" value={guest.passportNumber} onChange={(e) => updateGuest(guest.id, 'passportNumber', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm disabled:bg-slate-100" />
                             </div>
-                            <div className="col-span-2 relative">
-                              <input disabled={!guest.isEditable} type="file" accept="image/*" className="absolute inset-0 w-full h-full opacity-0 z-10 cursor-pointer" onChange={(e) => fileToBase64(e.target.files?.[0]).then(base64 => updateGuest(guest.id, 'passportPhoto', base64))} />
+                            <div className="col-span-2 relative space-y-2">
+                              <input
+                                disabled={!guest.isEditable || guest.passportOcrStatus === 'processing'}
+                                type="file"
+                                accept="image/*"
+                                className="absolute inset-0 w-full h-full opacity-0 z-10 cursor-pointer"
+                                onChange={(e) => handlePassportUpload(guest.id, e.target.files?.[0])}
+                              />
                               <div className={`p-4 border-2 border-dashed rounded-xl flex items-center justify-center gap-2 ${guest.passportPhoto ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-slate-100 text-slate-300'}`}>
-                                <Camera className="w-4 h-4" /> <span className="text-[10px] font-bold uppercase">{guest.passportPhoto ? 'Uploaded' : t.regPassportUpload}</span>
+                                {guest.passportOcrStatus === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+                                <span className="text-[10px] font-bold uppercase">{guest.passportPhoto ? 'Uploaded' : t.regPassportUpload}</span>
                               </div>
+                              {guest.passportOcrMessage && (
+                                <p className={`text-[11px] ${guest.passportOcrStatus === 'failed' ? 'text-rose-500' : guest.passportOcrStatus === 'manual-required' ? 'text-amber-600' : 'text-emerald-600'}`}>{guest.passportOcrMessage}</p>
+                              )}
                             </div>
                           </div>
                         )}

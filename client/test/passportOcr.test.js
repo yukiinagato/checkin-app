@@ -24,3 +24,8 @@ test('rejects unrelated content', () => {
   assert.equal(isLikelyPassportDocument(unrelated), false);
   assert.equal(extractPassportNumberFromText(unrelated), '');
 });
+
+test('accepts MRZ-like noisy OCR text as passport-like document', () => {
+  const noisyMrz = 'I<UT0ER1KSS0N<<ANNA<MAR1A<<<<<<<<<<<<<<\nL898902C36UT07408122F1204159ZE184226B<<<<<10';
+  assert.equal(isLikelyPassportDocument(noisyMrz), true);
+});

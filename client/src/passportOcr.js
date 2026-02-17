@@ -80,9 +80,19 @@ export const isLikelyPassportDocument = (rawText = '') => {
   const normalized = normalizeText(rawText).toLowerCase();
   const hasPassportKeyword = PASSPORT_KEYWORDS.some((keyword) => normalized.includes(keyword));
   const hintMatches = DOC_HINTS.filter((hint) => normalized.includes(hint)).length;
-  const hasMrz = /P<[A-Z<]{10,}/.test(rawText.toUpperCase()) && /[A-Z0-9<]{25,}/.test(rawText.toUpperCase());
+  const upperRaw = rawText.toUpperCase();
+  const mrzLines = upperRaw
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, '').replace(/[^A-Z0-9<]/g, ''))
+    .filter((line) => line.length >= 25);
+  const hasMrzPrefix = mrzLines.some((line) => line.startsWith('P<'));
+  const hasMrzLineShape = mrzLines.some((line) => (line.match(/</g) || []).length >= 8 && /\d/.test(line));
+  const hasMrz = hasMrzPrefix || hasMrzLineShape;
 
-  return hasPassportKeyword || hasMrz || hintMatches >= 2;
+  const hasPassportNumberLikePattern = /\b[A-Z][0-9]{7,8}\b/.test(upperRaw);
+  const hasDocumentHints = hintMatches >= 1 && hasPassportNumberLikePattern;
+
+  return hasPassportKeyword || hasMrz || hintMatches >= 2 || hasDocumentHints;
 };
 
 const canvasFromImage = async (file, transform = 'none', crop = null) => {
@@ -195,7 +205,8 @@ export const runLocalPassportOCR = async (file) => {
   const attempts = [
     { transform: 'none', crop: 'mrz', mrzMode: true },
     { transform: 'grayscale', crop: 'mrz', mrzMode: true },
-    { transform: 'none', crop: 'full', mrzMode: false }
+    { transform: 'none', crop: 'full', mrzMode: false },
+    { transform: 'grayscale', crop: 'full', mrzMode: false }
   ];
 
   if (typeof window === 'undefined') {

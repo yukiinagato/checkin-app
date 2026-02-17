@@ -799,13 +799,16 @@ const GuestFlow = ({
     }
   }, [stepsConfig, currentStep, setCurrentStep]);
 
-  const addGuest = () => setGuests([...guests, createGuestTemplate('adult')]);
-  const removeGuest = (id) => setGuests(guests.filter(g => g.id !== id));
-  const updateGuest = (id, field, value) => setGuests(guests.map(g => g.id === id ? { ...g, [field]: value } : g));
+  const addGuest = () => setGuests((prevGuests) => [...prevGuests, createGuestTemplate('adult')]);
+  const removeGuest = (id) => setGuests((prevGuests) => prevGuests.filter((guest) => guest.id !== id));
+  const updateGuest = (id, field, value) => setGuests((prevGuests) => prevGuests.map((guest) => (guest.id === id ? { ...guest, [field]: value } : guest)));
 
   const handlePassportUpload = async (guestId, file) => {
     if (!file) return;
 
+    updateGuest(guestId, 'passportPhoto', null);
+    updateGuest(guestId, 'passportOcrStatus', 'idle');
+    updateGuest(guestId, 'passportOcrMessage', '');
     updateGuest(guestId, 'passportOcrStatus', 'processing');
     updateGuest(guestId, 'passportOcrMessage', t.ocrChecking);
 

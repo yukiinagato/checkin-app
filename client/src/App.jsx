@@ -1001,7 +1001,7 @@ const GuestFlow = ({
   };
 
   const menuContent = (
-    <div className="p-4 space-y-2 overflow-y-scroll">
+    <div className="p-4 space-y-2 h-full overflow-y-auto overscroll-contain [webkit-overflow-scrolling:touch]">
       <h3 className="text-sm font-bold px-4 text-slate-500">{t.guideTitle}</h3>
       {steps.map((step, index) => (
         <button
@@ -1038,7 +1038,7 @@ const GuestFlow = ({
       {/* Mobile Menu (Overlay) */}
       {isMenuOpen && (
         <div className="fixed inset-0 bg-black/30 z-40 md:hidden" onClick={() => setIsMenuOpen(false)}>
-          <div className="w-72 bg-white h-full shadow-xl" onClick={(e) => e.stopPropagation()}>
+          <div className="w-72 bg-white h-full shadow-xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
             {menuContent}
           </div>
         </div>

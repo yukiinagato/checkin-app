@@ -197,6 +197,46 @@ const parseRecordData = (row) => {
   }
 };
 
+const parseAge = (value) => Number.parseInt(String(value ?? '').trim(), 10);
+
+const validateGuestPayload = (guest) => {
+  if (!guest || typeof guest !== 'object') {
+    return { valid: false, error: 'Invalid guest item' };
+  }
+
+  const name = typeof guest.name === 'string' ? guest.name.trim() : '';
+  const age = parseAge(guest.age);
+  const hasValidAge = Number.isInteger(age) && age >= 0 && age <= 120;
+  if (!name || !hasValidAge) {
+    return { valid: false, error: 'Guest name/age is invalid' };
+  }
+
+  const isMinor = age < 18;
+  const guardianName = typeof guest.guardianName === 'string' ? guest.guardianName.trim() : '';
+  const guardianPhone = typeof guest.guardianPhone === 'string' ? guest.guardianPhone.trim() : '';
+  if (isMinor && (!guardianName || !guardianPhone)) {
+    return { valid: false, error: 'Minor guest must include guardian info' };
+  }
+
+  if (guest.isResident === true) {
+    const address = typeof guest.address === 'string' ? guest.address.trim() : '';
+    const phone = typeof guest.phone === 'string' ? guest.phone.trim() : '';
+    const needsPhone = age >= 16;
+    if (!address || (needsPhone && !phone)) {
+      return { valid: false, error: 'Resident guest info is incomplete' };
+    }
+    return { valid: true };
+  }
+
+  const nationality = typeof guest.nationality === 'string' ? guest.nationality.trim() : '';
+  const passportNumber = typeof guest.passportNumber === 'string' ? guest.passportNumber.trim() : '';
+  if (!nationality || !passportNumber || !guest.passportPhoto) {
+    return { valid: false, error: 'Visitor guest info is incomplete' };
+  }
+
+  return { valid: true };
+};
+
 const adminChallenges = new Map();
 const adminSessions = new Map();
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
@@ -622,6 +662,14 @@ app.post('/api/submit', async (req, res) => {
       res.status(400).json({ success: false, error: 'Invalid guest payload' });
       return;
     }
+
+    const invalidGuest = guests.find((guest) => !validateGuestPayload(guest).valid);
+    if (invalidGuest) {
+      const { error } = validateGuestPayload(invalidGuest);
+      res.status(400).json({ success: false, error: error || 'Guest payload validation failed' });
+      return;
+    }
+
     const submitId = uuidv4();
     const today = new Date().toISOString().split('T')[0];
 

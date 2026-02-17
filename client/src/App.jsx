@@ -10,7 +10,7 @@ import {
   BellRing,
   Languages,
   UserCheck,
-  Baby,
+  Dog,
   AlertTriangle,
   Wrench,
   Flame,
@@ -21,13 +21,23 @@ import {
   Lock,
   Loader2,
   Search,
-  Home
+  Home,
+  Menu
 } from 'lucide-react';
 import AdminPage from './AdminPage';
 
 // ----------------------------------------------------------------------
-// 國家/地區數據 (支持多語言)
+// 輔助函數與常量
 // ----------------------------------------------------------------------
+const createGuestTemplate = (type = 'adult') => ({
+  id: Math.random().toString(36).substr(2, 9),
+  type,
+  isResident: true,
+  name: '', age: '', phone: '', address: '', postalCode: '', nationality: '', passportNumber: '', passportPhoto: null, guardianName: '', guardianPhone: '',
+  isEditable: true
+});
+
+// 國家/地區數據 (支持多語言)
 const COUNTRY_DATA = [
   { code: 'CN', names: { 'zh-hans': '中国', 'zh-hant': '中國', 'en': 'China', 'jp': '中国', 'ko': '중국' } },
   { code: 'TW', names: { 'zh-hans': '中国台湾', 'zh-hant': '台灣', 'en': 'Taiwan', 'jp': '台湾', 'ko': '대만' } },
@@ -58,6 +68,8 @@ const API_URL = '/api';
 const STEP_STORAGE_KEY = 'checkin.steps';
 const ADMIN_TOKEN_STORAGE_KEY = 'checkin.adminSessionToken';
 const DEFAULT_LANG = 'jp';
+const CHECKIN_STORAGE_KEY = 'checkin.completed';
+const GUEST_STORAGE_KEY = 'checkin.guests';
 
 const DB = {
   async getAllRecords(adminToken) {
@@ -242,14 +254,14 @@ const LANG_OPTIONS = [
 
 const translations = {
   'zh-hans': {
-    next: "下一步", prev: "上一步", finish: "确认并获取房号", agree: "我已详读并同意遵守上述所有守则",
+    next: "下一条指南", prev: "返回选择菜单", finish: "确认并获取房号", agree: "我已详读并同意遵守上述所有守则",
     zipLookup: "查询", zipPlaceholder: "7位邮编", zipLoading: "查询中...", regFormAddr: "日本住址", regFormZip: "邮政编码",
     roomNo: "您的房号", wifi: "Wi-Fi 密码", copy: "复制", breakfast: "早餐时间", breakfastLoc: "2楼西餐厅",
     service: "紧急协助", serviceDetail: "优先拨打紧急电话，再前往别栋联系管理人", welcomeTitle: "欢迎入住！", welcomeSub: "请开始您的愉快旅程",
     footer: "您的安全与舒适是我们的最高宗旨。", guideTitle: "入住导览", changeLang: "语言", manualLink: "说明书 PDF",
-    regResident: "日本居民", regTourist: "访日游客", regFormName: "姓名", regFormAge: "年龄", regFormOcc: "职业", regFormPhone: "电话号码",
+    regResident: "日本居民", regTourist: "访日游客", startNewCheckin: "开始新登记", regFormName: "姓名", regFormAge: "年龄", regFormOcc: "职业", regFormPhone: "电话号码",
     regFormNation: "国籍", regFormPass: "护照号码", regPassportUpload: "拍摄/上传护照照片", regMinorAlert: "未成年人需填监护人信息",
-    addGuest: "增加人员", guestLabel: "住客", infantLabel: "婴儿人数 (2岁以下)", countAdults: "住客人数 (成人/未成年)",
+    addGuest: "增加人员", guestLabel: "住客", petLabel: "宠物数量", countAdults: "住客人数 (成人/未成年)",
     selectCountry: "选择国家/地区",
     customStepEmpty: "此步骤暂无内容。",
     steps: [
@@ -266,14 +278,14 @@ const translations = {
     ]
   },
   'zh-hant': {
-    next: "下一步", prev: "上一步", finish: "確認並獲取房號", agree: "我已詳讀並同意遵守上述所有守則",
+    next: "下一條指南", prev: "返回選擇菜單", finish: "確認並獲取房號", agree: "我已詳讀並同意遵守上述所有守則",
     zipLookup: "地址查詢", zipPlaceholder: "7位郵遞區號", zipLoading: "查詢中...", regFormAddr: "日本住址", regFormZip: "郵遞區號",
     roomNo: "您的房號", wifi: "Wi-Fi 密碼", copy: "複製", breakfast: "早餐時間", breakfastLoc: "2樓西餐廳",
     service: "緊急協助", serviceDetail: "優先撥打緊急電話，再前往別棟聯繫管理人", welcomeTitle: "入住愉快！", welcomeSub: "請開始您的愉快旅程",
     footer: "您的安全與舒適是我們的最高宗旨。", guideTitle: "入住導覽", changeLang: "語言", manualLink: "說明書 PDF",
-    regResident: "日本居民", regTourist: "訪日遊客", regFormName: "姓名", regFormAge: "年齡", regFormOcc: "職業", regFormPhone: "電話號碼",
+    regResident: "日本居民", regTourist: "訪日遊客", startNewCheckin: "開始新登記", regFormName: "姓名", regFormAge: "年齡", regFormOcc: "職業", regFormPhone: "電話號碼",
     regFormNation: "國籍", regFormPass: "護照號碼", regPassportUpload: "拍攝/上傳護照照片", regMinorAlert: "未成年人需填監護人資訊",
-    addGuest: "增加人員", guestLabel: "住客", infantLabel: "嬰兒人數 (2歲以下)", countAdults: "住客人數 (成人/未成年)",
+    addGuest: "增加人員", guestLabel: "住客", petLabel: "寵物數量", countAdults: "住客人數 (成人/未成年)",
     selectCountry: "選擇國家/地區",
     customStepEmpty: "此步驟目前沒有內容。",
     steps: [
@@ -290,14 +302,14 @@ const translations = {
     ]
   },
   'en': {
-    next: "Next", prev: "Back", finish: "Confirm & Get Room No.", agree: "I have read and agree to all rules above.",
+    next: "Next Guide", prev: "Back to Menu", finish: "Confirm & Get Room No.", agree: "I have read and agree to all rules above.",
     zipLookup: "Lookup", zipPlaceholder: "7-digit ZIP", zipLoading: "Searching...", regFormAddr: "Japanese address", regFormZip: "Postal code",
     roomNo: "Your Room No.", wifi: "Wi-Fi Password", copy: "Copy", breakfast: "Breakfast Time", breakfastLoc: "2F Restaurant",
     service: "Emergency Support", serviceDetail: "Call emergency first, then contact the manager in another building.", welcomeTitle: "Welcome!", welcomeSub: "Start your journey",
     footer: "Your safety and comfort are our top priority.", guideTitle: "Check-in Guide", changeLang: "Language", manualLink: "Manual PDF",
-    regResident: "Japan Resident", regTourist: "Visitor", regFormName: "Name", regFormAge: "Age", regFormOcc: "Occupation", regFormPhone: "Phone Number",
+    regResident: "Japan Resident", regTourist: "Visitor", startNewCheckin: "Start New Check-in", regFormName: "Name", regFormAge: "Age", regFormOcc: "Occupation", regFormPhone: "Phone Number",
     regFormNation: "Nationality", regFormPass: "Passport No.", regPassportUpload: "Upload passport photo", regMinorAlert: "Minors need guardian info",
-    addGuest: "Add Guest", guestLabel: "Guest", infantLabel: "Infants (under 2)", countAdults: "Guest Count (adult/minor)",
+    addGuest: "Add Guest", guestLabel: "Guest", petLabel: "Number of Pets", countAdults: "Guest Count (adult/minor)",
     selectCountry: "Select country/region",
     customStepEmpty: "No content for this step yet.",
     steps: [
@@ -314,14 +326,14 @@ const translations = {
     ]
   },
   'jp': {
-    next: "次へ", prev: "戻る", finish: "確認して部屋番号を取得", agree: "上記の規則を読み同意しました",
+    next: "次のガイドへ", prev: "メニューに戻る", finish: "確認して部屋番号を取得", agree: "上記の規則を読み同意しました",
     zipLookup: "検索", zipPlaceholder: "郵便番号", zipLoading: "検索中...", regFormAddr: "日本の住所", regFormZip: "郵便番号",
     roomNo: "あなたの部屋番号", wifi: "Wi-Fi パスワード", copy: "コピー", breakfast: "朝食時間", breakfastLoc: "2階レストラン",
     service: "緊急連絡", serviceDetail: "先に緊急電話、次に管理人へ連絡。", welcomeTitle: "ようこそ！", welcomeSub: "旅を始めましょう",
     footer: "安全と快適さが最優先です。", guideTitle: "チェックイン案内", changeLang: "言語", manualLink: "マニュアル PDF",
-    regResident: "日本在住", regTourist: "訪日観光客", regFormName: "氏名", regFormAge: "年齢", regFormOcc: "職業", regFormPhone: "電話番号",
+    regResident: "日本在住", regTourist: "訪日観光客", startNewCheckin: "新しいチェックインを開始", regFormName: "氏名", regFormAge: "年齢", regFormOcc: "職業", regFormPhone: "電話番号",
     regFormNation: "国籍", regFormPass: "パスポート番号", regPassportUpload: "パスポート写真をアップロード", regMinorAlert: "未成年は保護者情報が必要",
-    addGuest: "追加", guestLabel: "ゲスト", infantLabel: "乳児 (2歳未満)", countAdults: "人数 (成人/未成年)",
+    addGuest: "追加", guestLabel: "ゲスト", petLabel: "ペットの数", countAdults: "人数 (成人/未成年)",
     selectCountry: "国/地域を選択",
     customStepEmpty: "このステップにはまだ内容がありません。",
     steps: [
@@ -338,14 +350,14 @@ const translations = {
     ]
   },
   'ko': {
-    next: "다음", prev: "뒤로", finish: "확인 후 객실 번호 받기", agree: "위 규칙을 읽고 동의합니다",
+    next: "다음 안내", prev: "메뉴로 돌아가기", finish: "확인 후 객실 번호 받기", agree: "위 규칙을 읽고 동의합니다",
     zipLookup: "조회", zipPlaceholder: "7자리 우편번호", zipLoading: "조회 중...", regFormAddr: "일본 주소", regFormZip: "우편번호",
     roomNo: "객실 번호", wifi: "와이파이 비밀번호", copy: "복사", breakfast: "조식 시간", breakfastLoc: "2층 레스토랑",
     service: "긴급 지원", serviceDetail: "긴급 전화 후 관리자에게 연락.", welcomeTitle: "환영합니다!", welcomeSub: "여행을 시작하세요",
     footer: "안전과 편안함이 최우선입니다.", guideTitle: "체크인 안내", changeLang: "언어", manualLink: "매뉴얼 PDF",
-    regResident: "일본 거주자", regTourist: "방문객", regFormName: "이름", regFormAge: "나이", regFormOcc: "직업", regFormPhone: "전화번호",
+    regResident: "일본 거주자", regTourist: "방문객", startNewCheckin: "새 체크인 시작", regFormName: "이름", regFormAge: "나이", regFormOcc: "직업", regFormPhone: "전화번호",
     regFormNation: "국적", regFormPass: "여권 번호", regPassportUpload: "여권 사진 업로드", regMinorAlert: "미성년자는 보호자 정보 필요",
-    addGuest: "인원 추가", guestLabel: "게스트", infantLabel: "영아 (2세 이하)", countAdults: "인원 수 (성인/미성년)",
+    addGuest: "인원 추가", guestLabel: "게스트", petLabel: "반려동물 수", countAdults: "인원 수 (성인/미성년)",
     selectCountry: "국가/지역 선택",
     customStepEmpty: "이 단계에는 아직 내용이 없습니다.",
     steps: [
@@ -483,9 +495,39 @@ const StepContent = ({ content, fallback }) => {
 // ----------------------------------------------------------------------
 const App = () => {
   const getViewFromPath = () => window.location.pathname.startsWith('/admin') ? 'admin' : 'guest';
-  const [view, setView] = useState(getViewFromPath);
+  const [view, setView] = useState('home');
   const [loading, setLoading] = useState(false);
   const [adminToken, setAdminToken] = useState(() => sessionStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) || '');
+
+  // ----------------------------------------------------------------
+  // [狀態提升] 將所有表單狀態提升至 App 以便進行重置和控制
+  // ----------------------------------------------------------------
+  const [lang, setLang] = useState(null);
+  const [currentStep, setCurrentStep] = useState(0);
+  const [isCompleted, setIsCompleted] = useState(false);
+  const [guests, setGuests] = useState([]);
+  const [petCount, setPetCount] = useState(0);
+  const [hasAgreed, setHasAgreed] = useState(false);
+
+  // ----------------------------------------------------------------
+  // 歷史記錄狀態管理
+  // ----------------------------------------------------------------
+  const [hasHistory, setHasHistory] = useState(false);
+
+  useEffect(() => {
+    const hasRecord = localStorage.getItem(CHECKIN_STORAGE_KEY);
+    if (hasRecord) {
+      setHasHistory(true);
+      const savedGuestsJSON = localStorage.getItem(GUEST_STORAGE_KEY);
+      if (savedGuestsJSON) {
+        const savedGuests = JSON.parse(savedGuestsJSON);
+        const loadedGuests = savedGuests.map(g => ({ ...g, isEditable: false }));
+        setGuests(loadedGuests);
+      }
+    } else {
+      setGuests([createGuestTemplate('adult')]);
+    }
+  }, []);
 
   const handleAdminTokenChange = (token) => {
     setAdminToken(token);
@@ -514,14 +556,44 @@ const App = () => {
   };
 
   const handleGuestSubmit = async (guestData) => {
+    if (!Array.isArray(guestData) || guestData.length === 0) {
+      return true;
+    }
+
     setLoading(true);
-    const result = await DB.insertRecord({ guests: guestData });
+    const result = await DB.insertRecord({ guests: guestData, petCount });
     setLoading(false);
     if (!result.success) {
       alert("提交失敗，請聯繫管理員 (Server Error)");
       return false;
     }
+
+    localStorage.setItem(CHECKIN_STORAGE_KEY, 'true');
+    setGuests((prevGuests) => {
+      const submittedIds = new Set(guestData.map((g) => g.id));
+      const mergedGuests = prevGuests.map((guest) => (
+        submittedIds.has(guest.id)
+          ? { ...guest, isEditable: false }
+          : guest
+      ));
+      localStorage.setItem(GUEST_STORAGE_KEY, JSON.stringify(mergedGuests));
+      return mergedGuests;
+    });
+    setHasHistory(true);
+    
     return true;
+  };
+  
+  // 新增：重置所有登記相關的狀態
+  const resetCheckinProcess = () => {
+    setGuests([createGuestTemplate('adult')]);
+    setCurrentStep(0);
+    setIsCompleted(false);
+    setPetCount(0);
+    setHasAgreed(false);
+    localStorage.removeItem(CHECKIN_STORAGE_KEY);
+    localStorage.removeItem(GUEST_STORAGE_KEY);
+    setHasHistory(false);
   };
 
   if (view === 'admin') {
@@ -544,11 +616,48 @@ const App = () => {
     );
   }
 
+  // 如果沒有選擇語言，則顯示語言選擇頁
+  if (!lang) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 animate-in fade-in">
+        <div className="w-full max-w-sm space-y-8 text-center">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-white rounded-2xl shadow-sm mb-4 border border-slate-100">
+            <Languages className="w-8 h-8 text-slate-900" />
+          </div>
+          <h1 className="text-2xl font-bold text-slate-900">Choose Language / 選擇語言</h1>
+          <div className="grid grid-cols-1 gap-3">
+            {LANG_OPTIONS.map((option) => (
+              <button key={option.value} onClick={() => setLang(option.value)} className="group flex items-center justify-between p-4 bg-white hover:bg-slate-900 rounded-2xl border border-slate-100 shadow-sm transition-all duration-300">
+                <p className="font-bold text-slate-900 group-hover:text-white">{option.label}</p>
+                <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-white" />
+              </button>
+            ))}
+          </div>
+          <button onClick={() => navigateTo('/admin')} className="absolute bottom-6 right-6 p-2 text-slate-300 hover:text-slate-500"><Lock className="w-4 h-4" /></button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <GuestFlow
       onSubmit={handleGuestSubmit}
-      onAdminRequest={() => navigateTo('/admin')}
       isSubmitting={loading}
+      lang={lang}
+      setLang={setLang}
+      currentStep={currentStep}
+      setCurrentStep={setCurrentStep}
+      isCompleted={isCompleted}
+      setIsCompleted={setIsCompleted}
+      guests={guests}
+      setGuests={setGuests}
+      petCount={petCount}
+      setPetCount={setPetCount}
+      hasAgreed={hasAgreed}
+      setHasAgreed={setHasAgreed}
+      hasHistory={hasHistory}
+      onAdminRequest={() => navigateTo('/admin')}
+      onStartNewCheckin={resetCheckinProcess}
     />
   );
 };
@@ -556,32 +665,29 @@ const App = () => {
 // ----------------------------------------------------------------------
 // 訪客端流程
 // ----------------------------------------------------------------------
-const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
-  const [lang, setLang] = useState(null);
-  const [currentStep, setCurrentStep] = useState(0);
-  const [hasAgreed, setHasAgreed] = useState(false);
-  const [isCompleted, setIsCompleted] = useState(false);
-  const [guests, setGuests] = useState([]);
-  const [infantCount, setInfantCount] = useState(0);
+const GuestFlow = ({ 
+  onSubmit, 
+  isSubmitting,
+  lang, setLang,
+  currentStep, setCurrentStep,
+  isCompleted, setIsCompleted,
+  guests, setGuests,
+  petCount, setPetCount,
+  hasAgreed, setHasAgreed,
+  hasHistory,
+  onAdminRequest,
+  onStartNewCheckin
+}) => {
   const [isLookingUpZip, setIsLookingUpZip] = useState(null);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+
+  const parseAge = (ageValue) => Number.parseInt(String(ageValue ?? '').trim(), 10);
 
   useEffect(() => {
     if (guests.length === 0) {
-      setGuests([{
-        id: Math.random().toString(36).substr(2, 9),
-        type: 'adult',
-        isResident: true,
-        name: '', age: '', phone: '', address: '', postalCode: '', nationality: '', passportNumber: '', passportPhoto: null, guardianName: '', guardianPhone: ''
-      }]);
+      setGuests([createGuestTemplate('adult')]);
     }
-  }, []);
-
-  const createGuestTemplate = (type = 'adult') => ({
-    id: Math.random().toString(36).substr(2, 9),
-    type,
-    isResident: true,
-    name: '', age: '', phone: '', address: '', postalCode: '', nationality: '', passportNumber: '', passportPhoto: null, guardianName: '', guardianPhone: ''
-  });
+  }, [guests.length, setGuests]);
 
   const [stepsConfig, setStepsConfig] = useState([]);
 
@@ -616,7 +722,7 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
     if (active.length && currentStep >= active.length) {
       setCurrentStep(0);
     }
-  }, [stepsConfig, currentStep]);
+  }, [stepsConfig, currentStep, setCurrentStep]);
 
   const addGuest = () => setGuests([...guests, createGuestTemplate('adult')]);
   const removeGuest = (id) => setGuests(guests.filter(g => g.id !== id));
@@ -638,41 +744,56 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
   };
 
   const isRegValid = () => {
+    if (guests.length === 0) return false;
     return guests.every(g => {
-      const basic = g.name && g.age;
-      const minorCheck = parseInt(g.age) < 18 ? (g.guardianName && g.guardianPhone) : true;
-      if (g.isResident) return basic && g.phone && g.address && minorCheck;
-      return basic && g.nationality && g.passportNumber && g.passportPhoto && minorCheck;
+      const age = parseAge(g.age);
+      const hasValidAge = Number.isInteger(age) && age >= 0 && age <= 120;
+      if (!g.name?.trim() || !hasValidAge) return false;
+
+      const isMinor = age < 18;
+      const minorCheck = !isMinor || (g.guardianName?.trim() && g.guardianPhone?.trim());
+      if (!minorCheck) return false;
+
+      if (g.isResident) {
+        const needsPhone = age >= 16;
+        return Boolean(g.address?.trim()) && (!needsPhone || g.phone?.trim());
+      }
+
+      return Boolean(g.nationality && g.passportNumber?.trim() && g.passportPhoto);
     });
   };
 
   const handleNext = async () => {
     const activeSteps = steps.length;
-    if (currentStep < activeSteps - 1) { setCurrentStep(currentStep + 1); }
-    else {
-      const requiresAgreement = steps.some((step) => step.id === 'rules');
-      if (requiresAgreement && !hasAgreed) {
+    const isLastStep = currentStep === activeSteps - 1;
+    const pendingGuests = guests.filter((guest) => guest.isEditable !== false);
+
+    // 在「住客信息登記」步驟點擊下一步時提交“尚未提交”的住客
+    if (stepConfig?.id === 'registration') {
+      const success = await onSubmit(pendingGuests);
+      if (!success) {
         return;
       }
-      const infantGuests = Array.from({ length: infantCount }).map((_, i) => ({
-        id: `infant-${i + 1}`,
-        type: 'infant',
-        name: `Infant ${i + 1}`,
-        age: '0-2',
-        isResident: true,
-        phone: '-',
-        address: '-',
-        postalCode: '-',
-        nationality: '-',
-        passportNumber: '-',
-        passportPhoto: null,
-        guardianName: '-',
-        guardianPhone: '-'
-      }));
-      const finalData = [...guests, ...infantGuests];
-      const success = await onSubmit(finalData);
-      if (success) setIsCompleted(true);
+
+      if (isLastStep) {
+        setIsCompleted(true);
+      } else {
+        setCurrentStep(currentStep + 1);
+      }
+      return;
     }
+
+    if (!isLastStep) {
+      setCurrentStep(currentStep + 1);
+      return;
+    }
+
+    const requiresAgreement = steps.some((step) => step.id === 'rules');
+    if (requiresAgreement && !hasAgreed) {
+      return;
+    }
+
+    setIsCompleted(true);
   };
 
   if (!lang) {
@@ -720,69 +841,112 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
               <b>Password:</b> password
             </p>
           </div>
-
-          {/* <p className="text-xs uppercase font-bold opacity-50 mb-1">{t.roomNo}</p> */}
-          {/* <p className="text-5xl font-black tracking-tighter">🎉</p> */}
         </div>
         <div className="mt-8 p-6 bg-white rounded-2xl border border-slate-100 max-w-sm w-full space-y-4 text-left">
           <div className="flex items-center gap-3"><Home className="w-5 h-5 text-blue-500" />
-            <p className="text-sm"><b>AC control</b><br>
-            </br> <a className='text-xs' href='https://homeassistant.kawachinagano.ox.gy:8123/' target='_blank'>https://homeassistant.kawachinagano.ox.gy:8123/</a>
+            <p className="text-sm"><b>AC control</b><br/>
+             <a className='text-xs' href='https://homeassistant.kawachinagano.ox.gy:8123/' target='_blank' rel="noreferrer">https://homeassistant.kawachinagano.ox.gy:8123/</a>
             </p>
           </div>
-          <img src="./ha-login-image.png"></img>
-          {/* <div className="flex items-center gap-3"><Coffee className="w-5 h-5 text-amber-500"/><p className="text-sm"><b>{t.breakfast}:</b> 07:00-10:30 ({t.breakfastLoc})</p></div> */}
+          <img src="./ha-login-image.png" alt="HA Login"></img>
         </div>
       </div>
     );
   }
 
-  const progress = ((currentStep + 1) / steps.length) * 100;
-
   const getStepIcon = (id) => {
     switch (id) {
-      case 'welcome': return <BellRing className="w-8 h-8 text-amber-600 animate-pulse" />;
-      case 'count': return <Users className="w-8 h-8 text-blue-600" />;
-      case 'registration': return <UserCheck className="w-8 h-8 text-blue-600" />;
-      case 'emergency': return <AlertTriangle className="w-8 h-8 text-rose-500" />;
-      case 'child': return <Baby className="w-8 h-8 text-sky-500" />;
-      case 'outdoor': return <MapPin className="w-8 h-8 text-teal-500" />;
-      case 'water': return <Flame className="w-8 h-8 text-orange-500" />;
-      case 'trash': return <Trash2 className="w-8 h-8 text-emerald-500" />;
-      case 'laundry': return <Wrench className="w-8 h-8 text-blue-500" />;
-      case 'rules': return <UserCheck className="w-8 h-8 text-slate-600" />;
-      default: return <Info className="w-8 h-8 text-slate-400" />;
+      case 'welcome': return <BellRing className="w-6 h-6" />;
+      case 'count': return <Users className="w-6 h-6" />;
+      case 'registration': return <UserCheck className="w-6 h-6" />;
+      case 'emergency': return <AlertTriangle className="w-6 h-6" />;
+      case 'child': return <Dog className="w-6 h-6" />;
+      case 'outdoor': return <MapPin className="w-6 h-6" />;
+      case 'water': return <Flame className="w-6 h-6" />;
+      case 'trash': return <Trash2 className="w-6 h-6" />;
+      case 'laundry': return <Wrench className="w-6 h-6" />;
+      case 'rules': return <UserCheck className="w-6 h-6" />;
+      default: return <Info className="w-6 h-6" />;
     }
   };
 
-  return (
-    <div className="max-h-screen min-h-screen overflow-scroll bg-slate-50 flex flex-col items-center md:p-4">
-      <div className="sticky flex-row bottom-0 right-0 w-full p-4 flex justify-center gap-4">
-        <div className="flex justify-center items-center gap-2">
-          <div className="bg-slate-50 rounded-2xl">{getStepIcon(stepConfig.id)}</div>
-          <div className='flex flex-col'>
-            <h2 className="text-md text-nowrap font-bold text-slate-900 mb-1 leading-tight">{stepConfig.title}</h2>
-            <p className="hidden md:block text-xs text-nowrap font-medium text-slate-400 uppercase tracking-wide">{stepConfig.subtitle}</p>
-          </div>
-        </div>
-        <div className="w-full">
-          <div className="flex justify-between items-end mb-2">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">{t.guideTitle}</span>
-            <span className="text-xs font-bold text-slate-900">{currentStep + 1} / {steps.length}</span>
-          </div>
-          <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
-            <div className="h-full bg-slate-900 transition-all duration-500" style={{ width: `${progress}%` }} />
-          </div>
-        </div>
-        <button onClick={() => setLang(null)} className="flex flex-row text-nowrap items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-full shadow-sm text-xs font-bold">
-          <Languages className="w-4 h-4" />
-          <span className='hidden sm:block'>{t.changeLang}</span>
-        </button>
-      </div>
-      <div className="top-0 flex-1 flex w-full max-w-lg min-h-max p-2">
-        <div className="w-full bg-white p-2 rounded-xl border border-slate-100 md:p-10 flex flex-col pt-4">
-          <div className="flex flex-col items-center text-center justify-center">
+  const handleStepClick = (index) => {
+    const allowedBeforeCompletion = new Set(['welcome', 'count', 'registration']);
+    const targetStepId = steps[index]?.id;
+    const canAccess = hasHistory || allowedBeforeCompletion.has(targetStepId);
 
+    // 未完成登记前，仅允许查看欢迎、人数和登记步骤
+    if (canAccess) {
+      setCurrentStep(index);
+      setIsMenuOpen(false); // 在手機上點擊後關閉菜單
+    } else {
+      alert('请先完成登记步骤 (Please complete the registration step first)');
+    }
+  };
+
+  const menuContent = (
+    <div className="p-4 space-y-2">
+      <h3 className="text-sm font-bold px-4 text-slate-500">{t.guideTitle}</h3>
+      {steps.map((step, index) => (
+        <button
+          key={step.id}
+          onClick={() => handleStepClick(index)}
+          className={`w-full flex items-center gap-3 p-3 rounded-lg text-left transition-colors ${currentStep === index ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'}`}
+          disabled={!hasHistory && !['welcome', 'count', 'registration'].includes(step.id)}
+        >
+          {getStepIcon(step.id)}
+          <span className="text-sm font-semibold">{step.title}</span>
+        </button>
+      ))}
+      <hr className="my-4" />
+      <button onClick={() => setLang(null)} className="w-full flex items-center gap-3 p-3 rounded-lg text-slate-700 hover:bg-slate-100">
+        <Languages className="w-6 h-6" />
+        <span className="text-sm font-semibold">{t.changeLang}</span>
+      </button>
+       {hasHistory && (
+         <button onClick={onStartNewCheckin} className="w-full flex items-center gap-3 p-3 rounded-lg text-rose-600 hover:bg-rose-50">
+           <UserPlus className="w-6 h-6" />
+           <span className="text-sm font-semibold">{t.startNewCheckin}</span>
+         </button>
+       )}
+    </div>
+  );
+
+  return (
+    <div className="h-screen bg-slate-50 flex">
+      {/* Sidebar Menu for Desktop */}
+      <div className="hidden md:block md:w-72 bg-white border-r border-slate-200 h-full overflow-y-auto">
+        {menuContent}
+      </div>
+
+      {/* Mobile Menu (Overlay) */}
+      {isMenuOpen && (
+        <div className="fixed inset-0 bg-black/30 z-40 md:hidden" onClick={() => setIsMenuOpen(false)}>
+          <div className="w-72 bg-white h-full shadow-xl" onClick={(e) => e.stopPropagation()}>
+            {menuContent}
+          </div>
+        </div>
+      )}
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Top bar for mobile */}
+        <div className="md:hidden p-4 flex justify-between items-center bg-white border-b border-slate-200">
+          <button onClick={() => setIsMenuOpen(true)}>
+            <Menu className="w-6 h-6 text-slate-800" />
+          </button>
+          <div className="text-center">
+            <h2 className="text-md font-bold text-slate-900">{stepConfig?.title}</h2>
+            <p className="text-xs text-slate-500">{currentStep + 1} / {steps.length}</p>
+          </div>
+          <button onClick={onAdminRequest} className="p-2 text-slate-400 hover:text-slate-600">
+            <Lock className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Content Area */}
+        <div className="flex-1 overflow-y-auto p-4 md:p-8">
+          <div className="max-w-3xl mx-auto bg-white p-6 md:p-10 rounded-2xl border border-slate-100 shadow-sm">
             <div className="w-full text-left">
               {(hasContent || stepConfig?.type === 'custom' || builtinFallbackContent) && (
                 <div className="step-content-surface">
@@ -801,11 +965,11 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
                     </div>
                   </div>
                   <div className="p-4 bg-slate-50 rounded-2xl flex items-center justify-between">
-                    <div><p className="font-bold text-slate-800 text-sm">{t.infantLabel}</p></div>
+                    <div><p className="font-bold text-slate-800 text-sm">{t.petLabel}</p></div>
                     <div className="flex items-center gap-4">
-                      <button onClick={() => infantCount > 0 && setInfantCount(infantCount - 1)} className="w-8 h-8 rounded-full border border-slate-300">-</button>
-                      <span className="font-bold">{infantCount}</span>
-                      <button onClick={() => setInfantCount(infantCount + 1)} className="w-8 h-8 rounded-full border border-slate-300">+</button>
+                      <button onClick={() => petCount > 0 && setPetCount(petCount - 1)} className="w-8 h-8 rounded-full border border-slate-300">-</button>
+                      <span className="font-bold">{petCount}</span>
+                      <button onClick={() => setPetCount(petCount + 1)} className="w-8 h-8 rounded-full border border-slate-300">+</button>
                     </div>
                   </div>
                 </div>
@@ -817,7 +981,7 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
                     <div key={guest.id} className="p-5 bg-slate-50/50 rounded-2xl border border-slate-100 space-y-4 shadow-sm relative">
                       <div className="flex justify-between items-center">
                         <span className="text-[10px] font-black uppercase text-slate-400">{t.guestLabel} {idx + 1}</span>
-                        {guests.length > 1 && (
+                        {guests.length > 1 && guest.isEditable && (
                           <button
                             onClick={() => removeGuest(guest.id)}
                             className="text-slate-300 hover:text-rose-500 transition-colors p-1"
@@ -827,26 +991,26 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
                         )}
                       </div>
                       <div className="flex bg-white p-1 rounded-xl border">
-                        <button onClick={() => updateGuest(guest.id, 'isResident', true)} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${guest.isResident ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400'}`}>{t.regResident}</button>
-                        <button onClick={() => updateGuest(guest.id, 'isResident', false)} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${!guest.isResident ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400'}`}>{t.regTourist}</button>
+                        <button disabled={!guest.isEditable} onClick={() => updateGuest(guest.id, 'isResident', true)} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${guest.isResident ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400'} disabled:opacity-70`}>{t.regResident}</button>
+                        <button disabled={!guest.isEditable} onClick={() => updateGuest(guest.id, 'isResident', false)} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${!guest.isResident ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400'} disabled:opacity-70`}>{t.regTourist}</button>
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div className="col-span-2">
                           <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormName}</label>
-                          <input type="text" value={guest.name} onChange={(e) => updateGuest(guest.id, 'name', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none" />
+                          <input disabled={!guest.isEditable} type="text" value={guest.name} onChange={(e) => updateGuest(guest.id, 'name', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none disabled:bg-slate-100" />
                         </div>
                         <div>
                           <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormAge}</label>
-                          <input type="number" value={guest.age} onChange={(e) => updateGuest(guest.id, 'age', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none" />
+                          <input disabled={!guest.isEditable} type="number" value={guest.age} onChange={(e) => updateGuest(guest.id, 'age', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none disabled:bg-slate-100" />
                         </div>
                         <div>
                           <label className={`text-[10px] font-bold ml-1 uppercase ${parseInt(guest.age) < 18 ? 'text-slate-300' : 'text-slate-400'}`}>{t.regFormPhone}</label>
                           <input
+                            disabled={!guest.isEditable || parseInt(guest.age) < 16}
                             type="text"
                             value={parseInt(guest.age) < 16 ? "000-0000-0000" : guest.phone}
-                            disabled={parseInt(guest.age) < 16}
                             onChange={(e) => updateGuest(guest.id, 'phone', e.target.value)}
-                            className={`w-full p-3 border border-slate-100 rounded-xl text-sm shadow-sm outline-none transition-colors ${parseInt(guest.age) < 16 ? 'bg-slate-100/50 text-slate-300 cursor-not-allowed' : 'bg-white text-slate-900'}`}
+                            className={`w-full p-3 border border-slate-100 rounded-xl text-sm shadow-sm outline-none transition-colors ${parseInt(guest.age) < 16 ? 'bg-slate-100/50 text-slate-300 cursor-not-allowed' : 'bg-white text-slate-900'} disabled:bg-slate-100`}
                           />
                         </div>
                         {guest.isResident ? (
@@ -854,15 +1018,15 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
                             <div>
                               <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormZip}</label>
                               <div className="flex gap-3">
-                                <input type="text" placeholder={t.zipPlaceholder} value={guest.postalCode} onChange={(e) => updateGuest(guest.id, 'postalCode', e.target.value.replace(/\D/g, ''))} className="flex-1 p-3 bg-white border border-slate-100 rounded-xl text-sm font-mono" maxLength={7} />
-                                <button onClick={() => lookupZipCode(guest.id, guest.postalCode)} disabled={guest.postalCode.length < 7 || isLookingUpZip === guest.id} className="flex-1 px-4 bg-slate-900 text-white rounded-xl text-xs font-bold disabled:bg-slate-200 flex items-center gap-2">
+                                <input disabled={!guest.isEditable} type="text" placeholder={t.zipPlaceholder} value={guest.postalCode} onChange={(e) => updateGuest(guest.id, 'postalCode', e.target.value.replace(/\D/g, ''))} className="flex-1 p-3 bg-white border border-slate-100 rounded-xl text-sm font-mono disabled:bg-slate-100" maxLength={7} />
+                                <button disabled={!guest.isEditable} onClick={() => lookupZipCode(guest.id, guest.postalCode)} className="flex-1 px-4 bg-slate-900 text-white rounded-xl text-xs font-bold disabled:bg-slate-200 flex items-center gap-2">
                                   {isLookingUpZip === guest.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />} {isLookingUpZip === guest.id ? t.zipLoading : t.zipLookup}
                                 </button>
                               </div>
                             </div>
                             <div>
                               <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormAddr}</label>
-                              <input type="text" value={guest.address} onChange={(e) => updateGuest(guest.id, 'address', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm" placeholder="大阪府大阪市…" />
+                              <input disabled={!guest.isEditable} type="text" value={guest.address} onChange={(e) => updateGuest(guest.id, 'address', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm disabled:bg-slate-100" placeholder="大阪府大阪市…" />
                             </div>
                           </div>
                         ) : (
@@ -870,9 +1034,10 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
                             <div className="col-span-2">
                               <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormNation}</label>
                               <select
+                                disabled={!guest.isEditable}
                                 value={guest.nationality}
                                 onChange={(e) => updateGuest(guest.id, 'nationality', e.target.value)}
-                                className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none appearance-none cursor-pointer"
+                                className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none appearance-none cursor-pointer disabled:bg-slate-100"
                               >
                                 <option value="">-- {t.selectCountry} --</option>
                                 {COUNTRY_DATA.map(c => (
@@ -882,10 +1047,10 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
                             </div>
                             <div className="col-span-2">
                               <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormPass}</label>
-                              <input type="text" value={guest.passportNumber} onChange={(e) => updateGuest(guest.id, 'passportNumber', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm" />
+                              <input disabled={!guest.isEditable} type="text" value={guest.passportNumber} onChange={(e) => updateGuest(guest.id, 'passportNumber', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm disabled:bg-slate-100" />
                             </div>
                             <div className="col-span-2 relative">
-                              <input type="file" accept="image/*" className="absolute inset-0 w-full h-full opacity-0 z-10 cursor-pointer" onChange={(e) => fileToBase64(e.target.files?.[0]).then(base64 => updateGuest(guest.id, 'passportPhoto', base64))} />
+                              <input disabled={!guest.isEditable} type="file" accept="image/*" className="absolute inset-0 w-full h-full opacity-0 z-10 cursor-pointer" onChange={(e) => fileToBase64(e.target.files?.[0]).then(base64 => updateGuest(guest.id, 'passportPhoto', base64))} />
                               <div className={`p-4 border-2 border-dashed rounded-xl flex items-center justify-center gap-2 ${guest.passportPhoto ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-slate-100 text-slate-300'}`}>
                                 <Camera className="w-4 h-4" /> <span className="text-[10px] font-bold uppercase">{guest.passportPhoto ? 'Uploaded' : t.regPassportUpload}</span>
                               </div>
@@ -896,8 +1061,8 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
                           <div className="col-span-2 bg-rose-50 p-4 rounded-xl border border-rose-100 space-y-3">
                             <p className="text-[10px] font-bold text-rose-600 flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> {t.regMinorAlert}</p>
                             <div className="grid grid-cols-2 gap-2">
-                              <input type="text" placeholder={t.regFormName} value={guest.guardianName} onChange={(e) => updateGuest(guest.id, 'guardianName', e.target.value)} className="w-full p-2 bg-white rounded-lg text-xs outline-none" />
-                              <input type="text" placeholder="Phone" value={guest.guardianPhone} onChange={(e) => updateGuest(guest.id, 'guardianPhone', e.target.value)} className="w-full p-2 bg-white rounded-lg text-xs outline-none" />
+                              <input disabled={!guest.isEditable} type="text" placeholder={t.regFormName} value={guest.guardianName} onChange={(e) => updateGuest(guest.id, 'guardianName', e.target.value)} className="w-full p-2 bg-white rounded-lg text-xs outline-none disabled:bg-slate-100" />
+                              <input disabled={!guest.isEditable} type="text" placeholder="Phone" value={guest.guardianPhone} onChange={(e) => updateGuest(guest.id, 'guardianPhone', e.target.value)} className="w-full p-2 bg-white rounded-lg text-xs outline-none disabled:bg-slate-100" />
                             </div>
                           </div>
                         )}
@@ -909,7 +1074,7 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
               )}
               {stepConfig.id === 'rules' && (
                 <div className="space-y-6">
-                  <label className="flex items-center gap-4 bg-emerald-50 rounded-2xl border border-emerald-100 cursor-pointer shadow-sm group transition-all hover:bg-emerald-100">
+                  <label className="flex items-center gap-4 p-4 bg-emerald-50 rounded-2xl border border-emerald-100 cursor-pointer shadow-sm group transition-all hover:bg-emerald-100">
                     <input type="checkbox" className="w-6 h-6 rounded text-emerald-600 transition-transform group-hover:scale-110" checked={hasAgreed} onChange={(e) => setHasAgreed(e.target.checked)} />
                     <span className="text-emerald-900 font-bold text-sm">{t.agree}</span>
                   </label>
@@ -919,17 +1084,21 @@ const GuestFlow = ({ onSubmit, onAdminRequest, isSubmitting }) => {
           </div>
         </div>
 
-      </div>
-      <div className="sticky bottom-0 w-full p-2 mb-4 flex gap-4">
-        {currentStep > 0 && <button onClick={() => setCurrentStep(currentStep - 1)} className="p-4 rounded-2xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"><ChevronLeft className="w-6 h-6" /></button>}
-        <button
-          onClick={handleNext}
-          disabled={(stepConfig.id === 'registration' && !isRegValid()) || (stepConfig.id === 'rules' && !hasAgreed) || isSubmitting}
-          className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-2xl font-bold transition-all ${((stepConfig.id === 'registration' && !isRegValid()) || (stepConfig.id === 'rules' && !hasAgreed)) ? 'bg-slate-100 text-slate-300 cursor-not-allowed' : 'bg-slate-900 text-white shadow-lg hover:bg-slate-800'}`}
-        >
-          {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : (currentStep === steps.length - 1 ? t.finish : t.next)}
-          {!isSubmitting && <ChevronRight className="w-5 h-5" />}
-        </button>
+        {/* Navigation buttons */}
+        <div className="p-4 bg-white/50 backdrop-blur-sm border-t border-slate-200 flex gap-4">
+          <button onClick={() => setIsMenuOpen(true)} className="p-4 rounded-2xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors">
+            <Menu className="w-6 h-6" />
+            <span className="hidden">{t.prev}</span>
+          </button>
+          <button
+            onClick={handleNext}
+            disabled={(stepConfig.id === 'registration' && !isRegValid()) || (stepConfig.id === 'rules' && !hasAgreed) || isSubmitting}
+            className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-2xl font-bold transition-all ${((stepConfig.id === 'registration' && !isRegValid()) || (stepConfig.id === 'rules' && !hasAgreed)) ? 'bg-slate-100 text-slate-300 cursor-not-allowed' : 'bg-slate-900 text-white shadow-lg hover:bg-slate-800'}`}
+          >
+            {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : (currentStep === steps.length - 1 ? t.finish : t.next)}
+            {!isSubmitting && <ChevronRight className="w-5 h-5" />}
+          </button>
+        </div>
       </div>
     </div >
   );

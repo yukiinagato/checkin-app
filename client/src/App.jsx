@@ -25,6 +25,7 @@ import {
   Menu
 } from 'lucide-react';
 import AdminPage from './AdminPage';
+import { isRegistrationValid } from './formValidation';
 
 // ----------------------------------------------------------------------
 // 輔助函數與常量
@@ -735,8 +736,6 @@ const GuestFlow = ({
   const [isLookingUpZip, setIsLookingUpZip] = useState(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
-  const parseAge = (ageValue) => Number.parseInt(String(ageValue ?? '').trim(), 10);
-
   useEffect(() => {
     if (guests.length === 0) {
       setGuests([createGuestTemplate('adult')]);
@@ -824,25 +823,7 @@ const GuestFlow = ({
     finally { setIsLookingUpZip(null); }
   };
 
-  const isRegValid = () => {
-    if (guests.length === 0) return false;
-    return guests.every(g => {
-      const age = parseAge(g.age);
-      const hasValidAge = Number.isInteger(age) && age >= 0 && age <= 120;
-      if (!g.name?.trim() || !hasValidAge) return false;
-
-      const isMinor = age < 18;
-      const minorCheck = !isMinor || (g.guardianName?.trim() && g.guardianPhone?.trim());
-      if (!minorCheck) return false;
-
-      if (g.isResident) {
-        const needsPhone = age >= 16;
-        return Boolean(g.address?.trim()) && (!needsPhone || g.phone?.trim());
-      }
-
-      return Boolean(g.nationality && g.passportNumber?.trim() && g.passportPhoto);
-    });
-  };
+  const isRegValid = () => isRegistrationValid(guests);
 
   const handleNext = async () => {
     const activeSteps = steps.length;

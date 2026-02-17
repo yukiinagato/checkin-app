@@ -950,17 +950,16 @@ const GuestFlow = ({
     const targetStepId = steps[index]?.id;
     const canAccess = hasHistory || allowedBeforeCompletion.has(targetStepId);
 
-    // 未完成登记前，仅允许查看欢迎、人数和登记步骤
     if (canAccess) {
       setCurrentStep(index);
-      setIsMenuOpen(false); // 在手機上點擊後關閉菜單
+      setIsMenuOpen(false);
     } else {
       alert('请先完成登记步骤 (Please complete the registration step first)');
     }
   };
 
   const menuContent = (
-    <div className="p-4 space-y-2">
+    <div className="p-4 space-y-2 overflow-y-scroll">
       <h3 className="text-sm font-bold px-4 text-slate-500">{t.guideTitle}</h3>
       {steps.map((step, index) => (
         <button

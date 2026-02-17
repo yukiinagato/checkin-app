@@ -121,11 +121,13 @@ pnpm dev
 # 根目录
 pnpm dev
 pnpm start
+pnpm test
 pnpm build
 
 # 单独运行后端
 pnpm --filter server dev
 pnpm --filter server start
+pnpm --filter server test
 
 # 单独运行前端
 pnpm --filter client dev

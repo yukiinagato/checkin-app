@@ -166,6 +166,50 @@ def extract_age(text: str):
     return None
 
 
+ISO3_TO_ISO2 = {
+    'CHN': 'CN', 'JPN': 'JP', 'KOR': 'KR', 'USA': 'US', 'GBR': 'GB', 'CAN': 'CA',
+    'AUS': 'AU', 'FRA': 'FR', 'DEU': 'DE', 'ITA': 'IT', 'ESP': 'ES', 'RUS': 'RU',
+    'IND': 'IN', 'PHL': 'PH', 'VNM': 'VN', 'MYS': 'MY', 'THA': 'TH', 'IDN': 'ID',
+    'SGP': 'SG', 'TWN': 'TW', 'HKG': 'HK', 'MAC': 'MO', 'NLD': 'NL', 'CHE': 'CH',
+    'SWE': 'SE', 'NOR': 'NO', 'DNK': 'DK', 'FIN': 'FI', 'NZL': 'NZ', 'BRA': 'BR',
+    'MEX': 'MX', 'ARG': 'AR', 'TUR': 'TR', 'SAU': 'SA', 'ARE': 'AE', 'ZAF': 'ZA'
+}
+
+
+NATIONALITY_KEYWORDS = {
+    'CHINESE': 'CN', 'JAPANESE': 'JP', 'KOREAN': 'KR', 'AMERICAN': 'US',
+    'BRITISH': 'GB', 'CANADIAN': 'CA', 'AUSTRALIAN': 'AU', 'FRENCH': 'FR',
+    'GERMAN': 'DE', 'ITALIAN': 'IT', 'SPANISH': 'ES', 'RUSSIAN': 'RU',
+    'INDIAN': 'IN', 'FILIPINO': 'PH', 'VIETNAMESE': 'VN', 'MALAYSIAN': 'MY',
+    'THAI': 'TH', 'INDONESIAN': 'ID', 'SINGAPOREAN': 'SG'
+}
+
+
+def extract_nationality(text: str):
+    t = (text or '').upper()
+    compact = re.sub(r'\s+', '', t)
+
+    mrz = re.search(r'[A-Z0-9<]{9}\d([A-Z]{3})\d{6}\d[MF<]', compact)
+    if mrz:
+        iso3 = mrz.group(1)
+        return ISO3_TO_ISO2.get(iso3, ''), iso3
+
+    for keyword, iso2 in NATIONALITY_KEYWORDS.items():
+        if keyword in t:
+            return iso2, keyword
+
+    m = re.search(r'\bNATIONALITY\b[^A-Z0-9]{0,8}([A-Z]{3,15})', t)
+    if m:
+        raw = m.group(1)
+        if len(raw) == 3 and raw in ISO3_TO_ISO2:
+            return ISO3_TO_ISO2[raw], raw
+        if raw in NATIONALITY_KEYWORDS:
+            return NATIONALITY_KEYWORDS[raw], raw
+        return '', raw
+
+    return '', ''
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(json.dumps({'success': False, 'error': 'Usage: paddle_ocr_runner.py <image_path>'}))
@@ -195,12 +239,15 @@ def main() -> int:
         is_passport = is_likely_passport(text)
         full_name = extract_name(text)
         age = extract_age(text)
+        nationality_code, nationality_raw = extract_nationality(text)
         print(json.dumps({
             'success': bool(is_passport and passport_number),
             'isPassport': bool(is_passport),
             'passportNumber': passport_number,
             'fullName': full_name,
             'age': age,
+            'nationalityCode': nationality_code,
+            'nationalityRaw': nationality_raw,
             'text': text,
             'attempts': 1,
             'engine': 'paddleocr-python-local'

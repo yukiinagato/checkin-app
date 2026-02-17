@@ -12,6 +12,7 @@ const {
   verifyAuthenticationResponse
 } = require('@simplewebauthn/server');
 const STEP_TEMPLATES = require('./stepTemplates');
+const COMPLETION_TEMPLATES = require('./completionTemplates');
 const envPath = process.env.NODE_ENV === 'development' ? '.env.development' : '.env.production';
 require('dotenv').config({ path: path.resolve(__dirname, envPath) });
 
@@ -90,6 +91,14 @@ db.run(`
 `);
 
 db.run(`
+  CREATE TABLE IF NOT EXISTS completion_templates (
+    lang TEXT PRIMARY KEY,
+    template TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
+db.run(`
   CREATE TABLE IF NOT EXISTS admin_passkeys (
     credential_id TEXT PRIMARY KEY,
     public_key TEXT NOT NULL,
@@ -148,6 +157,30 @@ const seedStepTemplates = () => {
 };
 
 seedStepTemplates();
+
+const seedCompletionTemplates = () => {
+  Object.entries(COMPLETION_TEMPLATES).forEach(([lang, template]) => {
+    db.get('SELECT lang FROM completion_templates WHERE lang = ?', [lang], (err, row) => {
+      if (err) {
+        console.error('完成頁模板查詢失敗:', err.message);
+        return;
+      }
+      if (!row) {
+        db.run(
+          'INSERT INTO completion_templates (lang, template) VALUES (?, ?)',
+          [lang, JSON.stringify(template)],
+          (insertErr) => {
+            if (insertErr) {
+              console.error('初始化完成頁模板失敗:', insertErr.message);
+            }
+          }
+        );
+      }
+    });
+  });
+};
+
+seedCompletionTemplates();
 
 // ----------------------------------------------------------------------
 // 5. 輔助函數：業務邏輯與安全驗證
@@ -603,6 +636,20 @@ app.get('/api/steps', (req, res) => {
   });
 });
 
+app.get('/api/completion-template', (req, res) => {
+  const { lang } = req.query;
+  const targetLang = typeof lang === 'string' ? lang : 'zh-hans';
+  db.get('SELECT template FROM completion_templates WHERE lang = ?', [targetLang], (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row) return res.status(404).json({ error: 'Completion template not found' });
+    try {
+      res.json(JSON.parse(row.template));
+    } catch (parseErr) {
+      res.status(500).json({ error: 'Invalid completion template data' });
+    }
+  });
+});
+
 app.patch('/api/records/:recordId/guests/:guestId', requireAdminAuth, (req, res) => {
   const { recordId, guestId } = req.params;
   const { deleted } = req.body || {};
@@ -648,6 +695,28 @@ app.put('/api/admin/steps', requireAdminAuth, (req, res) => {
        steps = excluded.steps,
        updated_at = CURRENT_TIMESTAMP`,
     [targetLang, JSON.stringify(steps)],
+    (err) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ success: true });
+    }
+  );
+});
+
+app.put('/api/admin/completion-template', requireAdminAuth, (req, res) => {
+  const { lang } = req.query;
+  const { template } = req.body || {};
+  const targetLang = typeof lang === 'string' ? lang : '';
+
+  if (!targetLang) return res.status(400).json({ error: 'lang is required' });
+  if (!template || typeof template !== 'object') return res.status(400).json({ error: 'template must be an object' });
+
+  db.run(
+    `INSERT INTO completion_templates (lang, template, updated_at)
+     VALUES (?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(lang) DO UPDATE SET
+       template = excluded.template,
+       updated_at = CURRENT_TIMESTAMP`,
+    [targetLang, JSON.stringify(template)],
     (err) => {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ success: true });

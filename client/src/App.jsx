@@ -66,6 +66,7 @@ const COUNTRY_DATA = [
 // ----------------------------------------------------------------------
 const API_URL = '/api';
 const STEP_STORAGE_KEY = 'checkin.steps';
+const COMPLETION_TEMPLATE_STORAGE_KEY = 'checkin.completionTemplate';
 const ADMIN_TOKEN_STORAGE_KEY = 'checkin.adminSessionToken';
 const DEFAULT_LANG = 'jp';
 const CHECKIN_STORAGE_KEY = 'checkin.completed';
@@ -162,6 +163,25 @@ const DB = {
       body: JSON.stringify({ steps })
     });
     if (!res.ok) throw new Error('Failed to save steps');
+    return await res.json();
+  },
+
+  async getCompletionTemplate(lang) {
+    const res = await fetch(`${API_URL}/completion-template?lang=${encodeURIComponent(lang)}`);
+    if (!res.ok) throw new Error('Failed to fetch completion template');
+    return await res.json();
+  },
+
+  async updateCompletionTemplate(adminToken, lang, template) {
+    const res = await fetch(`${API_URL}/admin/completion-template?lang=${encodeURIComponent(lang)}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${adminToken}`
+      },
+      body: JSON.stringify({ template })
+    });
+    if (!res.ok) throw new Error('Failed to save completion template');
     return await res.json();
   },
 
@@ -471,6 +491,36 @@ const saveSteps = (lang, steps) => {
   localStorage.setItem(`${STEP_STORAGE_KEY}.${lang}`, JSON.stringify(steps));
 };
 
+const buildDefaultCompletionTemplate = (lang) => ({
+  title: translations[lang]?.welcomeTitle || translations[DEFAULT_LANG].welcomeTitle,
+  subtitle: translations[lang]?.welcomeSub || translations[DEFAULT_LANG].welcomeSub,
+  cardHtml: '<p><strong>Wi-Fi SSID:</strong> Hotel Wifi<br><strong>Password:</strong> password</p>',
+  extraHtml: '<p><strong>AC control</strong><br><a href="https://homeassistant.kawachinagano.ox.gy:8123/" target="_blank" rel="noopener noreferrer">https://homeassistant.kawachinagano.ox.gy:8123/</a></p><img src="./ha-login-image.png" alt="HA Login" />'
+});
+
+const normalizeCompletionTemplate = (template, fallback) => ({
+  title: template?.title || fallback.title,
+  subtitle: template?.subtitle || fallback.subtitle,
+  cardHtml: template?.cardHtml || fallback.cardHtml,
+  extraHtml: template?.extraHtml || fallback.extraHtml
+});
+
+const loadCompletionTemplate = (lang) => {
+  try {
+    const raw = localStorage.getItem(`${COMPLETION_TEMPLATE_STORAGE_KEY}.${lang}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return normalizeCompletionTemplate(parsed, buildDefaultCompletionTemplate(lang));
+  } catch (error) {
+    console.warn('無法讀取完成頁設定:', error);
+    return null;
+  }
+};
+
+const saveCompletionTemplate = (lang, template) => {
+  localStorage.setItem(`${COMPLETION_TEMPLATE_STORAGE_KEY}.${lang}`, JSON.stringify(template));
+};
+
 const sanitizeRichHtml = (html) => DOMPurify.sanitize(html || '', {
   ALLOWED_TAGS: ['p', 'b', 'strong', 'i', 'u', 'ul', 'ol', 'li', 'a', 'img', 'br', 'span'],
   ALLOWED_ATTR: ['href', 'target', 'rel', 'src', 'alt'],
@@ -612,6 +662,10 @@ const App = () => {
         createStepId={createStepId}
         StepContent={StepContent}
         langOptions={LANG_OPTIONS}
+        buildDefaultCompletionTemplate={buildDefaultCompletionTemplate}
+        loadCompletionTemplate={loadCompletionTemplate}
+        saveCompletionTemplate={saveCompletionTemplate}
+        normalizeCompletionTemplate={normalizeCompletionTemplate}
       />
     );
   }
@@ -690,6 +744,7 @@ const GuestFlow = ({
   }, [guests.length, setGuests]);
 
   const [stepsConfig, setStepsConfig] = useState([]);
+  const [completionTemplate, setCompletionTemplate] = useState(() => buildDefaultCompletionTemplate(lang || DEFAULT_LANG));
 
   useEffect(() => {
     let isActive = true;
@@ -710,6 +765,32 @@ const GuestFlow = ({
           return;
         }
         setStepsConfig(buildDefaultSteps(lang));
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [lang]);
+
+  useEffect(() => {
+    let isActive = true;
+    if (!lang) return () => {};
+
+    DB.getCompletionTemplate(lang)
+      .then((template) => {
+        if (!isActive) return;
+        const normalized = normalizeCompletionTemplate(template, buildDefaultCompletionTemplate(lang));
+        setCompletionTemplate(normalized);
+        saveCompletionTemplate(lang, normalized);
+      })
+      .catch(() => {
+        if (!isActive) return;
+        const stored = loadCompletionTemplate(lang);
+        if (stored) {
+          setCompletionTemplate(stored);
+          return;
+        }
+        setCompletionTemplate(buildDefaultCompletionTemplate(lang));
       });
 
     return () => {
@@ -831,24 +912,18 @@ const GuestFlow = ({
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center animate-in fade-in">
         <CheckCircle2 className="w-16 h-16 text-emerald-500 mb-6 mx-auto" />
-        <h1 className="text-3xl font-bold mb-2">{t.welcomeTitle}</h1>
-        <p className="text-slate-500 mb-6">{t.welcomeSub}</p>
+        <h1 className="text-3xl font-bold mb-2">{completionTemplate.title}</h1>
+        <p className="text-slate-500 mb-6">{completionTemplate.subtitle}</p>
         <div className="bg-slate-900 text-white p-8 rounded-[2rem] shadow-xl w-full max-w-sm">
           <div className="flex items-center gap-3">
             <Wifi className="w-7 h-7 text-white-500" />
-            <p className="text-md text-left">
-              <b>Wi-Fi SSID:</b> Hotel Wifi <br></br>
-              <b>Password:</b> password
-            </p>
+            <div className="text-md text-left step-content text-white" dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(completionTemplate.cardHtml) }} />
           </div>
         </div>
         <div className="mt-8 p-6 bg-white rounded-2xl border border-slate-100 max-w-sm w-full space-y-4 text-left">
-          <div className="flex items-center gap-3"><Home className="w-5 h-5 text-blue-500" />
-            <p className="text-sm"><b>AC control</b><br/>
-             <a className='text-xs' href='https://homeassistant.kawachinagano.ox.gy:8123/' target='_blank' rel="noreferrer">https://homeassistant.kawachinagano.ox.gy:8123/</a>
-            </p>
+          <div className="flex items-start gap-3"><Home className="w-5 h-5 text-blue-500 mt-1" />
+            <div className="text-sm step-content" dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(completionTemplate.extraHtml) }} />
           </div>
-          <img src="./ha-login-image.png" alt="HA Login"></img>
         </div>
       </div>
     );

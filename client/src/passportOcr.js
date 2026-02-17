@@ -97,6 +97,18 @@ export const runLocalPassportOCR = async (file) => {
   const transforms = ['none', 'grayscale', 'none'];
   let bestText = '';
 
+  if (typeof window === 'undefined' || typeof window.TextDetector !== 'function') {
+    console.debug('[PassportOCR] local-ocr-unsupported');
+    return {
+      success: false,
+      isPassport: false,
+      passportNumber: '',
+      text: '',
+      attempts: 0,
+      unsupported: true
+    };
+  }
+
   console.debug('[PassportOCR] local-ocr-start', {
     name: file?.name,
     type: file?.type,

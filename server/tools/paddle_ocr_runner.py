@@ -2,6 +2,7 @@
 import json
 import re
 import sys
+from datetime import date, datetime
 from pathlib import Path
 
 
@@ -77,6 +78,94 @@ def is_likely_passport(text: str) -> bool:
     return sum(1 for h in hints if h in t) >= 2
 
 
+def _normalize_name(raw: str) -> str:
+    cleaned = re.sub(r'[^A-Z,\s]', '', (raw or '').upper()).strip(' ,')
+    if not cleaned:
+        return ''
+    if ',' in cleaned:
+        parts = [p.strip() for p in cleaned.split(',') if p.strip()]
+        if len(parts) >= 2:
+            return f"{parts[1]} {parts[0]}".strip()
+    return cleaned.replace(',', ' ').strip()
+
+
+def extract_name(text: str) -> str:
+    t = (text or '').upper()
+    lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
+    for i, line in enumerate(lines):
+        if 'NAME' in line and i + 1 < len(lines):
+            candidate = _normalize_name(lines[i + 1])
+            if candidate:
+                return candidate
+
+    compact = re.sub(r'\s+', '', t)
+    mrz_name = re.search(r'P<[A-Z<]{3}([A-Z<]+)<<([A-Z<]+)', compact)
+    if mrz_name:
+        surname = mrz_name.group(1).replace('<', ' ').strip()
+        given = mrz_name.group(2).replace('<', ' ').strip()
+        full = f"{given} {surname}".strip()
+        if full:
+            return full
+    return ''
+
+
+def _parse_date_token(token: str):
+    token = token.upper().strip()
+    token = token.replace('O', '0')
+    month_map = {
+        'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
+        'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12
+    }
+
+    m = re.match(r'^(\d{2})([A-Z]{3})(\d{4})$', token)
+    if m and m.group(2) in month_map:
+        return date(int(m.group(3)), month_map[m.group(2)], int(m.group(1)))
+
+    for fmt in ('%d/%m/%Y', '%Y/%m/%d', '%d-%m-%Y', '%Y-%m-%d'):
+        try:
+            return datetime.strptime(token, fmt).date()
+        except ValueError:
+            pass
+    return None
+
+
+def extract_age(text: str):
+    t = (text or '').upper()
+    lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
+
+    # Find DOB near date-of-birth markers
+    for i, line in enumerate(lines):
+        if 'DATE OF BIRTH' in line or 'BIRTH' in line:
+            nearby = ' '.join(lines[i:i + 3])
+            candidates = re.findall(r'(\d{2}[A-Z]{3}\d{4}|\d{2}[/-]\d{2}[/-]\d{4}|\d{4}[/-]\d{2}[/-]\d{2})', nearby)
+            for token in candidates:
+                dob = _parse_date_token(token)
+                if dob:
+                    today = date.today()
+                    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+                    if 0 <= age <= 120:
+                        return age
+
+    # MRZ fallback (YYMMDD)
+    compact = re.sub(r'\s+', '', t)
+    mrz = re.search(r'[A-Z0-9<]{9}\d[A-Z]{3}(\d{6})\d[MF<]', compact)
+    if mrz:
+        yy = int(mrz.group(1)[0:2])
+        mm = int(mrz.group(1)[2:4])
+        dd = int(mrz.group(1)[4:6])
+        year = 1900 + yy if yy > (date.today().year % 100) else 2000 + yy
+        try:
+            dob = date(year, mm, dd)
+            today = date.today()
+            age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+            if 0 <= age <= 120:
+                return age
+        except ValueError:
+            pass
+
+    return None
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(json.dumps({'success': False, 'error': 'Usage: paddle_ocr_runner.py <image_path>'}))
@@ -104,10 +193,14 @@ def main() -> int:
         text = '\n'.join(chunks)
         passport_number = extract_passport_number(text)
         is_passport = is_likely_passport(text)
+        full_name = extract_name(text)
+        age = extract_age(text)
         print(json.dumps({
             'success': bool(is_passport and passport_number),
             'isPassport': bool(is_passport),
             'passportNumber': passport_number,
+            'fullName': full_name,
+            'age': age,
             'text': text,
             'attempts': 1,
             'engine': 'paddleocr-python-local'

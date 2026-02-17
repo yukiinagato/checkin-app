@@ -869,6 +869,13 @@ const GuestFlow = ({
 
       updateGuest(guestId, 'passportPhoto', base64);
 
+      if (ocrResult.fullName) {
+        updateGuest(guestId, 'name', ocrResult.fullName);
+      }
+      if (Number.isInteger(ocrResult.age) && ocrResult.age >= 0 && ocrResult.age <= 120) {
+        updateGuest(guestId, 'age', String(ocrResult.age));
+      }
+
       if (ocrResult.passportNumber) {
         console.debug('[PassportOCR] auto-filled-passport-number', {
           guestId,

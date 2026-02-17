@@ -131,6 +131,7 @@ pnpm --filter server test
 
 # 单独运行前端
 pnpm --filter client dev
+pnpm --filter client test
 pnpm --filter client build
 pnpm --filter client preview
 ```

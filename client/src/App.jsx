@@ -754,21 +754,39 @@ const GuestFlow = ({
 
   const handleNext = async () => {
     const activeSteps = steps.length;
-    if (currentStep < activeSteps - 1) { setCurrentStep(currentStep + 1); }
-    else {
-      const requiresAgreement = steps.some((step) => step.id === 'rules');
-      if (requiresAgreement && !hasAgreed) {
-        return;
-      }
-      
+    const isLastStep = currentStep === activeSteps - 1;
+
+    // 需求調整：在「住客信息登記」步驟點擊下一步時即提交
+    if (stepConfig?.id === 'registration' && !hasHistory) {
       const finalData = [...guests];
       if (finalData.length === 0) {
         return;
       }
-      
+
       const success = await onSubmit(finalData);
-      if (success) setIsCompleted(true);
+      if (!success) {
+        return;
+      }
+
+      if (isLastStep) {
+        setIsCompleted(true);
+      } else {
+        setCurrentStep(currentStep + 1);
+      }
+      return;
     }
+
+    if (!isLastStep) {
+      setCurrentStep(currentStep + 1);
+      return;
+    }
+
+    const requiresAgreement = steps.some((step) => step.id === 'rules');
+    if (requiresAgreement && !hasAgreed) {
+      return;
+    }
+
+    setIsCompleted(true);
   };
 
   if (!lang) {

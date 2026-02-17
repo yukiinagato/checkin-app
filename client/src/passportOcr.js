@@ -1,10 +1,9 @@
 const PASSPORT_KEYWORDS = ['passport', 'pasport', 'passeport', '旅券', '护照', '護照'];
 const DOC_HINTS = ['nationality', 'surname', 'given', 'sex', 'date of birth', 'issuing'];
-const TESSERACT_CDN_SRC = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+const PADDLEJS_CORE_SRC = 'https://cdn.jsdelivr.net/npm/@paddlejs/paddlejs-core/dist/index.min.js';
+const PADDLEJS_OCR_SRC = 'https://cdn.jsdelivr.net/npm/@paddlejs-models/ocr/dist/index.min.js';
 
-const MRZ_CHAR_SCORES = Object.freeze({
-  '<': 0
-});
+const MRZ_CHAR_SCORES = Object.freeze({ '<': 0 });
 
 const normalizeText = (value = '') => value.toUpperCase().replace(/\s+/g, ' ').trim();
 
@@ -36,20 +35,13 @@ const extractMrzPassportNumber = (rawText = '') => {
     const line1 = lines[index];
     const line2 = lines[index + 1];
 
-    if (!line1.startsWith('P<') || line2.length < 10) {
-      continue;
-    }
+    if (!line1.startsWith('P<') || line2.length < 10) continue;
 
     const passportNumberField = line2.slice(0, 9);
     const checkDigit = line2[9];
 
-    if (!/[0-9]/.test(checkDigit)) {
-      continue;
-    }
-
-    if (computeMrzCheckDigit(passportNumberField) !== checkDigit) {
-      continue;
-    }
+    if (!/[0-9]/.test(checkDigit)) continue;
+    if (computeMrzCheckDigit(passportNumberField) !== checkDigit) continue;
 
     const normalizedPassportNumber = passportNumberField.replace(/</g, '');
     if (normalizedPassportNumber.length >= 6 && normalizedPassportNumber.length <= 9) {
@@ -88,7 +80,6 @@ export const isLikelyPassportDocument = (rawText = '') => {
   const hasMrzPrefix = mrzLines.some((line) => line.startsWith('P<'));
   const hasMrzLineShape = mrzLines.some((line) => (line.match(/</g) || []).length >= 8 && /\d/.test(line));
   const hasMrz = hasMrzPrefix || hasMrzLineShape;
-
   const hasPassportNumberLikePattern = /\b[A-Z][0-9]{7,8}\b/.test(upperRaw);
   const hasDocumentHints = hintMatches >= 1 && hasPassportNumberLikePattern;
 
@@ -131,61 +122,105 @@ const canvasFromImage = async (file, transform = 'none', crop = null) => {
   return canvas;
 };
 
-const loadTesseractFromCDN = () => {
-  if (typeof window === 'undefined') {
-    throw new Error('TESSERACT_WINDOW_UNAVAILABLE');
-  }
+const loadScriptOnce = (src, cacheKey) => {
+  if (window[cacheKey]) return window[cacheKey];
 
-  if (window.Tesseract?.createWorker) {
-    return Promise.resolve(window.Tesseract);
-  }
-
-  if (window.__tesseractScriptPromise) {
-    return window.__tesseractScriptPromise;
-  }
-
-  window.__tesseractScriptPromise = new Promise((resolve, reject) => {
+  window[cacheKey] = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = TESSERACT_CDN_SRC;
+    script.src = src;
     script.async = true;
-    script.onload = () => {
-      if (window.Tesseract?.createWorker) {
-        resolve(window.Tesseract);
-      } else {
-        reject(new Error('TESSERACT_INIT_FAILED'));
-      }
-    };
-    script.onerror = () => reject(new Error('TESSERACT_CDN_LOAD_FAILED'));
+    script.onload = resolve;
+    script.onerror = () => reject(new Error(`SCRIPT_LOAD_FAILED:${src}`));
     document.head.appendChild(script);
   });
 
-  return window.__tesseractScriptPromise;
+  return window[cacheKey];
+};
+
+const loadPaddleOCR = async () => {
+  if (typeof window === 'undefined') throw new Error('PADDLE_WINDOW_UNAVAILABLE');
+
+  await loadScriptOnce(PADDLEJS_CORE_SRC, '__paddleCoreScriptPromise');
+  await loadScriptOnce(PADDLEJS_OCR_SRC, '__paddleOcrScriptPromise');
+
+  const factory =
+    window.paddlejs?.ocr ||
+    window.PaddleOCR ||
+    window.PaddleJsOCR ||
+    window.ocr;
+
+  if (!factory) {
+    throw new Error('PADDLE_OCR_FACTORY_NOT_FOUND');
+  }
+
+  if (window.__paddleOcrModelPromise) {
+    return window.__paddleOcrModelPromise;
+  }
+
+  window.__paddleOcrModelPromise = Promise.resolve().then(async () => {
+    if (typeof factory === 'function') {
+      const model = factory();
+      if (model?.init) {
+        await model.init();
+      }
+      return model;
+    }
+
+    if (factory?.init) {
+      await factory.init();
+      return factory;
+    }
+
+    return factory;
+  });
+
+  return window.__paddleOcrModelPromise;
+};
+
+const extractTextFromPaddleResult = (result) => {
+  if (!result) return '';
+  if (typeof result === 'string') return result;
+
+  if (Array.isArray(result)) {
+    const lines = result.map((item) => {
+      if (typeof item === 'string') return item;
+      if (Array.isArray(item) && typeof item[0] === 'string') return item[0];
+      return item?.text || item?.label || '';
+    });
+    return lines.filter(Boolean).join('\n');
+  }
+
+  if (Array.isArray(result?.words)) {
+    return result.words.map((w) => w?.text || w).filter(Boolean).join('\n');
+  }
+
+  if (Array.isArray(result?.data)) {
+    return result.data.map((d) => d?.text || d?.label || '').filter(Boolean).join('\n');
+  }
+
+  return result?.text || '';
+};
+
+const detectTextWithPaddle = async (canvas) => {
+  const model = await loadPaddleOCR();
+
+  if (typeof model?.predict === 'function') {
+    const result = await model.predict(canvas);
+    return extractTextFromPaddleResult(result);
+  }
+
+  if (typeof model?.ocr === 'function') {
+    const result = await model.ocr(canvas);
+    return extractTextFromPaddleResult(result);
+  }
+
+  throw new Error('PADDLE_OCR_METHOD_NOT_FOUND');
 };
 
 const detectTextWithTextDetector = async (canvas) => {
   const detector = new window.TextDetector();
   const blocks = await detector.detect(canvas);
   return blocks.map((block) => block.rawValue || '').join('\n');
-};
-
-const createTesseractWorker = async () => {
-  const Tesseract = await loadTesseractFromCDN();
-  return Tesseract.createWorker('eng');
-};
-
-const detectTextWithTesseract = async (worker, canvas, mrzMode = false) => {
-  await worker.setParameters(
-    mrzMode
-      ? {
-          tessedit_pageseg_mode: '6',
-          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<'
-        }
-      : {
-          tessedit_pageseg_mode: '3'
-        }
-  );
-  const { data } = await worker.recognize(canvas);
-  return data?.text || '';
 };
 
 export const fileToBase64 = (file) => {
@@ -203,33 +238,27 @@ export const fileToBase64 = (file) => {
 
 export const runLocalPassportOCR = async (file) => {
   const attempts = [
-    { transform: 'none', crop: 'mrz', mrzMode: true },
-    { transform: 'grayscale', crop: 'mrz', mrzMode: true },
-    { transform: 'none', crop: 'full', mrzMode: false },
-    { transform: 'grayscale', crop: 'full', mrzMode: false }
+    { transform: 'none', crop: 'mrz' },
+    { transform: 'grayscale', crop: 'mrz' },
+    { transform: 'none', crop: 'full' },
+    { transform: 'grayscale', crop: 'full' }
   ];
 
   if (typeof window === 'undefined') {
     return { success: false, isPassport: false, passportNumber: '', text: '', attempts: 0, unsupported: true };
   }
 
-  const useTextDetector = typeof window.TextDetector === 'function';
-  let worker = null;
+  const hasTextDetector = typeof window.TextDetector === 'function';
 
   console.debug('[PassportOCR] local-ocr-start', {
     name: file?.name,
     type: file?.type,
     size: file?.size,
-    engine: useTextDetector ? 'text-detector' : 'tesseract'
+    engine: 'paddleocr'
   });
 
   try {
-    if (!useTextDetector) {
-      worker = await createTesseractWorker();
-    }
-
     let bestText = '';
-
     const bitmap = await createImageBitmap(file);
     const mrzHeight = Math.max(120, Math.floor(bitmap.height * 0.35));
     const mrzCrop = { x: 0, y: bitmap.height - mrzHeight, width: bitmap.width, height: mrzHeight };
@@ -238,9 +267,15 @@ export const runLocalPassportOCR = async (file) => {
       const attempt = attempts[index];
       const crop = attempt.crop === 'mrz' ? mrzCrop : null;
       const canvas = await canvasFromImage(file, attempt.transform, crop);
-      const text = useTextDetector
-        ? await detectTextWithTextDetector(canvas)
-        : await detectTextWithTesseract(worker, canvas, attempt.mrzMode);
+
+      let text = '';
+      try {
+        text = await detectTextWithPaddle(canvas);
+      } catch (paddleError) {
+        console.warn('[PassportOCR] paddle-attempt-failed', { attempt: index + 1, paddleError });
+        if (!hasTextDetector) throw paddleError;
+        text = await detectTextWithTextDetector(canvas);
+      }
 
       bestText = text || bestText;
       const isPassport = isLikelyPassportDocument(text);
@@ -278,9 +313,5 @@ export const runLocalPassportOCR = async (file) => {
       unsupported: true,
       reason: error?.message || 'UNKNOWN_OCR_ERROR'
     };
-  } finally {
-    if (worker) {
-      await worker.terminate();
-    }
   }
 };

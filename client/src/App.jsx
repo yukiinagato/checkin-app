@@ -259,7 +259,7 @@ const translations = {
     roomNo: "您的房号", wifi: "Wi-Fi 密码", copy: "复制", breakfast: "早餐时间", breakfastLoc: "2楼西餐厅",
     service: "紧急协助", serviceDetail: "优先拨打紧急电话，再前往别栋联系管理人", welcomeTitle: "欢迎入住！", welcomeSub: "请开始您的愉快旅程",
     footer: "您的安全与舒适是我们的最高宗旨。", guideTitle: "入住导览", changeLang: "语言", manualLink: "说明书 PDF",
-    regResident: "日本居民", regTourist: "访日游客", regFormName: "姓名", regFormAge: "年龄", regFormOcc: "职业", regFormPhone: "电话号码",
+    regResident: "日本居民", regTourist: "访日游客", startNewCheckin: "开始新登记", regFormName: "姓名", regFormAge: "年龄", regFormOcc: "职业", regFormPhone: "电话号码",
     regFormNation: "国籍", regFormPass: "护照号码", regPassportUpload: "拍摄/上传护照照片", regMinorAlert: "未成年人需填监护人信息",
     addGuest: "增加人员", guestLabel: "住客", petLabel: "宠物数量", countAdults: "住客人数 (成人/未成年)",
     selectCountry: "选择国家/地区",
@@ -283,7 +283,7 @@ const translations = {
     roomNo: "您的房號", wifi: "Wi-Fi 密碼", copy: "複製", breakfast: "早餐時間", breakfastLoc: "2樓西餐廳",
     service: "緊急協助", serviceDetail: "優先撥打緊急電話，再前往別棟聯繫管理人", welcomeTitle: "入住愉快！", welcomeSub: "請開始您的愉快旅程",
     footer: "您的安全與舒適是我們的最高宗旨。", guideTitle: "入住導覽", changeLang: "語言", manualLink: "說明書 PDF",
-    regResident: "日本居民", regTourist: "訪日遊客", regFormName: "姓名", regFormAge: "年齡", regFormOcc: "職業", regFormPhone: "電話號碼",
+    regResident: "日本居民", regTourist: "訪日遊客", startNewCheckin: "開始新登記", regFormName: "姓名", regFormAge: "年齡", regFormOcc: "職業", regFormPhone: "電話號碼",
     regFormNation: "國籍", regFormPass: "護照號碼", regPassportUpload: "拍攝/上傳護照照片", regMinorAlert: "未成年人需填監護人資訊",
     addGuest: "增加人員", guestLabel: "住客", petLabel: "寵物數量", countAdults: "住客人數 (成人/未成年)",
     selectCountry: "選擇國家/地區",
@@ -307,7 +307,7 @@ const translations = {
     roomNo: "Your Room No.", wifi: "Wi-Fi Password", copy: "Copy", breakfast: "Breakfast Time", breakfastLoc: "2F Restaurant",
     service: "Emergency Support", serviceDetail: "Call emergency first, then contact the manager in another building.", welcomeTitle: "Welcome!", welcomeSub: "Start your journey",
     footer: "Your safety and comfort are our top priority.", guideTitle: "Check-in Guide", changeLang: "Language", manualLink: "Manual PDF",
-    regResident: "Japan Resident", regTourist: "Visitor", regFormName: "Name", regFormAge: "Age", regFormOcc: "Occupation", regFormPhone: "Phone Number",
+    regResident: "Japan Resident", regTourist: "Visitor", startNewCheckin: "Start New Check-in", regFormName: "Name", regFormAge: "Age", regFormOcc: "Occupation", regFormPhone: "Phone Number",
     regFormNation: "Nationality", regFormPass: "Passport No.", regPassportUpload: "Upload passport photo", regMinorAlert: "Minors need guardian info",
     addGuest: "Add Guest", guestLabel: "Guest", petLabel: "Number of Pets", countAdults: "Guest Count (adult/minor)",
     selectCountry: "Select country/region",
@@ -331,7 +331,7 @@ const translations = {
     roomNo: "あなたの部屋番号", wifi: "Wi-Fi パスワード", copy: "コピー", breakfast: "朝食時間", breakfastLoc: "2階レストラン",
     service: "緊急連絡", serviceDetail: "先に緊急電話、次に管理人へ連絡。", welcomeTitle: "ようこそ！", welcomeSub: "旅を始めましょう",
     footer: "安全と快適さが最優先です。", guideTitle: "チェックイン案内", changeLang: "言語", manualLink: "マニュアル PDF",
-    regResident: "日本在住", regTourist: "訪日観光客", regFormName: "氏名", regFormAge: "年齢", regFormOcc: "職業", regFormPhone: "電話番号",
+    regResident: "日本在住", regTourist: "訪日観光客", startNewCheckin: "新しいチェックインを開始", regFormName: "氏名", regFormAge: "年齢", regFormOcc: "職業", regFormPhone: "電話番号",
     regFormNation: "国籍", regFormPass: "パスポート番号", regPassportUpload: "パスポート写真をアップロード", regMinorAlert: "未成年は保護者情報が必要",
     addGuest: "追加", guestLabel: "ゲスト", petLabel: "ペットの数", countAdults: "人数 (成人/未成年)",
     selectCountry: "国/地域を選択",
@@ -355,7 +355,7 @@ const translations = {
     roomNo: "객실 번호", wifi: "와이파이 비밀번호", copy: "복사", breakfast: "조식 시간", breakfastLoc: "2층 레스토랑",
     service: "긴급 지원", serviceDetail: "긴급 전화 후 관리자에게 연락.", welcomeTitle: "환영합니다!", welcomeSub: "여행을 시작하세요",
     footer: "안전과 편안함이 최우선입니다.", guideTitle: "체크인 안내", changeLang: "언어", manualLink: "매뉴얼 PDF",
-    regResident: "일본 거주자", regTourist: "방문객", regFormName: "이름", regFormAge: "나이", regFormOcc: "직업", regFormPhone: "전화번호",
+    regResident: "일본 거주자", regTourist: "방문객", startNewCheckin: "새 체크인 시작", regFormName: "이름", regFormAge: "나이", regFormOcc: "직업", regFormPhone: "전화번호",
     regFormNation: "국적", regFormPass: "여권 번호", regPassportUpload: "여권 사진 업로드", regMinorAlert: "미성년자는 보호자 정보 필요",
     addGuest: "인원 추가", guestLabel: "게스트", petLabel: "반려동물 수", countAdults: "인원 수 (성인/미성년)",
     selectCountry: "국가/지역 선택",
@@ -906,7 +906,7 @@ const GuestFlow = ({
        {hasHistory && (
          <button onClick={onStartNewCheckin} className="w-full flex items-center gap-3 p-3 rounded-lg text-rose-600 hover:bg-rose-50">
            <UserPlus className="w-6 h-6" />
-           <span className="text-sm font-semibold">{t.regTourist}</span>
+           <span className="text-sm font-semibold">{t.startNewCheckin}</span>
          </button>
        )}
     </div>

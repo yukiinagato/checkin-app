@@ -670,6 +670,8 @@ const GuestFlow = ({
   const [isLookingUpZip, setIsLookingUpZip] = useState(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
+  const parseAge = (ageValue) => Number.parseInt(String(ageValue ?? '').trim(), 10);
+
   useEffect(() => {
     if (guests.length === 0) {
       setGuests([createGuestTemplate('adult')]);
@@ -733,10 +735,20 @@ const GuestFlow = ({
   const isRegValid = () => {
     if (guests.length === 0) return false;
     return guests.every(g => {
-      const basic = g.name && g.age;
-      const minorCheck = parseInt(g.age) < 18 ? (g.guardianName && g.guardianPhone) : true;
-      if (g.isResident) return basic && g.phone && g.address && minorCheck;
-      return basic && g.nationality && g.passportNumber && g.passportPhoto && minorCheck;
+      const age = parseAge(g.age);
+      const hasValidAge = Number.isInteger(age) && age >= 0 && age <= 120;
+      if (!g.name?.trim() || !hasValidAge) return false;
+
+      const isMinor = age < 18;
+      const minorCheck = !isMinor || (g.guardianName?.trim() && g.guardianPhone?.trim());
+      if (!minorCheck) return false;
+
+      if (g.isResident) {
+        const needsPhone = age >= 16;
+        return Boolean(g.address?.trim()) && (!needsPhone || g.phone?.trim());
+      }
+
+      return Boolean(g.nationality && g.passportNumber?.trim() && g.passportPhoto);
     });
   };
 

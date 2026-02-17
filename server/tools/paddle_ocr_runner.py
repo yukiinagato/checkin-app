@@ -5,18 +5,66 @@ import sys
 from pathlib import Path
 
 
+def _mrz_char_value(ch: str) -> int:
+    if ch == '<':
+        return 0
+    if ch.isdigit():
+        return int(ch)
+    if 'A' <= ch <= 'Z':
+        return ord(ch) - 55
+    return 0
+
+
+def _mrz_check_digit(value: str) -> str:
+    weights = (7, 3, 1)
+    total = 0
+    for i, ch in enumerate(value):
+        total += _mrz_char_value(ch) * weights[i % 3]
+    return str(total % 10)
+
+
 def extract_passport_number(text: str) -> str:
     text = (text or '').upper()
-    # MRZ-like line 2: passport number field is first 9 chars, followed by check digit
-    lines = [re.sub(r'[^A-Z0-9<]', '', line) for line in text.splitlines()]
+
+    # 1) Structured MRZ-like two-line parse (line2[0:9] + check digit)
+    lines = [re.sub(r'[^A-Z0-9<]', '', line) for line in text.splitlines() if line.strip()]
     for i in range(len(lines) - 1):
         l1, l2 = lines[i], lines[i + 1]
         if l1.startswith('P<') and len(l2) >= 10:
-            num = l2[:9].replace('<', '')
+            field = l2[:9]
+            check_digit = l2[9]
+            if check_digit.isdigit() and _mrz_check_digit(field) == check_digit:
+                num = field.replace('<', '')
+                if 6 <= len(num) <= 9:
+                    return num
+
+    # 2) MRZ compact parse in one long OCR chunk
+    compact = re.sub(r'\s+', '', text)
+    mrz_compact = re.search(r'([A-Z0-9<]{9})(\d)([A-Z]{3})(\d{6})(\d)[MF<](\d{6})(\d)', compact)
+    if mrz_compact:
+        field = mrz_compact.group(1)
+        check_digit = mrz_compact.group(2)
+        if _mrz_check_digit(field) == check_digit:
+            num = field.replace('<', '')
             if 6 <= len(num) <= 9:
                 return num
-    m = re.search(r'PASSPORT\s*(NO|NUMBER)?\s*[:：]?\s*([A-Z0-9]{6,10})', text)
-    return m.group(2) if m else ''
+
+    # 3) Labeled field parse allowing multiline/noisy separators
+    labeled = re.search(r'PASSPORT\s*(NO|NUMBER)?[\s:#/\\\-]*([A-Z0-9]{6,10})', text)
+    if labeled:
+        return labeled.group(2)
+
+    # 4) Nearby-line parse after "PASSPORT NO" marker
+    marker = re.search(r'PASSPORT\s*(NO|NUMBER)?', text)
+    if marker:
+        tail = text[marker.end(): marker.end() + 120]
+        near = re.search(r'([A-Z]{1,2}[0-9]{7,8})', tail)
+        if near:
+            return near.group(1)
+
+    # 5) Conservative fallback: standalone passport-number-like token
+    generic = re.search(r'\b([A-Z]{1,2}[0-9]{7,8})\b', text)
+    return generic.group(1) if generic else ''
 
 
 def is_likely_passport(text: str) -> bool:

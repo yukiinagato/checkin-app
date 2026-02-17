@@ -752,6 +752,8 @@ const GuestFlow = ({
 }) => {
   const [isLookingUpZip, setIsLookingUpZip] = useState(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [showStepReview, setShowStepReview] = useState(false);
+  const [reviewStepIndex, setReviewStepIndex] = useState(0);
 
   const parseAge = (ageValue) => Number.parseInt(String(ageValue ?? '').trim(), 10);
 
@@ -927,6 +929,8 @@ const GuestFlow = ({
   const stepConfig = steps[currentStep];
   const hasContent = Boolean(stepConfig?.content?.trim());
   const builtinFallbackContent = stepConfig?.type === 'builtin' ? getBuiltinStepFallback(lang, stepConfig?.id) : '';
+  const reviewStep = steps[reviewStepIndex] || steps[0];
+  const reviewFallback = reviewStep?.type === 'builtin' ? getBuiltinStepFallback(lang, reviewStep?.id) : '';
 
   if (isCompleted) {
     return (
@@ -944,6 +948,35 @@ const GuestFlow = ({
           <div className="flex items-start gap-3"><Home className="w-5 h-5 text-blue-500 mt-1" />
             <div className="text-sm step-content" dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(completionTemplate.extraHtml) }} />
           </div>
+        </div>
+
+        <div className="mt-6 max-w-3xl w-full">
+          <button
+            onClick={() => setShowStepReview((prev) => !prev)}
+            className="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-bold"
+          >
+            {showStepReview ? '收起步骤内容 / Hide Steps' : '查看步骤内容 / View Step Guides'}
+          </button>
+
+          {showStepReview && (
+            <div className="mt-4 bg-white rounded-2xl border border-slate-100 p-5 text-left shadow-sm">
+              <div className="flex flex-wrap gap-2 mb-4">
+                {steps.map((step, idx) => (
+                  <button
+                    key={`review-${step.id}`}
+                    onClick={() => setReviewStepIndex(idx)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold ${reviewStepIndex === idx ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600'}`}
+                  >
+                    {step.title}
+                  </button>
+                ))}
+              </div>
+              <div className="step-content-surface">
+                <p className="text-xs font-bold text-slate-500 mb-2">{reviewStep?.title}</p>
+                <StepContent content={reviewStep?.content || reviewFallback} fallback={t.customStepEmpty} />
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );

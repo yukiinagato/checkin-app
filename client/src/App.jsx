@@ -71,6 +71,7 @@ const ADMIN_TOKEN_STORAGE_KEY = 'checkin.adminSessionToken';
 const DEFAULT_LANG = 'jp';
 const CHECKIN_STORAGE_KEY = 'checkin.completed';
 const GUEST_STORAGE_KEY = 'checkin.guests';
+const FLOW_COMPLETED_STORAGE_KEY = 'checkin.flowCompleted';
 
 const DB = {
   async getAllRecords(adminToken) {
@@ -563,9 +564,11 @@ const App = () => {
   // 歷史記錄狀態管理
   // ----------------------------------------------------------------
   const [hasHistory, setHasHistory] = useState(false);
+  const [hasCompletedFlow, setHasCompletedFlow] = useState(false);
 
   useEffect(() => {
     const hasRecord = localStorage.getItem(CHECKIN_STORAGE_KEY);
+    const flowCompleted = localStorage.getItem(FLOW_COMPLETED_STORAGE_KEY) === 'true';
     if (hasRecord) {
       setHasHistory(true);
       const savedGuestsJSON = localStorage.getItem(GUEST_STORAGE_KEY);
@@ -573,6 +576,11 @@ const App = () => {
         const savedGuests = JSON.parse(savedGuestsJSON);
         const loadedGuests = savedGuests.map(g => ({ ...g, isEditable: false }));
         setGuests(loadedGuests);
+      }
+      if (flowCompleted) {
+        setHasCompletedFlow(true);
+        setHasAgreed(true);
+        setIsCompleted(true);
       }
     } else {
       setGuests([createGuestTemplate('adult')]);
@@ -641,8 +649,10 @@ const App = () => {
     setIsCompleted(false);
     setPetCount(0);
     setHasAgreed(false);
+    setHasCompletedFlow(false);
     localStorage.removeItem(CHECKIN_STORAGE_KEY);
     localStorage.removeItem(GUEST_STORAGE_KEY);
+    localStorage.removeItem(FLOW_COMPLETED_STORAGE_KEY);
     setHasHistory(false);
   };
 
@@ -710,6 +720,12 @@ const App = () => {
       hasAgreed={hasAgreed}
       setHasAgreed={setHasAgreed}
       hasHistory={hasHistory}
+      hasCompletedFlow={hasCompletedFlow}
+      onCompleteFlow={() => {
+        setHasCompletedFlow(true);
+        setHasAgreed(true);
+        localStorage.setItem(FLOW_COMPLETED_STORAGE_KEY, 'true');
+      }}
       onAdminRequest={() => navigateTo('/admin')}
       onStartNewCheckin={resetCheckinProcess}
     />
@@ -729,6 +745,8 @@ const GuestFlow = ({
   petCount, setPetCount,
   hasAgreed, setHasAgreed,
   hasHistory,
+  hasCompletedFlow,
+  onCompleteFlow,
   onAdminRequest,
   onStartNewCheckin
 }) => {
@@ -858,6 +876,7 @@ const GuestFlow = ({
 
       if (isLastStep) {
         setIsCompleted(true);
+        onCompleteFlow();
       } else {
         setCurrentStep(currentStep + 1);
       }
@@ -875,6 +894,7 @@ const GuestFlow = ({
     }
 
     setIsCompleted(true);
+    onCompleteFlow();
   };
 
   if (!lang) {
@@ -1150,7 +1170,7 @@ const GuestFlow = ({
               {stepConfig.id === 'rules' && (
                 <div className="space-y-6">
                   <label className="flex items-center gap-4 p-4 bg-emerald-50 rounded-2xl border border-emerald-100 cursor-pointer shadow-sm group transition-all hover:bg-emerald-100">
-                    <input type="checkbox" className="w-6 h-6 rounded text-emerald-600 transition-transform group-hover:scale-110" checked={hasAgreed} onChange={(e) => setHasAgreed(e.target.checked)} />
+                    <input type="checkbox" className="w-6 h-6 rounded text-emerald-600 transition-transform group-hover:scale-110 disabled:opacity-70 disabled:cursor-not-allowed" checked={hasCompletedFlow ? true : hasAgreed} disabled={hasCompletedFlow} onChange={(e) => setHasAgreed(e.target.checked)} />
                     <span className="text-emerald-900 font-bold text-sm">{t.agree}</span>
                   </label>
                 </div>

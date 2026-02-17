@@ -846,12 +846,15 @@ const GuestFlow = ({
   };
 
   const handleStepClick = (index) => {
-    // 只有在已完成登記後，或前往非登記步驟時才允許跳轉
-    if (hasHistory || steps[index].id !== 'registration') {
+    const allowedBeforeCompletion = new Set(['welcome', 'count', 'registration']);
+    const targetStepId = steps[index]?.id;
+    const canAccess = hasHistory || allowedBeforeCompletion.has(targetStepId);
+
+    // 未完成登记前，仅允许查看欢迎、人数和登记步骤
+    if (canAccess) {
       setCurrentStep(index);
       setIsMenuOpen(false); // 在手機上點擊後關閉菜單
     } else {
-      // 可以在這裡給出提示，告知用戶需要先完成登記
       alert('请先完成登记步骤 (Please complete the registration step first)');
     }
   };
@@ -864,7 +867,7 @@ const GuestFlow = ({
           key={step.id}
           onClick={() => handleStepClick(index)}
           className={`w-full flex items-center gap-3 p-3 rounded-lg text-left transition-colors ${currentStep === index ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'}`}
-          disabled={!hasHistory && step.id !== 'welcome' && step.id !== 'count' && step.id !== 'registration' && guests.length === 0}
+          disabled={!hasHistory && !['welcome', 'count', 'registration'].includes(step.id)}
         >
           {getStepIcon(step.id)}
           <span className="text-sm font-semibold">{step.title}</span>

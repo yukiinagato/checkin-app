@@ -556,6 +556,10 @@ const App = () => {
   };
 
   const handleGuestSubmit = async (guestData) => {
+    if (!Array.isArray(guestData) || guestData.length === 0) {
+      return true;
+    }
+
     setLoading(true);
     const result = await DB.insertRecord({ guests: guestData, petCount });
     setLoading(false);
@@ -565,9 +569,16 @@ const App = () => {
     }
 
     localStorage.setItem(CHECKIN_STORAGE_KEY, 'true');
-    const submittedGuests = guestData.map(g => ({...g, isEditable: false}));
-    localStorage.setItem(GUEST_STORAGE_KEY, JSON.stringify(submittedGuests));
-    setGuests(submittedGuests);
+    setGuests((prevGuests) => {
+      const submittedIds = new Set(guestData.map((g) => g.id));
+      const mergedGuests = prevGuests.map((guest) => (
+        submittedIds.has(guest.id)
+          ? { ...guest, isEditable: false }
+          : guest
+      ));
+      localStorage.setItem(GUEST_STORAGE_KEY, JSON.stringify(mergedGuests));
+      return mergedGuests;
+    });
     setHasHistory(true);
     
     return true;
@@ -755,15 +766,11 @@ const GuestFlow = ({
   const handleNext = async () => {
     const activeSteps = steps.length;
     const isLastStep = currentStep === activeSteps - 1;
+    const pendingGuests = guests.filter((guest) => guest.isEditable !== false);
 
-    // 需求調整：在「住客信息登記」步驟點擊下一步時即提交
-    if (stepConfig?.id === 'registration' && !hasHistory) {
-      const finalData = [...guests];
-      if (finalData.length === 0) {
-        return;
-      }
-
-      const success = await onSubmit(finalData);
+    // 在「住客信息登記」步驟點擊下一步時提交“尚未提交”的住客
+    if (stepConfig?.id === 'registration') {
+      const success = await onSubmit(pendingGuests);
       if (!success) {
         return;
       }

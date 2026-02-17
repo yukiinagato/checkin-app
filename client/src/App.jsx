@@ -207,6 +207,19 @@ const DB = {
     }
   },
 
+  async recognizePassport(imageData) {
+    const res = await fetch(`${API_URL}/ocr/passport`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: imageData })
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(payload.error || 'Passport OCR request failed');
+    }
+    return payload;
+  },
+
 
   async setGuestDeleted(adminToken, recordId, guestId, deleted) {
     const res = await fetch(`${API_URL}/records/${encodeURIComponent(recordId)}/guests/${encodeURIComponent(guestId)}`, {
@@ -820,7 +833,16 @@ const GuestFlow = ({
     updateGuest(guestId, 'passportOcrMessage', t.ocrChecking);
 
     try {
-      const ocrResult = await runLocalPassportOCR(file);
+      const base64 = await fileToBase64(file);
+
+      let ocrResult;
+      try {
+        ocrResult = await DB.recognizePassport(base64);
+      } catch (apiError) {
+        console.warn('[PassportOCR] server-paddleocr-failed-fallback-local', { guestId, apiError });
+        ocrResult = await runLocalPassportOCR(file);
+      }
+
       console.debug('[PassportOCR] ocr-result', {
         guestId,
         success: ocrResult.success,
@@ -831,7 +853,6 @@ const GuestFlow = ({
 
       if (ocrResult.unsupported) {
         console.warn('[PassportOCR] local-ocr-unsupported-fallback', { guestId });
-        const base64 = await fileToBase64(file);
         updateGuest(guestId, 'passportPhoto', base64);
         updateGuest(guestId, 'passportOcrStatus', 'manual-required');
         updateGuest(guestId, 'passportOcrMessage', t.ocrUnsupported);
@@ -846,7 +867,6 @@ const GuestFlow = ({
         return;
       }
 
-      const base64 = await fileToBase64(file);
       updateGuest(guestId, 'passportPhoto', base64);
 
       if (ocrResult.passportNumber) {

@@ -155,8 +155,33 @@ pnpm --filter client preview
 - `WEBAUTHN_RP_ID`：WebAuthn Relying Party ID（默认 `localhost`）。
 - `WEBAUTHN_RP_NAME`：WebAuthn RP 展示名称（默认 `Checkin Admin`）。
 - `WEBAUTHN_ORIGIN`：WebAuthn 验证 Origin（会移除末尾 `/`）。
+- `PADDLE_OCR_PYTHON`：本地 PaddleOCR 运行的 Python 命令（默认 `python3`）。
+- `PADDLE_OCR_RUNNER`：本地 PaddleOCR 识别脚本路径（默认 `server/tools/paddle_ocr_runner.py`）。
 
 如果缺少 `ADMIN_API_TOKEN` 或 `CORS_ORIGIN`，服务将直接抛错退出。
+
+### 本地部署 PaddleOCR（服务端）
+
+当前项目已支持通过后端本地调用 PaddleOCR（Python 版）进行护照识别，接口为：
+
+- `POST /api/ocr/passport`（body: `{ "image": "data:image/...;base64,..." }`）
+
+部署步骤：
+
+```bash
+# 1) 安装 Python 依赖（建议在虚拟环境）
+pip install paddleocr paddlepaddle
+
+# 2) 确认运行脚本存在
+ls server/tools/paddle_ocr_runner.py
+
+# 3) 启动后端（按需设置环境变量）
+PADDLE_OCR_PYTHON=python3 \
+PADDLE_OCR_RUNNER=./server/tools/paddle_ocr_runner.py \
+pnpm --filter server dev
+```
+
+说明：前端上传护照后会优先请求该后端 OCR 接口；若本地 PaddleOCR 不可用，前端会回退到浏览器端本地识别流程。
 
 ---
 
@@ -323,4 +348,3 @@ pnpm --filter server start
 
 - 检查 `WEBAUTHN_ORIGIN`、`WEBAUTHN_RP_ID` 与实际访问域名是否匹配。
 - 确保浏览器/系统支持 WebAuthn 与 Passkey。
-

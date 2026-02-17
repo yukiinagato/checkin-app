@@ -1,104 +1,133 @@
 # Checkin App 🏨
 
-这是一个全栈入住登记系统（Check-in System），用于酒店前台/自助登记场景。系统支持多语言登记流程、护照照片上传、后台管理与本地 SQLite 持久化。
+一个用于酒店前台 / 自助终端的全栈入住登记系统，包含住客登记流程、多语言引导、证件图片上传、后台模板管理与 Passkey 管理员认证。
 
-## 🌟 核心功能
+## 🌍 语言支持（UI）
 
-- **住客登记**：录入住客基本信息与入住信息。
-- **证件上传**：支持护照等证件图片上传与本地存储。
-- **多语言引导**：内置多语言步骤模板，可在后台管理。
-- **后台管理**：查看登记记录、编辑步骤模板、管理系统配置。
-- **数据持久化**：使用 SQLite 本地保存登记数据。
+当前内置并可在前台切换的主要语言：
 
-## 🛠 技术栈
+- 日本語 (`jp`)
+- English (`en`)
+- 简体中文 (`zh-hans`)
+- 繁體中文 (`zh-hant`)
+- 한국어 (`ko`)
 
-### 前端（client）
+> 说明：默认语言为 `jp`（代码中 `DEFAULT_LANG = 'jp'`）。
 
-- React 18
-- Vite
+---
+
+## ✨ 功能概览
+
+### 前台（住客端）
+
+- 分步骤阅读入住须知（可多语言）。
+- 按人数登记住客信息（成人 / 未成年人）。
+- 区分本地住客与海外住客字段：
+  - 本地住客：姓名、年龄、地址；16 岁及以上要求电话。
+  - 海外住客：姓名、年龄、国籍、护照号、护照照片。
+  - 未成年人：额外要求监护人姓名与电话。
+- 提交后将数据写入 SQLite，证件图保存到本地上传目录。
+- 完成页支持按语言渲染可配置内容（标题、副标题、HTML 富文本区块）。
+
+### 后台（管理员）
+
+- Passkey 注册与登录（WebAuthn）。
+- 查看所有入住记录（按时间倒序）。
+- 按住客维度软删除/恢复（`deleted` 标记）。
+- 查看护照图片（鉴权后访问）。
+- 编辑并保存多语言步骤模板。
+- 编辑并保存多语言完成页模板。
+- 导出 CSV。
+
+---
+
+## 🧱 技术栈
+
+### Client
+
+- React 18 + Vite
 - Tailwind CSS
 - Lucide React
+- DOMPurify（富文本清洗）
 
-### 后端（server）
+### Server
 
 - Node.js + Express
 - SQLite3
-- fs-extra（文件存储）
-- CORS
+- fs-extra（文件写入）
+- @simplewebauthn/server（Passkey / WebAuthn）
 
 ---
 
-## 📂 项目结构
+## 📁 项目结构
 
 ```text
 checkin-app/
-├── client/                  # 前端 React 应用
-│   ├── src/                 # 页面与组件
-│   ├── public/              # 静态资源
-│   └── vite.config.js       # Vite 构建配置
-├── server/                  # 后端 Express 服务
-│   ├── server.js            # 服务入口
-│   ├── stepTemplates.js     # 多语言步骤模板初始化数据
-│   ├── uploads/             # 上传图片目录（运行后自动创建）
-│   └── hotel.db             # SQLite 数据文件（运行后生成/使用）
-├── package.json             # Monorepo 根脚本
-└── pnpm-workspace.yaml      # pnpm workspace 配置
+├── client/
+│   ├── src/
+│   │   ├── App.jsx               # 前台流程、API 调用、语言与登记逻辑
+│   │   └── AdminPage.jsx         # 后台登录与管理页面
+│   ├── public/ha-login-image.png # 默认完成页图示资源
+│   └── vite.config.js            # 前端代理配置（/api -> localhost:3002）
+├── server/
+│   ├── server.js                 # 后端入口、鉴权、API、SQLite 初始化
+│   ├── stepTemplates.js          # 多语言步骤模板初始数据
+│   ├── completionTemplates.js    # 多语言完成页模板初始数据
+│   └── .env.development          # 开发环境默认变量
+├── package.json                  # monorepo 根脚本
+└── pnpm-workspace.yaml
 ```
 
 ---
 
-## ✅ 运行环境要求
+## ✅ 环境要求
 
-- Node.js **18+**（推荐 20 LTS）
-- pnpm **8+**（或更高版本）
+- Node.js 18+
+- pnpm 8+
 
-安装 pnpm（如果未安装）：
-
-```bash
-npm i -g pnpm
-```
-
----
-
-## 🚀 安装步骤
-
-在项目根目录执行：
+安装依赖：
 
 ```bash
-# 1) 安装所有工作区依赖
 pnpm install
+```
 
-# 2) 启动开发环境（前后端同时启动）
+---
+
+## 🚀 快速启动（开发）
+
+在仓库根目录执行：
+
+```bash
 pnpm dev
 ```
 
-启动后默认端口：
+该命令会并行启动：
+
+- `server`：`NODE_ENV=development nodemon server.js`
+- `client`：`vite`
+
+默认开发端口（来自现有配置）：
 
 - 前端：`http://localhost:5173`
-- 后端：`http://localhost:3001`
+- 后端：`http://localhost:3002`（`server/.env.development` 中 `PORT=3002`）
 
-> 前端开发模式下会直接请求 `http://localhost:3001/api`。
+> 前端通过 Vite proxy 将 `/api` 转发到 `http://localhost:3002`。
 
 ---
 
 ## 🧪 常用命令
 
-### 根目录命令
-
 ```bash
-pnpm dev          # 同时启动 client + server（开发模式）
-pnpm start        # 启动 server + client dev
-pnpm build        # 构建前端产物（输出到 client/dist）
-```
+# 根目录
+pnpm dev
+pnpm start
+pnpm build
 
-### 子项目命令
-
-```bash
-# 后端
+# 单独运行后端
 pnpm --filter server dev
 pnpm --filter server start
 
-# 前端
+# 单独运行前端
 pnpm --filter client dev
 pnpm --filter client build
 pnpm --filter client preview
@@ -106,177 +135,189 @@ pnpm --filter client preview
 
 ---
 
-## ⚙️ 配置说明
+## ⚙️ 配置说明（后端环境变量）
 
-### 后端环境变量
+后端会根据 `NODE_ENV` 自动读取：
 
-后端目前支持以下关键变量：
+- `development` -> `server/.env.development`
+- `production` -> `server/.env.production`
 
-- `ADMIN_API_TOKEN`：后台首次绑定 Passkey 的初始化密钥。
-  - 默认值：`8808`
-  - 生产环境请务必修改。
+关键变量如下：
 
-可以通过以下方式传入：
+- `PORT`：后端监听端口。
+- `DB_PATH`：SQLite 数据库路径。
+- `UPLOAD_DIR`：上传文件目录。
+- `ADMIN_API_TOKEN`：首次注册 Passkey 时的初始化令牌（必填）。
+- `CORS_ORIGIN`：允许跨域来源，支持逗号分隔多值（必填）。
+- `WEBAUTHN_RP_ID`：WebAuthn Relying Party ID（默认 `localhost`）。
+- `WEBAUTHN_RP_NAME`：WebAuthn RP 展示名称（默认 `Checkin Admin`）。
+- `WEBAUTHN_ORIGIN`：WebAuthn 验证 Origin（会移除末尾 `/`）。
 
-```bash
-ADMIN_API_TOKEN='your-strong-token' pnpm --filter server start
-```
-
-### 数据与上传目录
-
-- SQLite 数据库文件：`server/hotel.db`
-- 证件上传目录：`server/uploads/`
-
-请对以上目录做好备份与权限控制。
+如果缺少 `ADMIN_API_TOKEN` 或 `CORS_ORIGIN`，服务将直接抛错退出。
 
 ---
 
-## 📘 使用方法
+## 🔐 管理员认证机制（Passkey）
 
-### 1) 前台登记（住客端）
+### 首次绑定
 
-1. 打开前端页面（开发环境默认 `http://localhost:5173`）。
-2. 按流程填写住客信息。
-3. 上传护照/证件照片。
-4. 提交后数据写入 SQLite，图片保存到 `server/uploads/`。
+1. 后台查询当前是否已有 Passkey。
+2. 若无 Passkey，必须用 `Authorization: Bearer <ADMIN_API_TOKEN>` 调用注册 options。
+3. 前端发起 `navigator.credentials.create(...)`。
+4. 后端验证注册响应后写入 `admin_passkeys` 表。
 
-### 2) 管理后台登录
+### 后续登录
 
-1. 在首页进入管理页面。
-2. 首次使用时，输入 `ADMIN_API_TOKEN` 完成 Passkey 绑定。
-3. 后续通过 Passkey 进行登录。
-4. 登录后可查看登记记录、加载图片、调整步骤模板等。
+1. 请求认证 options。
+2. 前端调用 `navigator.credentials.get(...)`。
+3. 后端验证签名并更新计数器 `counter`。
+4. 返回 `sessionToken`（内存会话，默认有效期 24 小时）。
+
+### 会话与挑战
+
+- 挑战 challenge 有效期 5 分钟。
+- 管理员会话 token 有效期 24 小时。
+- 受保护接口通过 `Bearer token`（或个别图片场景 query 参数）鉴权。
 
 ---
 
-## 🌐 生产部署（PM2）
+## 🗄️ 数据存储设计
 
-由于前端生产模式请求 `/api`，建议通过 Nginx/Caddy 统一反向代理：
+系统初始化时自动创建/迁移以下表：
 
-- `/` -> 前端静态站点（Vite build 产物）
-- `/api` -> Node 后端（3001）
+- `checkins`
+  - `id` 主键
+  - `date`（提交日期）
+  - `data`（住客数组 JSON）
+  - `created_at`
+- `step_templates`
+  - `lang` 主键
+  - `steps`（JSON）
+  - `updated_at`
+- `completion_templates`
+  - `lang` 主键
+  - `template`（JSON）
+  - `updated_at`
+- `admin_passkeys`
+  - `credential_id` 主键
+  - `public_key`
+  - `counter`
+  - `transports`
+  - `created_at`
 
-部署 PM2 并配置后端服务。
+> `admin_passkeys` 支持启动时自动补齐缺失字段（兼容旧库）。
 
-### 1) 安装依赖并构建前端
+---
+
+## 🧾 前台提交校验规则
+
+提交 `/api/submit` 时，后端会做核心校验：
+
+- `guests` 必须是非空数组。
+- 每位住客都必须有有效 `name` 与 `age`（`0~120`）。
+- 未成年人（`age < 18`）必须有 `guardianName` + `guardianPhone`。
+- `isResident === true`：
+  - 必须有 `address`
+  - 若 `age >= 16`，必须有 `phone`
+- `isResident !== true`：
+  - 必须有 `nationality`、`passportNumber`、`passportPhoto`
+
+图片保存逻辑：
+
+- 仅处理 `data:image/...;base64,...` 格式。
+- 白名单类型：jpg / jpeg / png / webp / heic / heif。
+- 文件名使用随机 UUID，写入 `UPLOAD_DIR`。
+- 使用路径安全检查避免目录穿越。
+
+---
+
+## 🔌 API 概览
+
+### 公开接口
+
+- `GET /api/steps?lang=...`：获取指定语言步骤模板。
+- `GET /api/completion-template?lang=...`：获取指定语言完成页模板。
+- `POST /api/submit`：提交入住数据。
+- `GET /api/admin/passkeys/status`：查询是否已绑定 Passkey。
+- `POST /api/admin/passkeys/auth/options`：获取认证 options。
+- `POST /api/admin/passkeys/auth/verify`：验证认证响应。
+- `POST /api/admin/passkeys/register/verify`：验证注册响应。
+
+### 需管理员会话接口
+
+- `GET /api/records`
+- `PATCH /api/records/:recordId/guests/:guestId`
+- `GET /api/admin/uploads/:filename`
+- `GET /api/admin/session`
+- `POST /api/admin/logout`
+- `PUT /api/admin/steps?lang=...`
+- `PUT /api/admin/completion-template?lang=...`
+
+### 需初始化令牌或管理员会话
+
+- `POST /api/admin/passkeys/register/options`
+  - 无 Passkey 时：需 `ADMIN_API_TOKEN`
+  - 有 Passkey 后：需管理员会话 token
+
+---
+
+## 🧭 前端流程说明
+
+1. 选择语言并加载该语言步骤模板。
+2. 按步骤阅读须知。
+3. 在登记步骤填入住客信息并上传证件图。
+4. 提交成功后展示“完成页模板”（支持富文本与图片）。
+5. 管理入口可切换到后台登录页，进行 Passkey 登录与数据管理。
+
+---
+
+## 🛡️ 安全与运维建议
+
+- **务必修改默认 `ADMIN_API_TOKEN`**，并仅在受控环境注入。
+- 生产环境使用 HTTPS（WebAuthn 对 HTTPS 依赖强）。
+- 将 `CORS_ORIGIN` 精确配置为可信域名列表。
+- 定期备份 `DB_PATH` 与 `UPLOAD_DIR`。
+- 如果多实例部署，当前内存会话（`adminSessions`）需改造为共享存储（如 Redis）。
+
+---
+
+## 🚢 生产部署建议
+
+推荐使用反向代理统一入口：
+
+- `/` -> 前端静态资源（`client/dist`）
+- `/api` -> Node 服务
+
+最小流程：
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm build
+pnpm --filter server start
 ```
 
-### 2) 安装 PM2
-
-```bash
-npm i -g pm2
-```
-
-### 3) 创建 PM2 配置文件
-
-在项目根目录创建 `ecosystem.config.cjs`：
-
-```js
-module.exports = {
-  apps: [
-    {
-      name: 'checkin-server',
-      cwd: '/workspace/checkin-app/server',
-      script: 'server.js',
-      interpreter: 'node',
-      env: {
-        NODE_ENV: 'production',
-        ADMIN_API_TOKEN: 'replace-with-strong-token',
-      },
-    },
-    {
-      name: 'checkin-client',
-      cwd: '/workspace/checkin-app/client',
-      script: 'npx',
-      args: 'serve -s dist -l 4173',
-      env: {
-        NODE_ENV: 'production',
-      },
-    },
-  ],
-};
-```
-
-> `checkin-client` 这里使用 `serve` 启动静态文件，你也可以改为 Nginx 直接托管 `client/dist`。
-
-### 4) 安装静态服务器（若使用上面配置）
-
-```bash
-npm i -g serve
-```
-
-### 5) 启动 PM2
-
-```bash
-pm2 start ecosystem.config.cjs
-pm2 status
-pm2 logs checkin-server
-```
-
-### 6) 设置开机自启
-
-```bash
-pm2 startup
-pm2 save
-```
+然后由 Nginx / Caddy 对外提供 HTTPS 与反向代理。
 
 ---
 
-## 🔀 Nginx 反向代理示例
+## 🧰 故障排查
 
-```nginx
-server {
-    listen 80;
-    server_name your-domain.com;
+### 1) 启动即报错 `ADMIN_API_TOKEN is required`
 
-    # 前端
-    location / {
-        proxy_pass http://127.0.0.1:4173;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
+- 检查环境变量是否存在。
+- 确认 `NODE_ENV` 对应的 env 文件中已配置。
 
-    # 后端 API
-    location /api/ {
-        proxy_pass http://127.0.0.1:3001/api/;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
+### 2) 启动即报错 `CORS_ORIGIN is required`
 
----
+- 设置 `CORS_ORIGIN`，可用逗号分隔多个来源。
 
-## 🧯 常见问题
+### 3) 前端请求失败
 
-### 1) 前端能打开，但接口 404 / 请求失败
+- 检查 Vite 代理目标端口是否与后端端口一致（默认 3002）。
+- 检查后端是否已启动。
 
-检查后端是否启动在 `3001`，并确认反向代理是否正确转发 `/api`。
+### 4) Passkey 验证失败
 
-### 2) 上传图片失败
-
-检查 `server/uploads/` 是否有写权限，并确认上传数据未被网关限制。
-
-### 3) 无法进入管理后台
-
-确认 `ADMIN_API_TOKEN` 设置是否正确（用于首次绑定），以及浏览器是否支持 Passkey。
-
----
-
-## 🔐 安全建议
-
-- 生产环境务必修改默认 `ADMIN_API_TOKEN`。
-- 限制 `server/hotel.db` 和 `server/uploads/` 文件访问权限。
-- 建议开启 HTTPS（Passkey 在 HTTPS 场景下兼容性更好）。
-- 建议对数据库和上传目录执行定期备份。
+- 检查 `WEBAUTHN_ORIGIN`、`WEBAUTHN_RP_ID` 与实际访问域名是否匹配。
+- 确保浏览器/系统支持 WebAuthn 与 Passkey。
 

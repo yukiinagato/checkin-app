@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import DOMPurify from 'dompurify';
 import {
   AlertTriangle,
@@ -182,7 +182,7 @@ const toPublicKeyCredentialJSON = (credential) => {
   if (response.attestationObject) {
     payload.response.attestationObject = toBase64Url(response.attestationObject);
   }
-  
+
   // 认证特有字段 (signature 和 authenticatorData)
   if (response.authenticatorData) {
     payload.response.authenticatorData = toBase64Url(response.authenticatorData);
@@ -193,7 +193,7 @@ const toPublicKeyCredentialJSON = (credential) => {
   if (response.userHandle) {
     payload.response.userHandle = toBase64Url(response.userHandle);
   }
-  
+
   // 传输渠道信息
   if (response.getTransports) {
     payload.response.transports = response.getTransports();
@@ -429,6 +429,51 @@ const AdminDashboard = ({
   const [showDeletedRows, setShowDeletedRows] = useState(false);
   const [pendingActionKey, setPendingActionKey] = useState('');
 
+  const missingBuiltinSteps = useMemo(() => {
+    const defaults = buildDefaultSteps(stepLang);
+    const existingIds = new Set(editableSteps.map(s => s.id));
+    return defaults.filter(d => !existingIds.has(d.id));
+  }, [editableSteps, stepLang, buildDefaultSteps]);
+
+  const mergeNewSteps = () => {
+    const defaults = buildDefaultSteps(stepLang);
+    const merged = [...editableSteps];
+
+    missingBuiltinSteps.forEach(missing => {
+      const defaultIdx = defaults.findIndex(d => d.id === missing.id);
+      let inserted = false;
+
+      for (let i = defaultIdx - 1; i >= 0; i--) {
+        const prevId = defaults[i].id;
+        const targetIdx = merged.findIndex(s => s.id === prevId);
+        if (targetIdx !== -1) {
+          merged.splice(targetIdx + 1, 0, { ...missing, enabled: true });
+          inserted = true;
+          break;
+        }
+      }
+
+      if (!inserted) {
+        for (let i = defaultIdx + 1; i < defaults.length; i++) {
+          const nextId = defaults[i].id;
+          const targetIdx = merged.findIndex(s => s.id === nextId);
+          if (targetIdx !== -1) {
+            merged.splice(targetIdx, 0, { ...missing, enabled: true });
+            inserted = true;
+            break;
+          }
+        }
+      }
+
+      if (!inserted) {
+        merged.push({ ...missing, enabled: true });
+      }
+    });
+
+    setEditableSteps(merged);
+    setStepsSaved(false);
+  };
+
   useEffect(() => {
     db.getAllRecords(adminToken)
       .then(data => {
@@ -620,6 +665,8 @@ const AdminDashboard = ({
                   <tr>
                     <th className="p-3 pl-6">日期</th>
                     <th className="p-3">組ID</th>
+                    <th className="p-3">入住</th>
+                    <th className="p-3">退房</th>
                     <th className="p-3">住客ID</th>
                     <th className="p-3">姓名</th>
                     <th className="p-3">類型</th>
@@ -644,6 +691,8 @@ const AdminDashboard = ({
                       <tr key={key} className="hover:bg-slate-50/80 transition-colors align-top">
                         <td className="p-3 pl-6 text-slate-500 font-mono text-xs">{group.submittedAt.split('T')[0]}</td>
                         <td className="p-3 font-mono text-xs text-slate-500">{group.id}</td>
+                        <td className="p-3 font-mono text-xs text-emerald-600 font-bold">{group.checkIn || '-'}</td>
+                        <td className="p-3 font-mono text-xs text-rose-600 font-bold">{group.checkOut || '-'}</td>
                         <td className="p-3 font-mono text-xs text-slate-500">{guest.id || '-'}</td>
                         <td className="p-3 font-bold text-slate-900">{guest.name || '-'}</td>
                         <td className="p-3">{guest.type || '-'}</td>
@@ -782,6 +831,18 @@ const AdminDashboard = ({
                 <h3 className="font-bold text-xl text-slate-800">入住步骤管理</h3>
                 <p className="text-sm text-slate-500">编辑步骤标题与内容，可新增或移除自定义步骤。</p>
               </div>
+              {missingBuiltinSteps.length > 0 && (
+                <div className="flex-1 bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2">
+                  <div className="flex items-center gap-3 text-amber-800">
+                    <Settings className="w-5 h-5 text-amber-500" />
+                    <div className="text-sm">
+                      <p className="font-bold">發現新步驟</p>
+                      <p className="opacity-80">系統檢測到 {missingBuiltinSteps.length} 個新的內置步驟（如：{missingBuiltinSteps.map(s => s.title).join(', ')}）。是否將其合併到當前配置中？</p>
+                    </div>
+                  </div>
+                  <button onClick={mergeNewSteps} className="whitespace-nowrap px-4 py-2 bg-amber-600 text-white text-xs font-bold rounded-xl hover:bg-amber-700 transition-colors">立即合併</button>
+                </div>
+              )}
               <div className="flex flex-wrap items-center gap-3">
                 <select
                   value={stepLang}
@@ -978,7 +1039,7 @@ const AdminPage = ({
       db={db}
       adminToken={adminToken}
       onLogout={async () => {
-        await db.logoutAdmin(adminToken).catch(() => {});
+        await db.logoutAdmin(adminToken).catch(() => { });
         onAdminTokenChange('');
         onExitAdmin();
       }}

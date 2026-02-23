@@ -138,6 +138,24 @@ db.serialize(() => {
       });
     }
   });
+
+  db.all('PRAGMA table_info(checkins)', [], (pragmaErr, columns) => {
+    if (pragmaErr) {
+      console.error('讀取 checkins 表結構失敗:', pragmaErr.message);
+      return;
+    }
+    const columnNames = new Set((columns || []).map((column) => column.name));
+    if (!columnNames.has('check_in')) {
+      db.run('ALTER TABLE checkins ADD COLUMN check_in TEXT', (err) => {
+        if (err) console.error('添加 check_in 欄位失敗:', err.message);
+      });
+    }
+    if (!columnNames.has('check_out')) {
+      db.run('ALTER TABLE checkins ADD COLUMN check_out TEXT', (err) => {
+        if (err) console.error('添加 check_out 欄位失敗:', err.message);
+      });
+    }
+  });
 });
 
 const seedStepTemplates = () => {
@@ -473,6 +491,8 @@ app.get('/api/records', requireAdminAuth, (req, res) => {
       return {
         id: row.id,
         submittedAt: row.created_at,
+        checkIn: row.check_in,
+        checkOut: row.check_out,
         guests
       };
     });
@@ -804,11 +824,12 @@ app.post('/api/submit', async (req, res) => {
 
     const submitId = uuidv4();
     const today = new Date().toISOString().split('T')[0];
+    const { checkIn, checkOut } = req.body;
 
     const guestsWithUrls = (await saveImagesLocally(guests)).map((guest) => ({ ...guest, deleted: guest.deleted === true }));
 
-    const stmt = db.prepare("INSERT INTO checkins (id, date, data) VALUES (?, ?, ?)");
-    stmt.run(submitId, today, JSON.stringify(guestsWithUrls), function (err) {
+    const stmt = db.prepare("INSERT INTO checkins (id, date, data, check_in, check_out) VALUES (?, ?, ?, ?, ?)");
+    stmt.run(submitId, today, JSON.stringify(guestsWithUrls), checkIn || null, checkOut || null, function (err) {
       if (err) {
         console.error(err);
         res.status(500).json({ success: false, error: err.message });

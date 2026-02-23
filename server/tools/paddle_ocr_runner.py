@@ -92,7 +92,7 @@ def _normalize_name(raw: str) -> str:
 
 def extract_name(text: str) -> str:
     t = (text or '').upper()
-    # 尝试从 MRZ 提取
+    # 尝试从 MRZ 提取（最准确）
     compact = re.sub(r'\s+', '', t).replace('(', '<')
     mrz_name = re.search(r'P<[A-Z<]{3}([A-Z<]+)<<([A-Z<]+)', compact)
     if mrz_name:

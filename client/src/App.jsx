@@ -22,7 +22,8 @@ import {
   Loader2,
   Search,
   Home,
-  Menu
+  Menu,
+  Calendar
 } from 'lucide-react';
 import AdminPage from './AdminPage';
 import { isRegistrationValid } from './formValidation';
@@ -113,6 +114,9 @@ const ADMIN_TOKEN_STORAGE_KEY = 'checkin.adminSessionToken';
 const DEFAULT_LANG = 'jp';
 const CHECKIN_STORAGE_KEY = 'checkin.completed';
 const GUEST_STORAGE_KEY = 'checkin.guests';
+const PET_COUNT_STORAGE_KEY = 'checkin.petCount';
+const CHECKIN_DATE_STORAGE_KEY = 'checkin.checkInDate';
+const CHECKOUT_DATE_STORAGE_KEY = 'checkin.checkOutDate';
 
 const DB = {
   async getAllRecords(adminToken) {
@@ -325,11 +329,13 @@ const translations = {
     regFormNation: "国籍", regFormPass: "护照号码", regPassportUpload: "拍摄/上传护照照片", regMinorAlert: "未成年人需填监护人信息",
     ocrChecking: "正在本地识别证件...", ocrAutoFillSuccess: "已识别护照并自动填充护照号码。", ocrManualNeeded: "已检测到护照，但多次识别失败，请手动补充信息。", ocrInvalidDoc: "上传内容未通过证件校验，请上传护照照片或扫描件。", ocrFailed: "识别失败，请重试。", ocrUnsupported: "当前浏览器不支持本地OCR，已保留照片，请手动补充护照信息。",
     addGuest: "增加人员", guestLabel: "住客", petLabel: "宠物数量", countAdults: "住客人数 (成人/未成年)",
+    checkIn: "入住日期", checkOut: "退房日期",
     selectCountry: "选择国家/地区", detectedNationHint: "已识别国籍",
     customStepEmpty: "此步骤暂无内容。",
     steps: [
       { id: 'welcome', title: "欢迎入住", subtitle: "Welcome" },
       { id: 'count', title: "入住人数", subtitle: "Guest Count" },
+      { id: 'stayDuration', title: "入住时长", subtitle: "Stay Duration" },
       { id: 'registration', title: "住客信息登记", subtitle: "Osaka Regulation" },
       { id: 'emergency', title: "安全与紧急应对", subtitle: "Safety First" },
       { id: 'child', title: "婴儿与儿童安全", subtitle: "Child Protection" },
@@ -350,11 +356,13 @@ const translations = {
     regFormNation: "國籍", regFormPass: "護照號碼", regPassportUpload: "拍攝/上傳護照照片", regMinorAlert: "未成年人需填監護人資訊",
     ocrChecking: "正在本地辨識證件...", ocrAutoFillSuccess: "已辨識護照並自動填入護照號碼。", ocrManualNeeded: "已檢測到護照，但多次辨識失敗，請手動補充資訊。", ocrInvalidDoc: "上傳內容未通過證件校驗，請上傳護照照片或掃描件。", ocrFailed: "辨識失敗，請重試。", ocrUnsupported: "目前瀏覽器不支援本地OCR，已保留照片，請手動補充護照資訊。",
     addGuest: "增加人員", guestLabel: "住客", petLabel: "寵物數量", countAdults: "住客人數 (成人/未成年)",
+    checkIn: "入住日期", checkOut: "退房日期",
     selectCountry: "選擇國家/地區", detectedNationHint: "已辨識國籍",
     customStepEmpty: "此步驟目前沒有內容。",
     steps: [
       { id: 'welcome', title: "歡迎入住", subtitle: "Welcome" },
       { id: 'count', title: "入住人數", subtitle: "Guest Count" },
+      { id: 'stayDuration', title: "入住時長", subtitle: "Stay Duration" },
       { id: 'registration', title: "住客資訊登記", subtitle: "Osaka Regulation" },
       { id: 'emergency', title: "安全與緊急應對", subtitle: "Safety First" },
       { id: 'child', title: "嬰兒與兒童安全", subtitle: "Child Protection" },
@@ -375,11 +383,13 @@ const translations = {
     regFormNation: "Nationality", regFormPass: "Passport No.", regPassportUpload: "Upload passport photo", regMinorAlert: "Minors need guardian info",
     ocrChecking: "Running local document OCR...", ocrAutoFillSuccess: "Passport detected and number auto-filled.", ocrManualNeeded: "Passport detected, but OCR failed multiple times. Please enter the remaining fields manually.", ocrInvalidDoc: "Upload rejected: this image does not look like a passport document.", ocrFailed: "OCR failed. Please try again.", ocrUnsupported: "This browser does not support local OCR. Photo is kept, please complete passport details manually.",
     addGuest: "Add Guest", guestLabel: "Guest", petLabel: "Number of Pets", countAdults: "Guest Count (adult/minor)",
+    checkIn: "Check-in Date", checkOut: "Check-out Date",
     selectCountry: "Select country/region", detectedNationHint: "Detected nationality",
     customStepEmpty: "No content for this step yet.",
     steps: [
       { id: 'welcome', title: "Welcome", subtitle: "Welcome" },
       { id: 'count', title: "Guest Count", subtitle: "Guest Count" },
+      { id: 'stayDuration', title: "Stay Duration", subtitle: "Stay Duration" },
       { id: 'registration', title: "Registration", subtitle: "Osaka Regulation" },
       { id: 'emergency', title: "Emergency", subtitle: "Safety First" },
       { id: 'child', title: "Child Safety", subtitle: "Child Protection" },
@@ -400,11 +410,13 @@ const translations = {
     regFormNation: "国籍", regFormPass: "パスポート番号", regPassportUpload: "パスポート写真をアップロード", regMinorAlert: "未成年は保護者情報が必要",
     ocrChecking: "ローカルで書類をOCR中...", ocrAutoFillSuccess: "パスポートを検出し、番号を自動入力しました。", ocrManualNeeded: "パスポートは検出されましたが、OCRが複数回失敗しました。残りは手入力してください。", ocrInvalidDoc: "アップロード不可：パスポート画像/スキャンではありません。", ocrFailed: "OCRに失敗しました。再試行してください。", ocrUnsupported: "このブラウザはローカルOCRに未対応です。画像は保持したので、パスポート情報を手入力してください。",
     addGuest: "追加", guestLabel: "ゲスト", petLabel: "ペットの数", countAdults: "人数 (成人/未成年)",
+    checkIn: "チェックイン日", checkOut: "チェックアウト日",
     selectCountry: "国/地域を選択", detectedNationHint: "OCR検出の国籍",
     customStepEmpty: "このステップにはまだ内容がありません。",
     steps: [
       { id: 'welcome', title: "ようこそ", subtitle: "Welcome" },
       { id: 'count', title: "人数", subtitle: "Guest Count" },
+      { id: 'stayDuration', title: "宿泊日数", subtitle: "Stay Duration" },
       { id: 'registration', title: "登録", subtitle: "Osaka Regulation" },
       { id: 'emergency', title: "緊急", subtitle: "Safety First" },
       { id: 'child', title: "子どもの安全", subtitle: "Child Protection" },
@@ -425,11 +437,13 @@ const translations = {
     regFormNation: "국적", regFormPass: "여권 번호", regPassportUpload: "여권 사진 업로드", regMinorAlert: "미성년자는 보호자 정보 필요",
     ocrChecking: "로컬 OCR로 문서를 분석하는 중...", ocrAutoFillSuccess: "여권을 인식해 여권번호를 자동 입력했습니다.", ocrManualNeeded: "여권은 감지했지만 OCR이 여러 번 실패했습니다. 남은 정보는 수동 입력해 주세요.", ocrInvalidDoc: "업로드 거절: 여권 사진/스캔으로 확인되지 않았습니다.", ocrFailed: "OCR 실패. 다시 시도해 주세요.", ocrUnsupported: "현재 브라우저는 로컬 OCR을 지원하지 않습니다. 사진은 보관되며 여권 정보를 수동 입력해 주세요.",
     addGuest: "인원 추가", guestLabel: "게스트", petLabel: "반려동물 수", countAdults: "인원 수 (성인/미성년)",
+    checkIn: "체크인 날짜", checkOut: "체크아웃 날짜",
     selectCountry: "국가/지역 선택", detectedNationHint: "OCR 인식 국적",
     customStepEmpty: "이 단계에는 아직 내용이 없습니다.",
     steps: [
       { id: 'welcome', title: "환영", subtitle: "Welcome" },
       { id: 'count', title: "인원 수", subtitle: "Guest Count" },
+      { id: 'stayDuration', title: "숙박 기간", subtitle: "Stay Duration" },
       { id: 'registration', title: "등록", subtitle: "Osaka Regulation" },
       { id: 'emergency', title: "긴급", subtitle: "Safety First" },
       { id: 'child', title: "아동 안전", subtitle: "Child Protection" },
@@ -604,6 +618,8 @@ const App = () => {
   const [isCompleted, setIsCompleted] = useState(false);
   const [guests, setGuests] = useState([]);
   const [petCount, setPetCount] = useState(0);
+  const [checkInDate, setCheckInDate] = useState('');
+  const [checkOutDate, setCheckOutDate] = useState('');
   const [hasAgreed, setHasAgreed] = useState(false);
 
   // ----------------------------------------------------------------
@@ -621,6 +637,14 @@ const App = () => {
         const loadedGuests = savedGuests.map(g => ({ ...g, isEditable: false }));
         setGuests(loadedGuests);
       }
+      const savedPetCount = localStorage.getItem(PET_COUNT_STORAGE_KEY);
+      if (savedPetCount) setPetCount(parseInt(savedPetCount, 10) || 0);
+
+      const savedCheckIn = localStorage.getItem(CHECKIN_DATE_STORAGE_KEY);
+      if (savedCheckIn) setCheckInDate(savedCheckIn);
+
+      const savedCheckOut = localStorage.getItem(CHECKOUT_DATE_STORAGE_KEY);
+      if (savedCheckOut) setCheckOutDate(savedCheckOut);
     } else {
       setGuests([createGuestTemplate('adult')]);
     }
@@ -658,7 +682,12 @@ const App = () => {
     }
 
     setLoading(true);
-    const result = await DB.insertRecord({ guests: guestData, petCount });
+    const result = await DB.insertRecord({
+      guests: guestData,
+      petCount,
+      checkIn: checkInDate,
+      checkOut: checkOutDate
+    });
     setLoading(false);
     if (!result.success) {
       alert("提交失敗，請聯繫管理員 (Server Error)");
@@ -666,6 +695,10 @@ const App = () => {
     }
 
     localStorage.setItem(CHECKIN_STORAGE_KEY, 'true');
+    localStorage.setItem(PET_COUNT_STORAGE_KEY, petCount.toString());
+    localStorage.setItem(CHECKIN_DATE_STORAGE_KEY, checkInDate);
+    localStorage.setItem(CHECKOUT_DATE_STORAGE_KEY, checkOutDate);
+
     setGuests((prevGuests) => {
       const submittedIds = new Set(guestData.map((g) => g.id));
       const mergedGuests = prevGuests.map((guest) => (
@@ -677,19 +710,24 @@ const App = () => {
       return mergedGuests;
     });
     setHasHistory(true);
-    
+
     return true;
   };
-  
+
   // 新增：重置所有登記相關的狀態
   const resetCheckinProcess = () => {
     setGuests([createGuestTemplate('adult')]);
     setCurrentStep(0);
     setIsCompleted(false);
     setPetCount(0);
+    setCheckInDate('');
+    setCheckOutDate('');
     setHasAgreed(false);
     localStorage.removeItem(CHECKIN_STORAGE_KEY);
     localStorage.removeItem(GUEST_STORAGE_KEY);
+    localStorage.removeItem(PET_COUNT_STORAGE_KEY);
+    localStorage.removeItem(CHECKIN_DATE_STORAGE_KEY);
+    localStorage.removeItem(CHECKOUT_DATE_STORAGE_KEY);
     setHasHistory(false);
   };
 
@@ -754,6 +792,10 @@ const App = () => {
       setGuests={setGuests}
       petCount={petCount}
       setPetCount={setPetCount}
+      checkInDate={checkInDate}
+      setCheckInDate={setCheckInDate}
+      checkOutDate={checkOutDate}
+      setCheckOutDate={setCheckOutDate}
       hasAgreed={hasAgreed}
       setHasAgreed={setHasAgreed}
       hasHistory={hasHistory}
@@ -766,14 +808,16 @@ const App = () => {
 // ----------------------------------------------------------------------
 // 訪客端流程
 // ----------------------------------------------------------------------
-const GuestFlow = ({ 
-  onSubmit, 
+const GuestFlow = ({
+  onSubmit,
   isSubmitting,
   lang, setLang,
   currentStep, setCurrentStep,
   isCompleted, setIsCompleted,
   guests, setGuests,
   petCount, setPetCount,
+  checkInDate, setCheckInDate,
+  checkOutDate, setCheckOutDate,
   hasAgreed, setHasAgreed,
   hasHistory,
   onAdminRequest,
@@ -819,7 +863,7 @@ const GuestFlow = ({
 
   useEffect(() => {
     let isActive = true;
-    if (!lang) return () => {};
+    if (!lang) return () => { };
 
     DB.getCompletionTemplate(lang)
       .then((template) => {
@@ -1048,6 +1092,7 @@ const GuestFlow = ({
     switch (id) {
       case 'welcome': return <BellRing className="w-6 h-6" />;
       case 'count': return <Users className="w-6 h-6" />;
+      case 'stayDuration': return <Calendar className="w-6 h-6" />;
       case 'registration': return <UserCheck className="w-6 h-6" />;
       case 'emergency': return <AlertTriangle className="w-6 h-6" />;
       case 'child': return <Dog className="w-6 h-6" />;
@@ -1092,12 +1137,12 @@ const GuestFlow = ({
         <Languages className="w-6 h-6" />
         <span className="text-sm font-semibold">{t.changeLang}</span>
       </button>
-       {hasHistory && (
-         <button onClick={onStartNewCheckin} className="w-full flex items-center gap-3 p-3 rounded-lg text-rose-600 hover:bg-rose-50">
-           <UserPlus className="w-6 h-6" />
-           <span className="text-sm font-semibold">{t.startNewCheckin}</span>
-         </button>
-       )}
+      {hasHistory && (
+        <button onClick={onStartNewCheckin} className="w-full flex items-center gap-3 p-3 rounded-lg text-rose-600 hover:bg-rose-50">
+          <UserPlus className="w-6 h-6" />
+          <span className="text-sm font-semibold">{t.startNewCheckin}</span>
+        </button>
+      )}
     </div>
   );
 
@@ -1148,17 +1193,44 @@ const GuestFlow = ({
                   <div className="p-4 bg-slate-50 rounded-2xl flex items-center justify-between">
                     <div><p className="font-bold text-slate-800 text-sm">{t.countAdults}</p></div>
                     <div className="flex items-center gap-4">
-                      <button onClick={() => guests.length > 1 && removeGuest(guests[guests.length - 1].id)} className="w-8 h-8 rounded-full border border-slate-300">-</button>
+                      <button onClick={() => guests.length > 1 && removeGuest(guests[guests.length - 1].id)} disabled={hasHistory} className={`w-8 h-8 rounded-full border border-slate-300 ${hasHistory ? 'opacity-30 cursor-not-allowed' : ''}`}>-</button>
                       <span className="font-bold">{guests.length}</span>
-                      <button onClick={addGuest} className="w-8 h-8 rounded-full border border-slate-300">+</button>
+                      <button onClick={addGuest} disabled={hasHistory} className={`w-8 h-8 rounded-full border border-slate-300 ${hasHistory ? 'opacity-30 cursor-not-allowed' : ''}`}>+</button>
                     </div>
                   </div>
                   <div className="p-4 bg-slate-50 rounded-2xl flex items-center justify-between">
                     <div><p className="font-bold text-slate-800 text-sm">{t.petLabel}</p></div>
                     <div className="flex items-center gap-4">
-                      <button onClick={() => petCount > 0 && setPetCount(petCount - 1)} className="w-8 h-8 rounded-full border border-slate-300">-</button>
+                      <button onClick={() => petCount > 0 && setPetCount(petCount - 1)} disabled={hasHistory} className={`w-8 h-8 rounded-full border border-slate-300 ${hasHistory ? 'opacity-30 cursor-not-allowed' : ''}`}>-</button>
                       <span className="font-bold">{petCount}</span>
-                      <button onClick={() => setPetCount(petCount + 1)} className="w-8 h-8 rounded-full border border-slate-300">+</button>
+                      <button onClick={() => setPetCount(petCount + 1)} disabled={hasHistory} className={`w-8 h-8 rounded-full border border-slate-300 ${hasHistory ? 'opacity-30 cursor-not-allowed' : ''}`}>+</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {stepConfig.id === 'stayDuration' && (
+                <div className="space-y-4 py-4 animate-in fade-in slide-in-from-bottom-2">
+                  <div className="grid grid-cols-1 gap-4">
+                    <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100 space-y-2 box-border">
+                      <label className="text-[10px] font-black uppercase text-slate-400 ml-1 block">{t.checkIn}</label>
+                      <input
+                        type="date"
+                        value={checkInDate}
+                        onChange={(e) => setCheckInDate(e.target.value)}
+                        readOnly={hasHistory}
+                        className={`w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none focus:ring-2 focus:ring-slate-900 transition-all appearance-none ${hasHistory ? 'text-slate-400 cursor-default' : ''}`}
+                      />
+                    </div>
+                    <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100 space-y-2 box-border">
+                      <label className="text-[10px] font-black uppercase text-slate-400 ml-1 block">{t.checkOut}</label>
+                      <input
+                        type="date"
+                        value={checkOutDate}
+                        onChange={(e) => setCheckOutDate(e.target.value)}
+                        readOnly={hasHistory}
+                        className={`w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none focus:ring-2 focus:ring-slate-900 transition-all appearance-none ${hasHistory ? 'text-slate-400 cursor-default' : ''}`}
+                      />
                     </div>
                   </div>
                 </div>
@@ -1297,8 +1369,8 @@ const GuestFlow = ({
           </button>
           <button
             onClick={handleNext}
-            disabled={(stepConfig.id === 'registration' && !isRegValid()) || (stepConfig.id === 'rules' && !hasAgreed) || isSubmitting}
-            className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-2xl font-bold transition-all ${((stepConfig.id === 'registration' && !isRegValid()) || (stepConfig.id === 'rules' && !hasAgreed)) ? 'bg-slate-100 text-slate-300 cursor-not-allowed' : 'bg-slate-900 text-white shadow-lg hover:bg-slate-800'}`}
+            disabled={(stepConfig.id === 'registration' && !isRegValid()) || (stepConfig.id === 'stayDuration' && (!checkInDate || !checkOutDate)) || (stepConfig.id === 'rules' && !hasAgreed) || isSubmitting}
+            className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-2xl font-bold transition-all ${((stepConfig.id === 'registration' && !isRegValid()) || (stepConfig.id === 'stayDuration' && (!checkInDate || !checkOutDate)) || (stepConfig.id === 'rules' && !hasAgreed)) ? 'bg-slate-100 text-slate-300 cursor-not-allowed' : 'bg-slate-900 text-white shadow-lg hover:bg-slate-800'}`}
           >
             {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : (currentStep === steps.length - 1 ? t.finish : t.next)}
             {!isSubmitting && <ChevronRight className="w-5 h-5" />}

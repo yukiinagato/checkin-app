@@ -302,16 +302,16 @@ const solveMrzField = (rawString, expectedLength, fieldType) => {
     // 优先级 3: 修复校验位本身
     // 如果数据区都试过了还不行，那可能真的是校验位读错了
     const checkChar = cleaned[expectedLength - 1];
-    for (let i = 0; i <= 9; i++) {
-      const mut = String(i);
-      if (mut === checkChar) continue;
+    // 只从核心混淆字典取值（比如把 'O' 纠正为 '0'）
+    const validMutations = CORE_CONFUSION_DICT[checkChar] || [];
+    for (const mut of validMutations) {
+      if (mut === checkChar || !/[0-9]/.test(mut)) continue; // 校验位必须是数字
       const candidate = cleaned.substring(0, expectedLength - 1) + mut;
       if (verify(candidate)) {
-        console.log(`✅ [Solver V3] 精确纠错 (校验位): [${checkChar}] 修复为 [${mut}] -> 最终结果: ${candidate}`);
+        console.log(`✅ [Solver V3] 合法纠错 (校验位): [${checkChar}] 修复为 [${mut}] -> 最终结果: ${candidate}`);
         return { value: candidate, valid: true };
       }
     }
-  }
 
   // === 场景 B: 尾部截断漏字 (长度恰好少 1) ===
   if (cleaned.length === expectedLength - 1) {

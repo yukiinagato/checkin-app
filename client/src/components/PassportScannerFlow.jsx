@@ -312,6 +312,7 @@ const solveMrzField = (rawString, expectedLength, fieldType) => {
         return { value: candidate, valid: true };
       }
     }
+  }
 
   // === 场景 B: 尾部截断漏字 (长度恰好少 1) ===
   if (cleaned.length === expectedLength - 1) {

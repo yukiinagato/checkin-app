@@ -621,7 +621,6 @@ const App = () => {
   const [checkInDate, setCheckInDate] = useState('');
   const [checkOutDate, setCheckOutDate] = useState('');
   const [hasAgreed, setHasAgreed] = useState(false);
-  const [scannerGuestId, setScannerGuestId] = useState(null);
 
   // ----------------------------------------------------------------
   // 歷史記錄狀態管理
@@ -826,6 +825,7 @@ const GuestFlow = ({
 }) => {
   const [isLookingUpZip, setIsLookingUpZip] = useState(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [scannerGuestId, setScannerGuestId] = useState(null);
 
   useEffect(() => {
     if (guests.length === 0) {

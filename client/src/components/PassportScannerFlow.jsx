@@ -264,74 +264,86 @@ const verifySolvedField = (value, expectedLength) => {
  * @param {number} maxIters circuit-breaker max iterations
  * @returns {{ value: string, valid: boolean } | null}
  */
-const solveMrzField = (rawString, expectedLength, fieldType, maxIters = 10000) => {
+/**
+ * 基于优先级代价 (Heuristic Priority) 的确切性求解器
+ * 拒绝盲目 DFS，优先修复最符合人类与 OCR 视觉直觉的错误。
+ */
+const solveMrzField = (rawString, expectedLength, fieldType) => {
   const cleaned = normalizeValue(rawString).replace(/[^A-Z0-9<]/g, '');
-  console.log(`🔍 [Solver START] Field: ${fieldType} | Input: "${rawString}" -> Cleaned: "${cleaned}" | TargetLen: ${expectedLength}`);
-  
-  if (!cleaned) {
-    console.log(`❌ [Solver ABORT] Empty string after cleaning.`);
-    return null;
-  }
-  
-  const budget = { used: 0 };
+  console.log(`🔍 [Solver V3] Field: ${fieldType} | Input: "${cleaned}" | TargetLen: ${expectedLength}`);
+  if (!cleaned) return null;
 
-  const tryMutation = (seed, strategyName) => {
-    const s = normalizeValue(seed).replace(/[^A-Z0-9<]/g, '');
-    if (s.length !== expectedLength || budget.used >= maxIters) return null;
+  const verify = (str) => verifySolvedField(str, expectedLength);
+
+  // === 场景 A: 长度完美一致 ===
+  if (cleaned.length === expectedLength) {
     
-    // 注意：去掉了 slice(0,8)，保留全量候选
-    const candidateSets = s.split('').map((ch, idx) => buildMutationCandidates(ch, fieldType, idx === expectedLength - 1));
-    const stack = [{ idx: 0, value: '' }];
-    
-    while (stack.length > 0 && budget.used < maxIters) {
-      const current = stack.pop();
-      if (current.idx === expectedLength) {
-        budget.used += 1;
-        if (verifySolvedField(current.value, expectedLength)) {
-          console.log(`✅ [Solver SUCCESS] 破译成功！策略: [${strategyName}] | 消耗算力: ${budget.used}次 | 最终结果: ${current.value}`);
-          return { value: current.value, valid: true };
+    // 优先级 1: 完美匹配 (0 变异)
+    if (verify(cleaned)) {
+      console.log(`✅ [Solver V3] 完美匹配无须修改: ${cleaned}`);
+      return { value: cleaned, valid: true };
+    }
+
+    // 优先级 2: 修复数据区的 1 个易混淆字符 (例如 2 -> Z)
+    // 坚决不动校验位，逼迫算法向前寻找数据区的错误
+    for (let i = 0; i < expectedLength - 1; i++) {
+      const char = cleaned[i];
+      const mutations = CORE_CONFUSION_DICT[char] || [];
+      for (const mut of mutations) {
+        if (mut === char) continue;
+        const candidate = cleaned.substring(0, i) + mut + cleaned.substring(i + 1);
+        if (verify(candidate)) {
+          console.log(`✅ [Solver V3] 精确纠错 (数据区): 位置 ${i} 的 [${char}] 修复为 [${mut}] -> 最终结果: ${candidate}`);
+          return { value: candidate, valid: true };
         }
-        continue;
-      }
-      const options = candidateSets[current.idx];
-      for (let i = options.length - 1; i >= 0; i -= 1) {
-        stack.push({ idx: current.idx + 1, value: `${current.value}${options[i]}` });
       }
     }
-    console.log(`⚠️ [Solver FAILED] 策略 [${strategyName}] 耗尽算力 (${budget.used}次) 未找到匹配.`);
-    return null;
-  };
 
-  // 策略 A: 直接枚举
-  const direct = tryMutation(cleaned, 'A: Direct Mutation');
-  if (direct) return direct;
-
-  // 策略 B: 漏字插值
-  if (cleaned.length === expectedLength - 1 && budget.used < maxIters) {
-    console.log(`⚙️ [Solver B] 检测到漏字！当前长度 ${cleaned.length}，尝试在各个位置动态插入字符...`);
-    for (let insertAt = 0; insertAt <= cleaned.length; insertAt += 1) {
-      const insertionPool = fieldType === 'date' ? DIGITS : PASSPORT_BASE;
-      for (const inserted of insertionPool) {
-        const withInsert = `${cleaned.slice(0, insertAt)}${inserted}${cleaned.slice(insertAt)}`;
-        const solved = tryMutation(withInsert, `B: Insert '${inserted}' at idx ${insertAt}`);
-        if (solved) return solved;
+    // 优先级 3: 修复校验位本身
+    // 如果数据区都试过了还不行，那可能真的是校验位读错了
+    const checkChar = cleaned[expectedLength - 1];
+    for (let i = 0; i <= 9; i++) {
+      const mut = String(i);
+      if (mut === checkChar) continue;
+      const candidate = cleaned.substring(0, expectedLength - 1) + mut;
+      if (verify(candidate)) {
+        console.log(`✅ [Solver V3] 精确纠错 (校验位): [${checkChar}] 修复为 [${mut}] -> 最终结果: ${candidate}`);
+        return { value: candidate, valid: true };
       }
-      if (budget.used >= maxIters) break;
     }
   }
 
-  // 策略 C: 多字删除
-  if (cleaned.length === expectedLength + 1 && budget.used < maxIters) {
-    console.log(`⚙️ [Solver C] 检测到多字！当前长度 ${cleaned.length}，尝试动态删除干扰字符...`);
-    for (let removeAt = 0; removeAt < cleaned.length; removeAt += 1) {
-      const trimmed = `${cleaned.slice(0, removeAt)}${cleaned.slice(removeAt + 1)}`;
-      const solved = tryMutation(trimmed, `C: Delete char at idx ${removeAt}`);
-      if (solved) return solved;
-      if (budget.used >= maxIters) break;
+  // === 场景 B: 尾部截断漏字 (长度恰好少 1) ===
+  if (cleaned.length === expectedLength - 1) {
+    
+    // 优先级 4: 直接在尾部追加 0-9 测试 (解决 690316 -> 6903169 的问题)
+    for (let i = 0; i <= 9; i++) {
+      const candidate = cleaned + String(i);
+      if (verify(candidate)) {
+        console.log(`✅ [Solver V3] 截断补全成功: 在尾部追加 [${i}] -> 最终结果: ${candidate}`);
+        return { value: candidate, valid: true };
+      }
+    }
+
+    // 优先级 5: 复合修复 (数据区有 1 个错字 + 尾部缺 1 个字)
+    for (let pos = 0; pos < cleaned.length; pos++) {
+      const char = cleaned[pos];
+      const mutations = CORE_CONFUSION_DICT[char] || [];
+      for (const mut of mutations) {
+        if (mut === char) continue;
+        const fixedData = cleaned.substring(0, pos) + mut + cleaned.substring(pos + 1);
+        for (let i = 0; i <= 9; i++) {
+          const candidate = fixedData + String(i);
+          if (verify(candidate)) {
+            console.log(`✅ [Solver V3] 复合纠错成功: 修复位置 ${pos} [${char}->${mut}] 并追加尾部 [${i}] -> ${candidate}`);
+            return { value: candidate, valid: true };
+          }
+        }
+      }
     }
   }
 
-  console.log(`💀 [Solver ABORT] 破解彻底失败！"${cleaned}" 穷尽了所有策略。累计尝试: ${budget.used}次`);
+  console.log(`💀 [Solver V3] 束手无策: "${cleaned}" 无法通过现有规则推导。`);
   return null;
 };
 

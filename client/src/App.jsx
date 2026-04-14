@@ -899,16 +899,25 @@ const GuestFlow = ({
   const removeGuest = (id) => setGuests((prevGuests) => prevGuests.filter((guest) => guest.id !== id));
   const updateGuest = (id, field, value) => setGuests((prevGuests) => prevGuests.map((guest) => (guest.id === id ? { ...guest, [field]: value } : guest)));
 
-  const uploadAndOcrPassport = async (base64Image) => {
+  const uploadAndOcrPassport = async (base64Image, options = { strict: true }) => {
     const ocrResult = await DB.recognizePassport(base64Image);
-    if (!ocrResult?.isPassport) {
+    if (!ocrResult?.isPassport && options?.strict !== false) {
       throw new Error(t.ocrInvalidDoc);
     }
     return {
+      isPassport: Boolean(ocrResult?.isPassport),
       passportNumber: ocrResult.passportNumber || '',
       fullName: ocrResult.fullName || '',
       nationalityCode: ocrResult.nationalityCode || '',
-      birthDate: ocrResult.birthDate || ''
+      birthDate: ocrResult.birthDate || '',
+      sex: ocrResult.sex || '',
+      confidence: ocrResult.confidence,
+      viz: ocrResult.viz,
+      mrz: ocrResult.mrz,
+      mrzPassportNumber: ocrResult.mrzPassportNumber,
+      mrzBirthDate: ocrResult.mrzBirthDate,
+      mrzNationality: ocrResult.mrzNationality,
+      mrzSex: ocrResult.mrzSex
     };
   };
 
@@ -917,6 +926,8 @@ const GuestFlow = ({
 
     updateGuest(guestId, 'passportPhoto', payload.image || null);
     updateGuest(guestId, 'passportNumber', payload.passportNumber || '');
+    updateGuest(guestId, 'passportOcrStatus', 'processing');
+    updateGuest(guestId, 'passportOcrMessage', t.ocrChecking);
 
     if (payload.fullName) {
       updateGuest(guestId, 'name', payload.fullName);

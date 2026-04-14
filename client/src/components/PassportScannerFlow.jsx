@@ -16,13 +16,150 @@ const emptyForm = {
   passportNumber: '',
   fullName: '',
   nationalityCode: '',
-  birthDate: ''
+  birthDate: '',
+  sex: ''
 };
 
-const checkImageQuality = async (base64) => {
-  const minLength = 30_000;
-  await new Promise((resolve) => setTimeout(resolve, 60));
-  return base64.length > minLength;
+const normalizeValue = (value) => String(value || '').trim().toUpperCase();
+
+const pickFirst = (...values) => values.find((value) => value !== undefined && value !== null && String(value).trim() !== '');
+
+const buildObservation = (ocrRaw) => {
+  const viz = ocrRaw?.viz || {};
+  const mrz = ocrRaw?.mrz || {};
+  return {
+    isPassport: Boolean(ocrRaw?.isPassport),
+    fullName: normalizeValue(pickFirst(ocrRaw?.fullName, viz?.fullName, viz?.name)),
+    birthDate: normalizeValue(pickFirst(ocrRaw?.birthDate, viz?.birthDate, viz?.dateOfBirth, mrz?.birthDate)),
+    nationalityCode: normalizeValue(pickFirst(ocrRaw?.nationalityCode, viz?.nationalityCode, mrz?.nationalityCode)),
+    sex: normalizeValue(pickFirst(ocrRaw?.sex, viz?.sex, mrz?.sex)),
+    passportNumber: normalizeValue(pickFirst(ocrRaw?.passportNumber, viz?.passportNumber, mrz?.passportNumber)),
+    mrzPassportNumber: normalizeValue(pickFirst(ocrRaw?.mrzPassportNumber, mrz?.passportNumber)),
+    mrzBirthDate: normalizeValue(pickFirst(ocrRaw?.mrzBirthDate, mrz?.birthDate)),
+    mrzNationality: normalizeValue(pickFirst(ocrRaw?.mrzNationality, mrz?.nationalityCode)),
+    mrzSex: normalizeValue(pickFirst(ocrRaw?.mrzSex, mrz?.sex)),
+    mrzFullName: normalizeValue(pickFirst(ocrRaw?.mrzFullName, mrz?.fullName, mrz?.name)),
+    confidence: Number(ocrRaw?.confidence ?? 0.65)
+  };
+};
+
+const updateWeightedVote = (bucket, key, weight) => {
+  if (!key) return;
+  bucket.set(key, (bucket.get(key) || 0) + weight);
+};
+
+const getTopVote = (bucket) => {
+  let topKey = '';
+  let topScore = 0;
+  let total = 0;
+  bucket.forEach((score, key) => {
+    total += score;
+    if (score > topScore) {
+      topScore = score;
+      topKey = key;
+    }
+  });
+  return {
+    value: topKey,
+    score: topScore,
+    ratio: total > 0 ? topScore / total : 0
+  };
+};
+
+const createEmptyAccumulator = () => ({
+  attempts: 0,
+  votes: {
+    fullName: new Map(),
+    birthDate: new Map(),
+    nationalityCode: new Map(),
+    sex: new Map(),
+    passportNumber: new Map(),
+    mrzPassportNumber: new Map(),
+    mrzBirthDate: new Map(),
+    mrzNationality: new Map(),
+    mrzSex: new Map(),
+    mrzFullName: new Map()
+  }
+});
+
+const checkImageQuality = async (base64, recognizeFrame, accumulatorRef) => {
+  const ocrRaw = await recognizeFrame(base64);
+  const observation = buildObservation(ocrRaw || {});
+  if (!observation.isPassport) {
+    return { passed: false, reason: 'NOT_PASSPORT' };
+  }
+
+  const acc = accumulatorRef.current;
+  acc.attempts += 1;
+
+  const baseWeight = Math.min(Math.max(observation.confidence || 0.65, 0.25), 0.99);
+  const mrzBonus = observation.mrzPassportNumber && observation.mrzBirthDate ? 0.18 : 0;
+  const weight = baseWeight + mrzBonus;
+
+  Object.keys(acc.votes).forEach((field) => {
+    updateWeightedVote(acc.votes[field], observation[field], weight);
+  });
+
+  const consensus = {
+    fullName: getTopVote(acc.votes.fullName),
+    birthDate: getTopVote(acc.votes.birthDate),
+    nationalityCode: getTopVote(acc.votes.nationalityCode),
+    sex: getTopVote(acc.votes.sex),
+    passportNumber: getTopVote(acc.votes.passportNumber),
+    mrzPassportNumber: getTopVote(acc.votes.mrzPassportNumber),
+    mrzBirthDate: getTopVote(acc.votes.mrzBirthDate),
+    mrzNationality: getTopVote(acc.votes.mrzNationality),
+    mrzSex: getTopVote(acc.votes.mrzSex),
+    mrzFullName: getTopVote(acc.votes.mrzFullName)
+  };
+
+  const hasCoreFields = Boolean(
+    consensus.fullName.value &&
+    consensus.birthDate.value &&
+    consensus.nationalityCode.value &&
+    consensus.sex.value &&
+    consensus.passportNumber.value
+  );
+  const hasMrzFields = Boolean(
+    consensus.mrzPassportNumber.value &&
+    consensus.mrzBirthDate.value &&
+    consensus.mrzNationality.value &&
+    consensus.mrzSex.value
+  );
+  const crossValidated = Boolean(
+    hasCoreFields &&
+    hasMrzFields &&
+    consensus.passportNumber.value === consensus.mrzPassportNumber.value &&
+    consensus.birthDate.value === consensus.mrzBirthDate.value &&
+    consensus.nationalityCode.value === consensus.mrzNationality.value &&
+    consensus.sex.value === consensus.mrzSex.value &&
+    (!consensus.mrzFullName.value || consensus.fullName.value === consensus.mrzFullName.value)
+  );
+
+  const reliability = (
+    consensus.fullName.ratio * 0.18 +
+    consensus.birthDate.ratio * 0.2 +
+    consensus.nationalityCode.ratio * 0.16 +
+    consensus.sex.ratio * 0.12 +
+    consensus.passportNumber.ratio * 0.22 +
+    consensus.mrzPassportNumber.ratio * 0.12
+  );
+
+  const passed = acc.attempts >= 3 && crossValidated && reliability >= 0.82;
+
+  return {
+    passed,
+    attempts: acc.attempts,
+    reliability,
+    reason: passed ? '' : 'LOW_CONFIDENCE_OR_MISMATCH',
+    data: {
+      fullName: consensus.fullName.value,
+      birthDate: consensus.birthDate.value,
+      nationalityCode: consensus.nationalityCode.value,
+      sex: consensus.sex.value,
+      passportNumber: consensus.passportNumber.value
+    }
+  };
 };
 
 export default function PassportScannerFlow({ isOpen, onClose, uploadAndOcrPassport, onApply }) {
@@ -44,6 +181,9 @@ export default function PassportScannerFlow({ isOpen, onClose, uploadAndOcrPassp
   const [detectedForm, setDetectedForm] = useState(emptyForm);
   const [guests, setGuests] = useState([]);
   const [errorMessage, setErrorMessage] = useState('');
+  const [scanHint, setScanHint] = useState('正在持续检测，请保持护照稳定。');
+  const accumulatorRef = useRef(createEmptyAccumulator());
+  const recognizedDuringScanRef = useRef(null);
 
   const isVisible = isOpen;
 
@@ -52,6 +192,9 @@ export default function PassportScannerFlow({ isOpen, onClose, uploadAndOcrPassp
     setBase64Image('');
     setDetectedForm(emptyForm);
     setErrorMessage('');
+    setScanHint('正在持续检测，请保持护照稳定。');
+    accumulatorRef.current = createEmptyAccumulator();
+    recognizedDuringScanRef.current = null;
   };
 
   useEffect(() => {
@@ -91,6 +234,9 @@ export default function PassportScannerFlow({ isOpen, onClose, uploadAndOcrPassp
 
   const startScanningLoop = async () => {
     setErrorMessage('');
+    setScanHint('正在持续检测，请保持护照稳定。');
+    accumulatorRef.current = createEmptyAccumulator();
+    recognizedDuringScanRef.current = null;
     setScanState(PassportScanState.SCANNING);
     await startCamera();
 
@@ -98,14 +244,27 @@ export default function PassportScannerFlow({ isOpen, onClose, uploadAndOcrPassp
       const frame = captureFrame();
       if (!frame) return;
 
-      const passed = await checkImageQuality(frame);
-      if (!passed) return;
+      try {
+        const result = await checkImageQuality(
+          frame,
+          (imageBase64) => uploadAndOcrPassport(imageBase64, { strict: false }),
+          accumulatorRef
+        );
+        if (!result.passed) {
+          const attemptText = result.attempts ? `（第 ${result.attempts} 次识别）` : '';
+          setScanHint(`持续识别中${attemptText}：需匹配姓名/出生日期/国籍/性别与MRZ机读码。`);
+          return;
+        }
 
-      clearInterval(scanTimerRef.current);
-      scanTimerRef.current = null;
-      stopCamera();
-      setBase64Image(frame);
-      setScanState(PassportScanState.PROCESSING);
+        recognizedDuringScanRef.current = result.data;
+        clearInterval(scanTimerRef.current);
+        scanTimerRef.current = null;
+        stopCamera();
+        setBase64Image(frame);
+        setScanState(PassportScanState.PROCESSING);
+      } catch (error) {
+        setScanHint('识别中，正在自动重试...');
+      }
     }, 500);
   };
 
@@ -131,11 +290,19 @@ export default function PassportScannerFlow({ isOpen, onClose, uploadAndOcrPassp
 
       try {
         const ocr = await uploadAndOcrPassport(base64Image);
+        const merged = {
+          passportNumber: pickFirst(recognizedDuringScanRef.current?.passportNumber, ocr.passportNumber),
+          fullName: pickFirst(recognizedDuringScanRef.current?.fullName, ocr.fullName),
+          nationalityCode: pickFirst(recognizedDuringScanRef.current?.nationalityCode, ocr.nationalityCode),
+          birthDate: pickFirst(recognizedDuringScanRef.current?.birthDate, ocr.birthDate),
+          sex: pickFirst(recognizedDuringScanRef.current?.sex, ocr.sex)
+        };
         setDetectedForm({
-          passportNumber: ocr.passportNumber || '',
-          fullName: ocr.fullName || '',
-          nationalityCode: ocr.nationalityCode || '',
-          birthDate: ocr.birthDate || ''
+          passportNumber: merged.passportNumber || '',
+          fullName: merged.fullName || '',
+          nationalityCode: merged.nationalityCode || '',
+          birthDate: merged.birthDate || '',
+          sex: merged.sex || ''
         });
         setScanState(PassportScanState.VERIFYING);
       } catch (error) {
@@ -216,7 +383,7 @@ export default function PassportScannerFlow({ isOpen, onClose, uploadAndOcrPassp
                 手動拍照/上傳
               </button>
             </div>
-            <p className="text-xs text-slate-500">系統會每 500ms 自動檢測畫質，通過後將自動進入識別。</p>
+            <p className="text-xs text-slate-500">{scanHint}</p>
             <canvas ref={canvasRef} className="hidden" />
           </div>
         )}
@@ -257,6 +424,8 @@ export default function PassportScannerFlow({ isOpen, onClose, uploadAndOcrPassp
               <input value={detectedForm.nationalityCode} onChange={(e) => setDetectedForm((prev) => ({ ...prev, nationalityCode: e.target.value }))} className="w-full p-3 rounded-xl border border-slate-200 text-sm" />
               <label className="text-xs text-slate-500 block">出生日期</label>
               <input value={detectedForm.birthDate} onChange={(e) => setDetectedForm((prev) => ({ ...prev, birthDate: e.target.value }))} className="w-full p-3 rounded-xl border border-slate-200 text-sm" />
+              <label className="text-xs text-slate-500 block">性別</label>
+              <input value={detectedForm.sex} onChange={(e) => setDetectedForm((prev) => ({ ...prev, sex: e.target.value }))} className="w-full p-3 rounded-xl border border-slate-200 text-sm" />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <button onClick={handleConfirm} className="py-3 rounded-xl bg-emerald-600 text-white font-semibold flex items-center justify-center gap-2"><CheckCircle2 className="w-4 h-4" />確認無誤</button>

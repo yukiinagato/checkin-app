@@ -86,3 +86,23 @@ body {
 .animate-shake {
   animation: shake 0.3s ease-in-out;
 }
+
+@keyframes passport-scan-line {
+  0% {
+    transform: translateY(0);
+    opacity: 0.3;
+  }
+
+  50% {
+    opacity: 1;
+  }
+
+  100% {
+    transform: translateY(220px);
+    opacity: 0.3;
+  }
+}
+
+.animate-scan-line {
+  animation: passport-scan-line 2s ease-in-out infinite;
+}

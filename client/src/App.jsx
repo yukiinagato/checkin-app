@@ -27,7 +27,7 @@ import {
 } from 'lucide-react';
 import AdminPage from './AdminPage';
 import { isRegistrationValid } from './formValidation';
-import { fileToBase64, runLocalPassportOCR } from './passportOcr';
+import PassportScannerFlow from './components/PassportScannerFlow';
 
 // ----------------------------------------------------------------------
 // 輔助函數與常量
@@ -621,6 +621,7 @@ const App = () => {
   const [checkInDate, setCheckInDate] = useState('');
   const [checkOutDate, setCheckOutDate] = useState('');
   const [hasAgreed, setHasAgreed] = useState(false);
+  const [scannerGuestId, setScannerGuestId] = useState(null);
 
   // ----------------------------------------------------------------
   // 歷史記錄狀態管理
@@ -898,92 +899,39 @@ const GuestFlow = ({
   const removeGuest = (id) => setGuests((prevGuests) => prevGuests.filter((guest) => guest.id !== id));
   const updateGuest = (id, field, value) => setGuests((prevGuests) => prevGuests.map((guest) => (guest.id === id ? { ...guest, [field]: value } : guest)));
 
-  const handlePassportUpload = async (guestId, file) => {
-    if (!file) return;
-
-    console.debug('[PassportOCR] upload-start', {
-      guestId,
-      name: file.name,
-      type: file.type,
-      size: file.size
-    });
-
-    updateGuest(guestId, 'passportPhoto', null);
-    updateGuest(guestId, 'passportOcrStatus', 'idle');
-    updateGuest(guestId, 'passportOcrMessage', '');
-    updateGuest(guestId, 'passportOcrStatus', 'processing');
-    updateGuest(guestId, 'passportOcrMessage', t.ocrChecking);
-
-    try {
-      const base64 = await fileToBase64(file);
-
-      let ocrResult;
-      try {
-        ocrResult = await DB.recognizePassport(base64);
-      } catch (apiError) {
-        console.warn('[PassportOCR] server-paddleocr-failed-fallback-local', { guestId, apiError });
-        ocrResult = await runLocalPassportOCR(file);
-      }
-
-      console.debug('[PassportOCR] ocr-result', {
-        guestId,
-        success: ocrResult.success,
-        isPassport: ocrResult.isPassport,
-        passportNumber: ocrResult.passportNumber,
-        attempts: ocrResult.attempts
-      });
-
-      if (ocrResult.unsupported) {
-        console.warn('[PassportOCR] local-ocr-unsupported-fallback', { guestId });
-        updateGuest(guestId, 'passportPhoto', base64);
-        updateGuest(guestId, 'passportOcrStatus', 'manual-required');
-        updateGuest(guestId, 'passportOcrMessage', t.ocrUnsupported);
-        return;
-      }
-
-      if (!ocrResult.isPassport) {
-        console.debug('[PassportOCR] rejected-non-passport', { guestId });
-        updateGuest(guestId, 'passportPhoto', null);
-        updateGuest(guestId, 'passportOcrStatus', 'failed');
-        updateGuest(guestId, 'passportOcrMessage', t.ocrInvalidDoc);
-        return;
-      }
-
-      updateGuest(guestId, 'passportPhoto', base64);
-
-      if (ocrResult.fullName) {
-        updateGuest(guestId, 'name', ocrResult.fullName);
-      }
-      if (Number.isInteger(ocrResult.age) && ocrResult.age >= 0 && ocrResult.age <= 120) {
-        updateGuest(guestId, 'age', String(ocrResult.age));
-      }
-
-      const resolvedNationality = resolveNationalityForForm(ocrResult);
-      if (resolvedNationality.nationality) {
-        updateGuest(guestId, 'nationality', resolvedNationality.nationality);
-        updateGuest(guestId, 'nationalityDetected', resolvedNationality.nationalityDetected);
-      }
-
-      if (ocrResult.passportNumber) {
-        console.debug('[PassportOCR] auto-filled-passport-number', {
-          guestId,
-          passportNumber: ocrResult.passportNumber
-        });
-        updateGuest(guestId, 'passportNumber', ocrResult.passportNumber);
-        updateGuest(guestId, 'passportOcrStatus', 'success');
-        updateGuest(guestId, 'passportOcrMessage', t.ocrAutoFillSuccess);
-        return;
-      }
-
-      console.debug('[PassportOCR] manual-entry-required', { guestId });
-      updateGuest(guestId, 'passportOcrStatus', 'manual-required');
-      updateGuest(guestId, 'passportOcrMessage', t.ocrManualNeeded);
-    } catch (error) {
-      console.error('[PassportOCR] upload-failed', { guestId, error });
-      updateGuest(guestId, 'passportPhoto', null);
-      updateGuest(guestId, 'passportOcrStatus', 'failed');
-      updateGuest(guestId, 'passportOcrMessage', t.ocrFailed);
+  const uploadAndOcrPassport = async (base64Image) => {
+    const ocrResult = await DB.recognizePassport(base64Image);
+    if (!ocrResult?.isPassport) {
+      throw new Error(t.ocrInvalidDoc);
     }
+    return {
+      passportNumber: ocrResult.passportNumber || '',
+      fullName: ocrResult.fullName || '',
+      nationalityCode: ocrResult.nationalityCode || '',
+      birthDate: ocrResult.birthDate || ''
+    };
+  };
+
+  const applyPassportScanResult = (guestId, payload) => {
+    if (!guestId || !payload) return;
+
+    updateGuest(guestId, 'passportPhoto', payload.image || null);
+    updateGuest(guestId, 'passportNumber', payload.passportNumber || '');
+
+    if (payload.fullName) {
+      updateGuest(guestId, 'name', payload.fullName);
+    }
+
+    if (payload.nationalityCode) {
+      const resolvedNationality = resolveNationalityForForm({
+        nationalityCode: payload.nationalityCode
+      });
+      updateGuest(guestId, 'nationality', resolvedNationality.nationality || '');
+      updateGuest(guestId, 'nationalityDetected', resolvedNationality.nationalityDetected || '');
+    }
+
+    updateGuest(guestId, 'passportOcrStatus', 'success');
+    updateGuest(guestId, 'passportOcrMessage', t.ocrAutoFillSuccess);
   };
 
   const lookupZipCode = async (guestId, zip) => {
@@ -1316,18 +1264,15 @@ const GuestFlow = ({
                               <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormPass}</label>
                               <input disabled={!guest.isEditable} type="text" value={guest.passportNumber} onChange={(e) => updateGuest(guest.id, 'passportNumber', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm disabled:bg-slate-100" />
                             </div>
-                            <div className="col-span-2 relative space-y-2">
-                              <input
+                            <div className="col-span-2 space-y-2">
+                              <button
                                 disabled={!guest.isEditable || guest.passportOcrStatus === 'processing'}
-                                type="file"
-                                accept="image/*"
-                                className="absolute inset-0 w-full h-full opacity-0 z-10 cursor-pointer"
-                                onChange={(e) => handlePassportUpload(guest.id, e.target.files?.[0])}
-                              />
-                              <div className={`p-4 border-2 border-dashed rounded-xl flex items-center justify-center gap-2 ${guest.passportPhoto ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-slate-100 text-slate-300'}`}>
+                                onClick={() => setScannerGuestId(guest.id)}
+                                className={`w-full p-4 border-2 border-dashed rounded-xl flex items-center justify-center gap-2 transition-colors ${guest.passportPhoto ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-slate-100 text-slate-400 hover:border-slate-300'} disabled:opacity-60`}
+                              >
                                 {guest.passportOcrStatus === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
-                                <span className="text-[10px] font-bold uppercase">{guest.passportPhoto ? 'Uploaded' : t.regPassportUpload}</span>
-                              </div>
+                                <span className="text-[10px] font-bold uppercase">{guest.passportPhoto ? 'Uploaded' : 'Scan / Upload Passport'}</span>
+                              </button>
                               {guest.passportOcrMessage && (
                                 <p className={`text-[11px] ${guest.passportOcrStatus === 'failed' ? 'text-rose-500' : guest.passportOcrStatus === 'manual-required' ? 'text-amber-600' : 'text-emerald-600'}`}>{guest.passportOcrMessage}</p>
                               )}
@@ -1376,6 +1321,12 @@ const GuestFlow = ({
             {!isSubmitting && <ChevronRight className="w-5 h-5" />}
           </button>
         </div>
+        <PassportScannerFlow
+          isOpen={Boolean(scannerGuestId)}
+          onClose={() => setScannerGuestId(null)}
+          uploadAndOcrPassport={uploadAndOcrPassport}
+          onApply={(payload) => applyPassportScanResult(scannerGuestId, payload)}
+        />
       </div>
     </div >
   );

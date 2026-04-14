@@ -272,7 +272,7 @@ const solveMrzField = (rawString, expectedLength, fieldType, maxIters = 10000) =
   const tryMutation = (seed) => {
     const s = normalizeValue(seed).replace(/[^A-Z0-9<]/g, '');
     if (s.length !== expectedLength || budget.used >= maxIters) return null;
-    const candidateSets = s.split('').map((ch, idx) => buildMutationCandidates(ch, fieldType, idx === expectedLength - 1);
+    const candidateSets = s.split('').map((ch, idx) => buildMutationCandidates(ch, fieldType, idx === expectedLength - 1));
     const stack = [{ idx: 0, value: '' }];
     while (stack.length > 0 && budget.used < maxIters) {
       const current = stack.pop();

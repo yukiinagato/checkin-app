@@ -266,20 +266,29 @@ const verifySolvedField = (value, expectedLength) => {
  */
 const solveMrzField = (rawString, expectedLength, fieldType, maxIters = 10000) => {
   const cleaned = normalizeValue(rawString).replace(/[^A-Z0-9<]/g, '');
-  if (!cleaned) return null;
+  console.log(`🔍 [Solver START] Field: ${fieldType} | Input: "${rawString}" -> Cleaned: "${cleaned}" | TargetLen: ${expectedLength}`);
+  
+  if (!cleaned) {
+    console.log(`❌ [Solver ABORT] Empty string after cleaning.`);
+    return null;
+  }
+  
   const budget = { used: 0 };
 
-  const tryMutation = (seed) => {
+  const tryMutation = (seed, strategyName) => {
     const s = normalizeValue(seed).replace(/[^A-Z0-9<]/g, '');
     if (s.length !== expectedLength || budget.used >= maxIters) return null;
+    
+    // 注意：去掉了 slice(0,8)，保留全量候选
     const candidateSets = s.split('').map((ch, idx) => buildMutationCandidates(ch, fieldType, idx === expectedLength - 1));
     const stack = [{ idx: 0, value: '' }];
+    
     while (stack.length > 0 && budget.used < maxIters) {
       const current = stack.pop();
-      if (!current) break;
       if (current.idx === expectedLength) {
         budget.used += 1;
         if (verifySolvedField(current.value, expectedLength)) {
+          console.log(`✅ [Solver SUCCESS] 破译成功！策略: [${strategyName}] | 消耗算力: ${budget.used}次 | 最终结果: ${current.value}`);
           return { value: current.value, valid: true };
         }
         continue;
@@ -289,51 +298,68 @@ const solveMrzField = (rawString, expectedLength, fieldType, maxIters = 10000) =
         stack.push({ idx: current.idx + 1, value: `${current.value}${options[i]}` });
       }
     }
+    console.log(`⚠️ [Solver FAILED] 策略 [${strategyName}] 耗尽算力 (${budget.used}次) 未找到匹配.`);
     return null;
   };
 
-  // Strategy A: direct bidirectional mutation
-  const direct = tryMutation(cleaned);
+  // 策略 A: 直接枚举
+  const direct = tryMutation(cleaned, 'A: Direct Mutation');
   if (direct) return direct;
 
-  // Strategy B: missing-character interpolation
+  // 策略 B: 漏字插值
   if (cleaned.length === expectedLength - 1 && budget.used < maxIters) {
+    console.log(`⚙️ [Solver B] 检测到漏字！当前长度 ${cleaned.length}，尝试在各个位置动态插入字符...`);
     for (let insertAt = 0; insertAt <= cleaned.length; insertAt += 1) {
       const insertionPool = fieldType === 'date' ? DIGITS : PASSPORT_BASE;
       for (const inserted of insertionPool) {
         const withInsert = `${cleaned.slice(0, insertAt)}${inserted}${cleaned.slice(insertAt)}`;
-        const solved = tryMutation(withInsert);
+        const solved = tryMutation(withInsert, `B: Insert '${inserted}' at idx ${insertAt}`);
         if (solved) return solved;
       }
       if (budget.used >= maxIters) break;
     }
   }
 
-  // Strategy C: extra-character deletion
+  // 策略 C: 多字删除
   if (cleaned.length === expectedLength + 1 && budget.used < maxIters) {
+    console.log(`⚙️ [Solver C] 检测到多字！当前长度 ${cleaned.length}，尝试动态删除干扰字符...`);
     for (let removeAt = 0; removeAt < cleaned.length; removeAt += 1) {
       const trimmed = `${cleaned.slice(0, removeAt)}${cleaned.slice(removeAt + 1)}`;
-      const solved = tryMutation(trimmed);
+      const solved = tryMutation(trimmed, `C: Delete char at idx ${removeAt}`);
       if (solved) return solved;
       if (budget.used >= maxIters) break;
     }
   }
 
+  console.log(`💀 [Solver ABORT] 破解彻底失败！"${cleaned}" 穷尽了所有策略。累计尝试: ${budget.used}次`);
   return null;
 };
 
 const parseTd3FromConsensus = (line1, line2) => {
+  console.log(`\n=================== [ 解析器启动 ] ===================`);
+  console.log(`📥 [共识输入] L1: ${line1}`);
+  console.log(`📥 [共识输入] L2: ${line2}`);
+
   const l1 = normalizeTo44(line1);
   const l2 = normalizeTo44(line2);
+  
+  console.log(`📐 [填充至44位] L2: ${l2}`);
 
+  // 1. 获取原始切片
   const passportRawSlice = l2.slice(0, 10);
   const birthRawSlice = l2.slice(13, 20);
   const expiryRawSlice = l2.slice(21, 28);
 
+  // 2. 剥离人工补齐的干扰符
   const passportClean = passportRawSlice.replace(/<+$/, '');
   const birthClean = birthRawSlice.replace(/</g, '');
   const expiryClean = expiryRawSlice.replace(/</g, '');
 
+  console.log(`✂️ [切片 - 护照号] 原始: "${passportRawSlice}" -> 净化: "${passportClean}"`);
+  console.log(`✂️ [切片 - 出生日] 原始: "${birthRawSlice}"   -> 净化: "${birthClean}"`);
+  console.log(`✂️ [切片 - 有效期] 原始: "${expiryRawSlice}"  -> 净化: "${expiryClean}"`);
+
+  // 3. 求解
   const passportSolved = solveMrzField(passportClean, 10, 'passport');
   
   const birthSolved = birthClean.length === 0 
@@ -344,8 +370,13 @@ const parseTd3FromConsensus = (line1, line2) => {
     ? { valid: true, value: '' } 
     : solveMrzField(expiryClean, 7, 'date');
 
-  const name = l1.slice(5).replace(/<+/g, ' ').trim();
+  const isValid = Boolean(passportSolved?.valid && birthSolved?.valid && expirySolved?.valid);
   
+  console.log(`🏁 [最终判决] 护照:${Boolean(passportSolved?.valid)} | 出生:${Boolean(birthSolved?.valid)} | 有效期:${Boolean(expirySolved?.valid)}`);
+  console.log(`💡 [总体验证结果] -> ${isValid ? '🟢 完美通过' : '🔴 校验失败'}`);
+  console.log(`======================================================\n`);
+
+  const name = l1.slice(5).replace(/<+/g, ' ').trim();
   return {
     passportNumber: (passportSolved?.value || passportClean).slice(0, 9).replace(/</g, ''),
     birthDate: (birthSolved?.value || birthClean).slice(0, 6),
@@ -353,7 +384,7 @@ const parseTd3FromConsensus = (line1, line2) => {
     sex: l2.slice(20, 21).replace('<', ''),
     nationalityCode: l2.slice(10, 13).replace(/</g, ''),
     fullName: name,
-    checksumValid: Boolean(passportSolved?.valid && birthSolved?.valid && expirySolved?.valid)
+    checksumValid: isValid
   };
 };
 
@@ -433,6 +464,7 @@ const checkImageQuality = async (base64, recognizeFrame, accumulatorRef) => {
     if (!acc.mrzReferenceLine1) {
       acc.mrzReferenceLine1 = normalizeTo44(observation.mrzLine1);
       acc.mrzReferenceLine2 = normalizeTo44(observation.mrzLine2);
+      console.log(`🎯 [LCS 基准锁定!] 以后所有的帧都会按这行对齐: ${acc.mrzReferenceLine2}`);
     }
     const aligned1 = alignWithLcsToReference(acc.mrzReferenceLine1, observation.mrzLine1);
     const aligned2 = alignWithLcsToReference(acc.mrzReferenceLine2, observation.mrzLine2);

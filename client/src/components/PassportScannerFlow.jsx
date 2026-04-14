@@ -272,7 +272,7 @@ const solveMrzField = (rawString, expectedLength, fieldType, maxIters = 10000) =
   const tryMutation = (seed) => {
     const s = normalizeValue(seed).replace(/[^A-Z0-9<]/g, '');
     if (s.length !== expectedLength || budget.used >= maxIters) return null;
-    const candidateSets = s.split('').map((ch, idx) => buildMutationCandidates(ch, fieldType, idx === expectedLength - 1).slice(0, 8));
+    const candidateSets = s.split('').map((ch, idx) => buildMutationCandidates(ch, fieldType, idx === expectedLength - 1);
     const stack = [{ idx: 0, value: '' }];
     while (stack.length > 0 && budget.used < maxIters) {
       const current = stack.pop();
@@ -322,36 +322,34 @@ const solveMrzField = (rawString, expectedLength, fieldType, maxIters = 10000) =
   return null;
 };
 
-const parseTd3FromConsensus = (line1, line2, line2Pools) => {
+const parseTd3FromConsensus = (line1, line2) => {
   const l1 = normalizeTo44(line1);
   const l2 = normalizeTo44(line2);
-  const trimArtificialPadding = (rawSlice, poolSlice) => {
-    if (!rawSlice) return { empty: true, raw: '' };
-    const isFullyMissing = rawSlice.split('').every((ch, idx) => {
-      if (ch !== '<') return false;
-      const options = poolSlice?.[idx] || [];
-      return options.length === 0 || options.every((opt) => opt.char === '<');
-    });
-    if (isFullyMissing) return { empty: true, raw: '' };
-    return { empty: false, raw: rawSlice.replace(/<+$/g, '') };
-  };
 
-  const passportSlice = `${l2.slice(0, 9).split('').map(whitelistPassportChar).join('')}${whitelistMrzDateChar(l2.slice(9, 10))}`;
-  const birthSliceRaw = `${l2.slice(13, 19).split('').map(whitelistMrzDateChar).join('')}${whitelistMrzDateChar(l2.slice(19, 20))}`;
-  const expirySliceRaw = `${l2.slice(21, 27).split('').map(whitelistMrzDateChar).join('')}${whitelistMrzDateChar(l2.slice(27, 28))}`;
+  const passportRawSlice = l2.slice(0, 10);
+  const birthRawSlice = l2.slice(13, 20);
+  const expiryRawSlice = l2.slice(21, 28);
 
-  const birthSlice = trimArtificialPadding(birthSliceRaw, line2Pools?.slice(13, 20));
-  const expirySlice = trimArtificialPadding(expirySliceRaw, line2Pools?.slice(21, 28));
+  const passportClean = passportRawSlice.replace(/<+$/, '');
+  const birthClean = birthRawSlice.replace(/</g, '');
+  const expiryClean = expiryRawSlice.replace(/</g, '');
 
-  const passportSolved = solveMrzField(passportSlice, 10, 'passport');
-  const birthSolved = birthSlice.empty ? { valid: true, value: '' } : solveMrzField(birthSlice.raw, 7, 'date');
-  const expirySolved = expirySlice.empty ? { valid: true, value: '' } : solveMrzField(expirySlice.raw, 7, 'date');
+  const passportSolved = solveMrzField(passportClean, 10, 'passport');
+  
+  const birthSolved = birthClean.length === 0 
+    ? { valid: true, value: '' } 
+    : solveMrzField(birthClean, 7, 'date');
+    
+  const expirySolved = expiryClean.length === 0 
+    ? { valid: true, value: '' } 
+    : solveMrzField(expiryClean, 7, 'date');
 
   const name = l1.slice(5).replace(/<+/g, ' ').trim();
+  
   return {
-    passportNumber: (passportSolved?.value || passportSlice).slice(0, 9).replace(/</g, ''),
-    birthDate: (birthSolved?.value || '').slice(0, 6),
-    expiryDate: (expirySolved?.value || '').slice(0, 6),
+    passportNumber: (passportSolved?.value || passportClean).slice(0, 9).replace(/</g, ''),
+    birthDate: (birthSolved?.value || birthClean).slice(0, 6),
+    expiryDate: (expirySolved?.value || expiryClean).slice(0, 6),
     sex: l2.slice(20, 21).replace('<', ''),
     nationalityCode: l2.slice(10, 13).replace(/</g, ''),
     fullName: name,
@@ -442,7 +440,7 @@ const checkImageQuality = async (base64, recognizeFrame, accumulatorRef) => {
     voteLine(acc.mrzVotesLine2, aligned2, observation.confidence || 0.6);
     const consensusLine1 = composeConsensusLine(acc.mrzVotesLine1, (ch) => (/[A-Z<]/.test(ch) ? ch : '<'));
     const consensusLine2 = composeConsensusLine(acc.mrzVotesLine2, (ch) => (/[A-Z0-9<]/.test(ch) ? ch : '<'));
-    const td3 = parseTd3FromConsensus(consensusLine1.line, consensusLine2.line, consensusLine2.pools);
+    const td3 = parseTd3FromConsensus(consensusLine1.line, consensusLine2.line);
     if (td3.checksumValid) {
       observation.checksumValid = true;
       observation.isPassport = true;

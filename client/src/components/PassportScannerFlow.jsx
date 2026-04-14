@@ -115,16 +115,24 @@ const extractMrzLinesFromText = (text) => {
   if (!text) return null;
   const lines = text
     .split('\n')
-    .map((line) => normalizeValue(line).replace(/\s+/g, ''))
+    .map((line) => normalizeValue(line).replace(/\s+/g, '').replace(/[^A-Z0-9<]/g, ''))
     .filter(Boolean);
-  const candidates = lines
-    .filter((line) => /[<]/.test(line))
-    .map((line) => line.replace(/[^A-Z0-9<]/g, ''))
-    .filter((line) => line.length >= 40 && line.length <= 44 && (line.match(/</g) || []).length >= 2);
-  if (candidates.length < 2) return null;
+
+  const line1Candidates = lines
+    .filter((line) => line.startsWith('P<') && line.length >= 25)
+    .sort((a, b) => b.length - a.length);
+
+  const line2Candidates = lines
+    .filter((line) => !line.startsWith('P<') && line.length >= 28 && (line.match(/</g) || []).length >= 2)
+    .sort((a, b) => b.length - a.length);
+
+  const line1 = line1Candidates[0];
+  const line2 = line2Candidates[0];
+  if (!line1 || !line2) return null;
+
   return {
-    line1: candidates[candidates.length - 2],
-    line2: candidates[candidates.length - 1]
+    line1,
+    line2
   };
 };
 
@@ -132,9 +140,8 @@ const initVotes44 = () => Array.from({ length: 44 }, () => new Map());
 
 const normalizeTo44 = (line) => {
   const compact = normalizeValue(line).replace(/[^A-Z0-9<]/g, '');
-  if (compact.length === 44) return compact;
-  if (compact.length > 44) return compact.slice(0, 44);
-  return `${compact}${'<'.repeat(44 - compact.length)}`;
+  if (compact.length >= 44) return compact.slice(0, 44);
+  return compact.padEnd(44, '<');
 };
 
 const alignWithLcsToReference = (reference, source) => {

@@ -295,6 +295,13 @@ export default function PassportScannerFlow({ isOpen, onClose, uploadAndOcrPassp
 
   const fileInputRef = useRef(null);
   const scanTimerRef = useRef(null);
+  const scanningStartedAtRef = useRef(0);
+  const lastRequestAtRef = useRef(0);
+  const requestIntervalMsRef = useRef(3000);
+  const overlapAttemptsRef = useRef(0);
+  const pendingRequestsRef = useRef(0);
+  const pausedByBackpressureRef = useRef(false);
+  const hasCompletedRef = useRef(false);
 
   const [scanState, setScanState] = useState(PassportScanState.PERMISSION_REQUEST);
   const [base64Image, setBase64Image] = useState('');
@@ -315,6 +322,13 @@ export default function PassportScannerFlow({ isOpen, onClose, uploadAndOcrPassp
     setScanHint('正在持续检测，请保持护照稳定。');
     accumulatorRef.current = createEmptyAccumulator();
     recognizedDuringScanRef.current = null;
+    scanningStartedAtRef.current = 0;
+    lastRequestAtRef.current = 0;
+    requestIntervalMsRef.current = 3000;
+    overlapAttemptsRef.current = 0;
+    pendingRequestsRef.current = 0;
+    pausedByBackpressureRef.current = false;
+    hasCompletedRef.current = false;
   };
 
   useEffect(() => {
@@ -354,37 +368,97 @@ export default function PassportScannerFlow({ isOpen, onClose, uploadAndOcrPassp
 
   const startScanningLoop = async () => {
     setErrorMessage('');
-    setScanHint('正在持续检测，请保持护照稳定。');
+    setScanHint('已开启取景，先稳定画面 5 秒后开始识别。');
     accumulatorRef.current = createEmptyAccumulator();
     recognizedDuringScanRef.current = null;
+    scanningStartedAtRef.current = Date.now();
+    lastRequestAtRef.current = 0;
+    requestIntervalMsRef.current = 3000;
+    overlapAttemptsRef.current = 0;
+    pendingRequestsRef.current = 0;
+    pausedByBackpressureRef.current = false;
+    hasCompletedRef.current = false;
     setScanState(PassportScanState.SCANNING);
     await startCamera();
 
     scanTimerRef.current = setInterval(async () => {
+      if (hasCompletedRef.current) return;
+
       const frame = captureFrame();
       if (!frame) return;
 
-      try {
-        const result = await checkImageQuality(
-          frame,
-          (imageBase64) => uploadAndOcrPassport(imageBase64, { strict: false }),
-          accumulatorRef
-        );
-        if (!result.passed) {
-          const attemptText = result.attempts ? `（第 ${result.attempts} 次识别）` : '';
-          setScanHint(`持续识别中${attemptText}：需匹配姓名/出生日期/国籍/性别与MRZ机读码。`);
+      const now = Date.now();
+      const warmupElapsed = now - scanningStartedAtRef.current;
+      if (warmupElapsed < 5000) {
+        const leftSeconds = Math.ceil((5000 - warmupElapsed) / 1000);
+        setScanHint(`正在稳定取景，约 ${leftSeconds} 秒后开始OCR识别。`);
+        return;
+      }
+
+      if (pausedByBackpressureRef.current) {
+        if (pendingRequestsRef.current === 0) {
+          pausedByBackpressureRef.current = false;
+          overlapAttemptsRef.current = 0;
+          requestIntervalMsRef.current = 12000;
+          setScanHint('积压已清空，恢复低频识别。');
+        } else {
+          setScanHint(`后端繁忙：仍有 ${pendingRequestsRef.current} 个请求处理中，已暂停新请求。`);
           return;
         }
-
-        recognizedDuringScanRef.current = result.data;
-        clearInterval(scanTimerRef.current);
-        scanTimerRef.current = null;
-        stopCamera();
-        setBase64Image(frame);
-        setScanState(PassportScanState.PROCESSING);
-      } catch (error) {
-        setScanHint('识别中，正在自动重试...');
       }
+
+      const intervalMs = requestIntervalMsRef.current;
+      if (lastRequestAtRef.current && now - lastRequestAtRef.current < intervalMs) return;
+
+      if (pendingRequestsRef.current > 0) {
+        overlapAttemptsRef.current += 1;
+        if (overlapAttemptsRef.current >= 3) {
+          requestIntervalMsRef.current = 12000;
+          setScanHint(`检测到请求堆积（${pendingRequestsRef.current}个未返回），已降频到每12秒一次。`);
+        }
+      }
+
+      if (pendingRequestsRef.current >= 6) {
+        pausedByBackpressureRef.current = true;
+        setScanHint('未完成OCR请求累计达到6个，已暂停发送新请求，等待后端返回。');
+        return;
+      }
+
+      lastRequestAtRef.current = now;
+      pendingRequestsRef.current += 1;
+
+      checkImageQuality(
+        frame,
+        (imageBase64) => uploadAndOcrPassport(imageBase64, { strict: false }),
+        accumulatorRef
+      )
+        .then((result) => {
+          if (!result.passed || hasCompletedRef.current) {
+            const attemptText = result.attempts ? `（第 ${result.attempts} 次识别）` : '';
+            setScanHint(`持续识别中${attemptText}：需匹配姓名/出生日期/国籍/性别与MRZ机读码。`);
+            return;
+          }
+
+          hasCompletedRef.current = true;
+          recognizedDuringScanRef.current = result.data;
+          clearInterval(scanTimerRef.current);
+          scanTimerRef.current = null;
+          stopCamera();
+          setBase64Image(frame);
+          setScanState(PassportScanState.PROCESSING);
+        })
+        .catch(() => {
+          setScanHint('识别中，正在自动重试...');
+        })
+        .finally(() => {
+          pendingRequestsRef.current = Math.max(0, pendingRequestsRef.current - 1);
+          if (pausedByBackpressureRef.current && pendingRequestsRef.current === 0) {
+            pausedByBackpressureRef.current = false;
+            overlapAttemptsRef.current = 0;
+            requestIntervalMsRef.current = 12000;
+            setScanHint('后端积压已清空，恢复低频识别。');
+          }
+        });
     }, 500);
   };
 

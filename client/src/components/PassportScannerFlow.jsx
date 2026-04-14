@@ -24,22 +24,141 @@ const normalizeValue = (value) => String(value || '').trim().toUpperCase();
 
 const pickFirst = (...values) => values.find((value) => value !== undefined && value !== null && String(value).trim() !== '');
 
+const normalizeBirthDate = (value) => {
+  const raw = normalizeValue(value).replace(/\s+/g, '');
+  if (!raw) return '';
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length === 6) return digits;
+  if (digits.length === 8) {
+    // YYYYMMDD -> YYMMDD
+    if (/^(19|20)/.test(digits)) {
+      return `${digits.slice(2, 4)}${digits.slice(4, 6)}${digits.slice(6, 8)}`;
+    }
+    // DDMMYYYY -> YYMMDD
+    return `${digits.slice(6, 8)}${digits.slice(2, 4)}${digits.slice(0, 2)}`;
+  }
+  const dmy = raw.match(/^(\d{2})[./-](\d{2})[./-](\d{2,4})$/);
+  if (dmy) {
+    const yy = dmy[3].slice(-2);
+    return `${yy}${dmy[2]}${dmy[1]}`;
+  }
+  const ymd = raw.match(/^(\d{4})[./-](\d{2})[./-](\d{2})$/);
+  if (ymd) {
+    return `${ymd[1].slice(-2)}${ymd[2]}${ymd[3]}`;
+  }
+  return digits;
+};
+
+const MRZ_WEIGHTS = [7, 3, 1];
+const OCR_AMBIGUITY_MAP = {
+  '0': ['0', 'O', 'Q', 'D'],
+  '1': ['1', 'I', 'L'],
+  '2': ['2', 'Z'],
+  '5': ['5', 'S'],
+  '6': ['6', 'G'],
+  '8': ['8', 'B'],
+  O: ['O', '0', 'Q', 'D'],
+  Q: ['Q', '0', 'O'],
+  D: ['D', '0', 'O'],
+  I: ['I', '1', 'L'],
+  L: ['L', '1', 'I'],
+  Z: ['Z', '2'],
+  S: ['S', '5'],
+  G: ['G', '6'],
+  B: ['B', '8']
+};
+
+const getMrzValue = (ch) => {
+  if (ch === '<') return 0;
+  if (/[0-9]/.test(ch)) return Number(ch);
+  if (/[A-Z]/.test(ch)) return ch.charCodeAt(0) - 55;
+  return 0;
+};
+
+const getMrzCheckDigit = (input) => {
+  const cleaned = normalizeValue(input).replace(/[^A-Z0-9<]/g, '<');
+  const sum = cleaned.split('').reduce((acc, ch, idx) => acc + getMrzValue(ch) * MRZ_WEIGHTS[idx % 3], 0);
+  return String(sum % 10);
+};
+
+const enumerateAmbiguousCandidates = (raw, limit = 120) => {
+  const chars = normalizeValue(raw).split('');
+  let acc = [''];
+  for (const ch of chars) {
+    const options = OCR_AMBIGUITY_MAP[ch] || [ch];
+    const next = [];
+    for (const prefix of acc) {
+      for (const option of options) {
+        next.push(prefix + option);
+        if (next.length >= limit) break;
+      }
+      if (next.length >= limit) break;
+    }
+    acc = next;
+    if (acc.length >= limit) break;
+  }
+  return [...new Set(acc)];
+};
+
+const resolveWithCheckDigit = (rawField, rawCheck) => {
+  const field = normalizeValue(rawField).replace(/[^A-Z0-9<]/g, '<');
+  const check = normalizeValue(rawCheck).replace(/[^0-9A-Z]/g, '').slice(0, 1);
+  const checkCandidates = enumerateAmbiguousCandidates(check || '0', 12).filter((candidate) => /[0-9]/.test(candidate));
+  const fieldCandidates = enumerateAmbiguousCandidates(field, 120);
+  const valid = fieldCandidates.find((candidate) => checkCandidates.includes(getMrzCheckDigit(candidate)));
+  if (valid) return { value: valid, valid: true };
+  return { value: field, valid: false };
+};
+
+const parseMrzFromText = (text) => {
+  if (!text) return null;
+  const lines = text
+    .split('\n')
+    .map((line) => normalizeValue(line).replace(/\s+/g, ''))
+    .filter(Boolean);
+
+  const nameLine = lines.find((line) => line.includes('<<') && line.includes('P<')) || '';
+  const numberLine = lines.find((line) => line.includes('<<') && /[0-9]/.test(line)) || '';
+  if (!numberLine) return null;
+
+  const compact = numberLine.replace(/[^A-Z0-9<]/g, '');
+  const match = compact.match(/([A-Z0-9<]{9})([0-9A-Z])<<([0-9A-Z]{6})([0-9A-Z])([MFX<])/);
+  if (!match) return null;
+
+  const [, rawPassport, rawPassportCheck, rawBirthDate, rawBirthCheck, rawSex] = match;
+  const passport = resolveWithCheckDigit(rawPassport, rawPassportCheck);
+  const birthDate = resolveWithCheckDigit(rawBirthDate, rawBirthCheck);
+  const normalizedName = nameLine ? nameLine.split('<<').slice(1).join(' ').replace(/</g, ' ').replace(/\s+/g, ' ').trim() : '';
+  const issuingState = (nameLine.match(/^P<([A-Z<]{1,3})/)?.[1] || '').replace(/</g, '');
+
+  return {
+    passportNumber: passport.value.replace(/</g, ''),
+    birthDate: birthDate.value.replace(/</g, ''),
+    sex: rawSex === '<' ? '' : rawSex,
+    nationalityCode: issuingState,
+    fullName: normalizedName,
+    checksumValid: passport.valid && birthDate.valid
+  };
+};
+
 const buildObservation = (ocrRaw) => {
   const viz = ocrRaw?.viz || {};
   const mrz = ocrRaw?.mrz || {};
+  const parsedMrz = parseMrzFromText(ocrRaw?.text);
   return {
-    isPassport: Boolean(ocrRaw?.isPassport),
+    isPassport: Boolean(ocrRaw?.isPassport || parsedMrz?.checksumValid),
     fullName: normalizeValue(pickFirst(ocrRaw?.fullName, viz?.fullName, viz?.name)),
-    birthDate: normalizeValue(pickFirst(ocrRaw?.birthDate, viz?.birthDate, viz?.dateOfBirth, mrz?.birthDate)),
-    nationalityCode: normalizeValue(pickFirst(ocrRaw?.nationalityCode, viz?.nationalityCode, mrz?.nationalityCode)),
-    sex: normalizeValue(pickFirst(ocrRaw?.sex, viz?.sex, mrz?.sex)),
-    passportNumber: normalizeValue(pickFirst(ocrRaw?.passportNumber, viz?.passportNumber, mrz?.passportNumber)),
-    mrzPassportNumber: normalizeValue(pickFirst(ocrRaw?.mrzPassportNumber, mrz?.passportNumber)),
-    mrzBirthDate: normalizeValue(pickFirst(ocrRaw?.mrzBirthDate, mrz?.birthDate)),
-    mrzNationality: normalizeValue(pickFirst(ocrRaw?.mrzNationality, mrz?.nationalityCode)),
-    mrzSex: normalizeValue(pickFirst(ocrRaw?.mrzSex, mrz?.sex)),
-    mrzFullName: normalizeValue(pickFirst(ocrRaw?.mrzFullName, mrz?.fullName, mrz?.name)),
-    confidence: Number(ocrRaw?.confidence ?? 0.65)
+    birthDate: normalizeBirthDate(pickFirst(ocrRaw?.birthDate, viz?.birthDate, viz?.dateOfBirth, mrz?.birthDate, parsedMrz?.birthDate)),
+    nationalityCode: normalizeValue(pickFirst(ocrRaw?.nationalityCode, viz?.nationalityCode, mrz?.nationalityCode, parsedMrz?.nationalityCode)),
+    sex: normalizeValue(pickFirst(ocrRaw?.sex, viz?.sex, mrz?.sex, parsedMrz?.sex)),
+    passportNumber: normalizeValue(pickFirst(ocrRaw?.passportNumber, viz?.passportNumber, mrz?.passportNumber, parsedMrz?.passportNumber)),
+    mrzPassportNumber: normalizeValue(pickFirst(ocrRaw?.mrzPassportNumber, mrz?.passportNumber, parsedMrz?.passportNumber)),
+    mrzBirthDate: normalizeBirthDate(pickFirst(ocrRaw?.mrzBirthDate, mrz?.birthDate, parsedMrz?.birthDate)),
+    mrzNationality: normalizeValue(pickFirst(ocrRaw?.mrzNationality, mrz?.nationalityCode, parsedMrz?.nationalityCode)),
+    mrzSex: normalizeValue(pickFirst(ocrRaw?.mrzSex, mrz?.sex, parsedMrz?.sex)),
+    mrzFullName: normalizeValue(pickFirst(ocrRaw?.mrzFullName, mrz?.fullName, mrz?.name, parsedMrz?.fullName)),
+    confidence: Number(ocrRaw?.confidence ?? 0.65),
+    checksumValid: Boolean(parsedMrz?.checksumValid)
   };
 };
 
@@ -94,7 +213,8 @@ const checkImageQuality = async (base64, recognizeFrame, accumulatorRef) => {
 
   const baseWeight = Math.min(Math.max(observation.confidence || 0.65, 0.25), 0.99);
   const mrzBonus = observation.mrzPassportNumber && observation.mrzBirthDate ? 0.18 : 0;
-  const weight = baseWeight + mrzBonus;
+  const checksumBonus = observation.checksumValid ? 0.2 : 0;
+  const weight = baseWeight + mrzBonus + checksumBonus;
 
   Object.keys(acc.votes).forEach((field) => {
     updateWeightedVote(acc.votes[field], observation[field], weight);
@@ -145,7 +265,7 @@ const checkImageQuality = async (base64, recognizeFrame, accumulatorRef) => {
     consensus.mrzPassportNumber.ratio * 0.12
   );
 
-  const passed = acc.attempts >= 3 && crossValidated && reliability >= 0.82;
+  const passed = acc.attempts >= 3 && crossValidated && reliability >= 0.82 && observation.checksumValid;
 
   return {
     passed,

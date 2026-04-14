@@ -917,7 +917,8 @@ const GuestFlow = ({
       mrzPassportNumber: ocrResult.mrzPassportNumber,
       mrzBirthDate: ocrResult.mrzBirthDate,
       mrzNationality: ocrResult.mrzNationality,
-      mrzSex: ocrResult.mrzSex
+      mrzSex: ocrResult.mrzSex,
+      text: ocrResult.text || ''
     };
   };
 

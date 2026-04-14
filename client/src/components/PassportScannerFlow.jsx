@@ -224,40 +224,105 @@ const composeConsensusLine = (votes, sanitizer) => {
   return { line: chars.join(''), pools };
 };
 
-const correctByCheckDigitWithPools = (rawValue, rawCheckDigit, pools) => {
-  const targetDigit = whitelistMrzDateChar(rawCheckDigit);
-  if (getMrzCheckDigit(rawValue) === targetDigit) {
-    return { value: rawValue, corrected: false, valid: true };
+/**
+ * @typedef {'passport' | 'date'} MrzFieldType
+ */
+
+const DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+const PASSPORT_BASE = ['<', ...DIGITS, ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')];
+const CHECK_MUTATIONS = { ...CORE_CONFUSION_DICT, '6': ['6', 'G'], G: ['G', '6'] };
+
+const buildMutationCandidates = (char, fieldType, isCheckDigit) => {
+  const raw = normalizeValue(char || '<');
+  if (fieldType === 'date') {
+    const mapped = whitelistMrzDateChar(raw);
+    const confusion = CORE_CONFUSION_DICT[mapped] || [mapped];
+    return [...new Set([...confusion.map(whitelistMrzDateChar), ...DIGITS])];
   }
-  const slots = rawValue.split('').map((ch, idx) => {
-    const poolChars = (pools[idx] || []).map((entry) => entry.char);
-    const confusion = CORE_CONFUSION_DICT[ch] || [ch];
-    return [...new Set([...poolChars, ...confusion])].filter((candidate) => /[A-Z0-9<]/.test(candidate)).slice(0, 5);
-  });
-  let best = null;
-  const limit = 3000;
-  let generated = 0;
-  const dfs = (pos, acc, score) => {
-    if (generated > limit || best) return;
-    if (pos === slots.length) {
-      generated += 1;
-      if (getMrzCheckDigit(acc) === targetDigit) {
-        best = { value: acc, score };
-      }
-      return;
-    }
-    const options = slots[pos];
-    options.forEach((candidate) => {
-      const optionScore = (pools[pos] || []).find((item) => item.char === candidate)?.score || 0;
-      dfs(pos + 1, `${acc}${candidate}`, score + optionScore);
-    });
-  };
-  dfs(0, '', 0);
-  if (best) return { value: best.value, corrected: true, valid: true };
-  return { value: rawValue, corrected: false, valid: false };
+  if (isCheckDigit) {
+    const confusion = CHECK_MUTATIONS[raw] || [raw];
+    return [...new Set([...confusion.map(whitelistMrzDateChar), ...DIGITS])];
+  }
+  const base = whitelistPassportChar(raw);
+  const confusion = CORE_CONFUSION_DICT[base] || [base];
+  return [...new Set([...confusion, base, ...PASSPORT_BASE])].filter((candidate) => /[A-Z0-9<]/.test(candidate));
 };
 
-const parseTd3FromConsensus = (line1, line2, line2Pools) => {
+const verifySolvedField = (value, expectedLength) => {
+  if (!value || value.length !== expectedLength) return false;
+  const data = value.slice(0, expectedLength - 1);
+  const check = value.slice(expectedLength - 1);
+  return getMrzCheckDigit(data) === whitelistMrzDateChar(check);
+};
+
+/**
+ * Solve one MRZ block with 3 strategies:
+ * A) bidirectional mutation, B) missing-char interpolation, C) extra-char deletion.
+ * @param {string} rawString raw OCR block (data + check digit)
+ * @param {number} expectedLength full expected length (data + check)
+ * @param {MrzFieldType} fieldType field type
+ * @param {number} maxIters circuit-breaker max iterations
+ * @returns {{ value: string, valid: boolean } | null}
+ */
+const solveMrzField = (rawString, expectedLength, fieldType, maxIters = 10000) => {
+  const cleaned = normalizeValue(rawString).replace(/[^A-Z0-9<]/g, '');
+  if (!cleaned) return null;
+  const budget = { used: 0 };
+
+  const tryMutation = (seed) => {
+    const s = normalizeValue(seed).replace(/[^A-Z0-9<]/g, '');
+    if (s.length !== expectedLength || budget.used >= maxIters) return null;
+    const candidateSets = s.split('').map((ch, idx) => buildMutationCandidates(ch, fieldType, idx === expectedLength - 1).slice(0, 8));
+    const stack = [{ idx: 0, value: '' }];
+    while (stack.length > 0 && budget.used < maxIters) {
+      const current = stack.pop();
+      if (!current) break;
+      if (current.idx === expectedLength) {
+        budget.used += 1;
+        if (verifySolvedField(current.value, expectedLength)) {
+          return { value: current.value, valid: true };
+        }
+        continue;
+      }
+      const options = candidateSets[current.idx];
+      for (let i = options.length - 1; i >= 0; i -= 1) {
+        stack.push({ idx: current.idx + 1, value: `${current.value}${options[i]}` });
+      }
+    }
+    return null;
+  };
+
+  // Strategy A: direct bidirectional mutation
+  const direct = tryMutation(cleaned);
+  if (direct) return direct;
+
+  // Strategy B: missing-character interpolation
+  if (cleaned.length === expectedLength - 1 && budget.used < maxIters) {
+    for (let insertAt = 0; insertAt <= cleaned.length; insertAt += 1) {
+      const insertionPool = fieldType === 'date' ? DIGITS : PASSPORT_BASE;
+      for (const inserted of insertionPool) {
+        const withInsert = `${cleaned.slice(0, insertAt)}${inserted}${cleaned.slice(insertAt)}`;
+        const solved = tryMutation(withInsert);
+        if (solved) return solved;
+      }
+      if (budget.used >= maxIters) break;
+    }
+  }
+
+  // Strategy C: extra-character deletion
+  if (cleaned.length === expectedLength + 1 && budget.used < maxIters) {
+    for (let removeAt = 0; removeAt < cleaned.length; removeAt += 1) {
+      const trimmed = `${cleaned.slice(0, removeAt)}${cleaned.slice(removeAt + 1)}`;
+      const solved = tryMutation(trimmed);
+      if (solved) return solved;
+      if (budget.used >= maxIters) break;
+    }
+  }
+
+  return null;
+};
+
+const parseTd3FromConsensus = (line1, line2) => {
   const l1 = normalizeTo44(line1);
   const l2 = normalizeTo44(line2);
   const passportRaw = l2.slice(0, 9).split('').map(whitelistPassportChar).join('');
@@ -267,19 +332,19 @@ const parseTd3FromConsensus = (line1, line2, line2Pools) => {
   const expiryRaw = l2.slice(21, 27).split('').map(whitelistMrzDateChar).join('');
   const expiryCheck = whitelistMrzDateChar(l2.slice(27, 28));
 
-  const passportFixed = correctByCheckDigitWithPools(passportRaw, passportCheck, line2Pools.slice(0, 9));
-  const birthValid = getMrzCheckDigit(birthRaw) === birthCheck;
-  const expiryValid = getMrzCheckDigit(expiryRaw) === expiryCheck;
+  const passportSolved = solveMrzField(`${passportRaw}${passportCheck}`, 10, 'passport');
+  const birthSolved = solveMrzField(`${birthRaw}${birthCheck}`, 7, 'date');
+  const expirySolved = solveMrzField(`${expiryRaw}${expiryCheck}`, 7, 'date');
 
   const name = l1.slice(5).replace(/<+/g, ' ').trim();
   return {
-    passportNumber: passportFixed.value.replace(/</g, ''),
-    birthDate: birthRaw,
-    expiryDate: expiryRaw,
+    passportNumber: (passportSolved?.value || `${passportRaw}${passportCheck}`).slice(0, 9).replace(/</g, ''),
+    birthDate: (birthSolved?.value || `${birthRaw}${birthCheck}`).slice(0, 6),
+    expiryDate: (expirySolved?.value || `${expiryRaw}${expiryCheck}`).slice(0, 6),
     sex: l2.slice(20, 21).replace('<', ''),
     nationalityCode: l2.slice(10, 13).replace(/</g, ''),
     fullName: name,
-    checksumValid: passportFixed.valid && birthValid && expiryValid
+    checksumValid: Boolean(passportSolved?.valid && birthSolved?.valid && expirySolved?.valid)
   };
 };
 
@@ -366,7 +431,7 @@ const checkImageQuality = async (base64, recognizeFrame, accumulatorRef) => {
     voteLine(acc.mrzVotesLine2, aligned2, observation.confidence || 0.6);
     const consensusLine1 = composeConsensusLine(acc.mrzVotesLine1, (ch) => (/[A-Z<]/.test(ch) ? ch : '<'));
     const consensusLine2 = composeConsensusLine(acc.mrzVotesLine2, (ch) => (/[A-Z0-9<]/.test(ch) ? ch : '<'));
-    const td3 = parseTd3FromConsensus(consensusLine1.line, consensusLine2.line, consensusLine2.pools);
+    const td3 = parseTd3FromConsensus(consensusLine1.line, consensusLine2.line);
     if (td3.checksumValid) {
       observation.checksumValid = true;
       observation.isPassport = true;

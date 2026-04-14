@@ -317,15 +317,26 @@ const solveMrzField = (rawString, expectedLength, fieldType) => {
   // === 场景 B: 尾部截断漏字 (长度恰好少 1) ===
   if (cleaned.length === expectedLength - 1) {
     
-    // 优先级 4: 直接在尾部追加 0-9 测试 (解决 690316 -> 6903169 的问题)
+    // 优先级 4: 尾部追加 0-9 
     for (let i = 0; i <= 9; i++) {
       const candidate = cleaned + String(i);
       if (verify(candidate)) {
-        console.log(`✅ [Solver V3] 截断补全成功: 在尾部追加 [${i}] -> 最终结果: ${candidate}`);
+        console.log(`✅ [Solver V3] 截断补全: 尾部追加 [${i}] -> 最终结果: ${candidate}`);
         return { value: candidate, valid: true };
       }
     }
 
+    // 优先级 4.5: 头部追加 A-Z 和 0-9 (专治护照号首字母丢失！)
+    if (fieldType === 'passport') {
+      const headPool = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'.split('');
+      for (const char of headPool) {
+        const candidate = char + cleaned;
+        if (verify(candidate)) {
+          console.log(`✅ [Solver V3] 首字补全成功: 头部追加 [${char}] -> 最终结果: ${candidate}`);
+          return { value: candidate, valid: true };
+        }
+      }
+    }
     // 优先级 5: 复合修复 (数据区有 1 个错字 + 尾部缺 1 个字)
     for (let pos = 0; pos < cleaned.length; pos++) {
       const char = cleaned[pos];
@@ -350,53 +361,48 @@ const solveMrzField = (rawString, expectedLength, fieldType) => {
 
 const parseTd3FromConsensus = (line1, line2) => {
   console.log(`\n=================== [ 解析器启动 ] ===================`);
-  console.log(`📥 [共识输入] L1: ${line1}`);
-  console.log(`📥 [共识输入] L2: ${line2}`);
-
   const l1 = normalizeTo44(line1);
   const l2 = normalizeTo44(line2);
   
-  console.log(`📐 [填充至44位] L2: ${l2}`);
+  let passportRawSlice = l2.slice(0, 10);
+  let natRaw = l2.slice(10, 13);
+  let birthRawSlice = l2.slice(13, 20);
+  let sexRaw = l2.slice(20, 21);
+  let expiryRawSlice = l2.slice(21, 28);
 
-  // 1. 获取原始切片
-  const passportRawSlice = l2.slice(0, 10);
-  const birthRawSlice = l2.slice(13, 20);
-  const expiryRawSlice = l2.slice(21, 28);
+  // 🎯 核心杀招：动态正则锚点
+  // 匹配：3位字母(国籍) + 7位字符(生日) + 1位字符(性别) + 7位字符(有效期)
+  const anchorMatch = l2.match(/([A-Z<]{3})([0-9A-Z<]{7})([A-Z0-9<])([0-9A-Z<]{7})/i);
+  
+  if (anchorMatch) {
+    console.log(`⚓ [正则锚点触发] 成功定位特征序列！免疫一切位移错乱。(Index: ${anchorMatch.index})`);
+    passportRawSlice = l2.substring(0, anchorMatch.index).replace(/<+$/, '');
+    natRaw = anchorMatch[1];
+    birthRawSlice = anchorMatch[2];
+    sexRaw = anchorMatch[3];
+    expiryRawSlice = anchorMatch[4];
+  } else {
+    console.log(`⚠️ [正则锚点失效] 未找到标准特征序列，回退至固定索引切片...`);
+  }
 
-  // 2. 剥离人工补齐的干扰符
   const passportClean = passportRawSlice.replace(/<+$/, '');
   const birthClean = birthRawSlice.replace(/</g, '');
   const expiryClean = expiryRawSlice.replace(/</g, '');
 
-  console.log(`✂️ [切片 - 护照号] 原始: "${passportRawSlice}" -> 净化: "${passportClean}"`);
-  console.log(`✂️ [切片 - 出生日] 原始: "${birthRawSlice}"   -> 净化: "${birthClean}"`);
-  console.log(`✂️ [切片 - 有效期] 原始: "${expiryRawSlice}"  -> 净化: "${expiryClean}"`);
-
-  // 3. 求解
   const passportSolved = solveMrzField(passportClean, 10, 'passport');
-  
-  const birthSolved = birthClean.length === 0 
-    ? { valid: true, value: '' } 
-    : solveMrzField(birthClean, 7, 'date');
-    
-  const expirySolved = expiryClean.length === 0 
-    ? { valid: true, value: '' } 
-    : solveMrzField(expiryClean, 7, 'date');
+  const birthSolved = birthClean.length === 0 ? { valid: true, value: '' } : solveMrzField(birthClean, 7, 'date');
+  const expirySolved = expiryClean.length === 0 ? { valid: true, value: '' } : solveMrzField(expiryClean, 7, 'date');
 
   const isValid = Boolean(passportSolved?.valid && birthSolved?.valid && expirySolved?.valid);
-  
-  console.log(`🏁 [最终判决] 护照:${Boolean(passportSolved?.valid)} | 出生:${Boolean(birthSolved?.valid)} | 有效期:${Boolean(expirySolved?.valid)}`);
-  console.log(`💡 [总体验证结果] -> ${isValid ? '🟢 完美通过' : '🔴 校验失败'}`);
-  console.log(`======================================================\n`);
+  console.log(`💡 [总体验证结果] -> ${isValid ? '🟢 完美通过' : '🔴 校验失败'}\n======================================================`);
 
-  const name = l1.slice(5).replace(/<+/g, ' ').trim();
   return {
     passportNumber: (passportSolved?.value || passportClean).slice(0, 9).replace(/</g, ''),
     birthDate: (birthSolved?.value || birthClean).slice(0, 6),
     expiryDate: (expirySolved?.value || expiryClean).slice(0, 6),
-    sex: l2.slice(20, 21).replace('<', ''),
-    nationalityCode: l2.slice(10, 13).replace(/</g, ''),
-    fullName: name,
+    sex: sexRaw.replace('<', ''),
+    nationalityCode: natRaw.replace(/</g, ''),
+    fullName: l1.slice(5).replace(/<+/g, ' ').trim(),
     checksumValid: isValid
   };
 };
@@ -472,6 +478,30 @@ const checkImageQuality = async (base64, recognizeFrame, accumulatorRef) => {
   const observation = buildObservation(ocrRaw || {});
   const acc = accumulatorRef.current;
   acc.attempts += 1;
+  
+  // ==========================================
+  // 🚀 快速通道 (Fast-Track)：单帧直接截胡
+  // ==========================================
+  if (observation.mrzLine1 && observation.mrzLine2) {
+    console.log(`🚄 [Fast-Track] 尝试单帧独立运算...`);
+    const td3Raw = parseTd3FromConsensus(observation.mrzLine1, observation.mrzLine2);
+    if (td3Raw.checksumValid && td3Raw.passportNumber && td3Raw.birthDate) {
+      console.log(`🏆 [Fast-Track WIN] 单帧质量极高，直接绕过共识池强行过关！`);
+      return {
+        passed: true,
+        attempts: acc.attempts,
+        reliability: 1.0, // 只要通过了严苛的 V3 校验，置信度直接拉满
+        reason: '',
+        data: {
+          fullName: td3Raw.fullName || observation.fullName,
+          birthDate: td3Raw.birthDate,
+          nationalityCode: td3Raw.nationalityCode || observation.nationalityCode,
+          sex: td3Raw.sex || observation.sex,
+          passportNumber: td3Raw.passportNumber
+        }
+      };
+    }
+  }
 
   if (observation.mrzLine1 && observation.mrzLine2) {
     if (!acc.mrzReferenceLine1) {

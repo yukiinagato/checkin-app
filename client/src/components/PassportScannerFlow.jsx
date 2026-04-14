@@ -67,6 +67,7 @@ const OCR_AMBIGUITY_MAP = {
   G: ['G', '6'],
   B: ['B', '8']
 };
+const CORE_CONFUSION_DICT = { '2': ['2', 'Z'], Z: ['Z', '2'], '0': ['0', 'O'], O: ['O', '0'], '8': ['8', 'B'], B: ['B', '8'], '1': ['1', 'I'], I: ['I', '1'] };
 
 const getMrzValue = (ch) => {
   if (ch === '<') return 0;
@@ -110,55 +111,191 @@ const resolveWithCheckDigit = (rawField, rawCheck) => {
   return { value: field, valid: false };
 };
 
-const parseMrzFromText = (text) => {
+const extractMrzLinesFromText = (text) => {
   if (!text) return null;
   const lines = text
     .split('\n')
     .map((line) => normalizeValue(line).replace(/\s+/g, ''))
     .filter(Boolean);
-
-  const nameLine = lines.find((line) => line.includes('<<') && line.includes('P<')) || '';
-  const numberLine = lines.find((line) => line.includes('<<') && /[0-9]/.test(line)) || '';
-  if (!numberLine) return null;
-
-  const compact = numberLine.replace(/[^A-Z0-9<]/g, '');
-  const match = compact.match(/([A-Z0-9<]{9})([0-9A-Z])<<([0-9A-Z]{6})([0-9A-Z])([MFX<])/);
-  if (!match) return null;
-
-  const [, rawPassport, rawPassportCheck, rawBirthDate, rawBirthCheck, rawSex] = match;
-  const passport = resolveWithCheckDigit(rawPassport, rawPassportCheck);
-  const birthDate = resolveWithCheckDigit(rawBirthDate, rawBirthCheck);
-  const normalizedName = nameLine ? nameLine.split('<<').slice(1).join(' ').replace(/</g, ' ').replace(/\s+/g, ' ').trim() : '';
-  const issuingState = (nameLine.match(/^P<([A-Z<]{1,3})/)?.[1] || '').replace(/</g, '');
-
+  const candidates = lines
+    .filter((line) => /[<]/.test(line))
+    .map((line) => line.replace(/[^A-Z0-9<]/g, ''))
+    .filter((line) => line.length >= 40 && line.length <= 44 && (line.match(/</g) || []).length >= 2);
+  if (candidates.length < 2) return null;
   return {
-    passportNumber: passport.value.replace(/</g, ''),
-    birthDate: birthDate.value.replace(/</g, ''),
-    sex: rawSex === '<' ? '' : rawSex,
-    nationalityCode: issuingState,
-    fullName: normalizedName,
-    checksumValid: passport.valid && birthDate.valid
+    line1: candidates[candidates.length - 2],
+    line2: candidates[candidates.length - 1]
+  };
+};
+
+const initVotes44 = () => Array.from({ length: 44 }, () => new Map());
+
+const normalizeTo44 = (line) => {
+  const compact = normalizeValue(line).replace(/[^A-Z0-9<]/g, '');
+  if (compact.length === 44) return compact;
+  if (compact.length > 44) return compact.slice(0, 44);
+  return `${compact}${'<'.repeat(44 - compact.length)}`;
+};
+
+const alignWithLcsToReference = (reference, source) => {
+  const ref = normalizeTo44(reference);
+  const src = normalizeTo44(source);
+  const n = ref.length;
+  const m = src.length;
+  const dp = Array.from({ length: n + 1 }, () => Array(m + 1).fill(0));
+  for (let i = 1; i <= n; i += 1) {
+    for (let j = 1; j <= m; j += 1) {
+      dp[i][j] = ref[i - 1] === src[j - 1]
+        ? dp[i - 1][j - 1] + 1
+        : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  const aligned = Array(n).fill('<');
+  let i = n;
+  let j = m;
+  while (i > 0 && j > 0) {
+    if (ref[i - 1] === src[j - 1]) {
+      aligned[i - 1] = src[j - 1];
+      i -= 1;
+      j -= 1;
+    } else if (dp[i - 1][j] >= dp[i][j - 1]) {
+      i -= 1;
+    } else {
+      j -= 1;
+    }
+  }
+  for (let k = 0; k < n; k += 1) {
+    if (aligned[k] === '<' && /[A-Z0-9]/.test(src[k] || '')) {
+      aligned[k] = src[k];
+    }
+  }
+  return aligned.join('');
+};
+
+const voteLine = (votes, alignedLine, weight) => {
+  for (let idx = 0; idx < 44; idx += 1) {
+    const ch = alignedLine[idx] || '<';
+    const bucket = votes[idx];
+    bucket.set(ch, (bucket.get(ch) || 0) + weight);
+  }
+};
+
+const whitelistMrzDateChar = (ch) => {
+  const upper = normalizeValue(ch);
+  if (upper === 'O') return '0';
+  if (upper === 'I' || upper === 'L') return '1';
+  return /[0-9]/.test(upper) ? upper : '0';
+};
+
+const whitelistPassportChar = (ch) => {
+  const upper = normalizeValue(ch);
+  if (/[A-Z0-9]/.test(upper)) return upper;
+  return '<';
+};
+
+const getSortedCandidates = (bucket, fallback = '<') => {
+  const entries = [...bucket.entries()].sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) return [{ char: fallback, score: 0 }];
+  return entries.map(([char, score]) => ({ char, score }));
+};
+
+const composeConsensusLine = (votes, sanitizer) => {
+  const pools = [];
+  const chars = votes.map((bucket) => {
+    const sorted = getSortedCandidates(bucket, '<').map((entry) => ({ ...entry, char: sanitizer ? sanitizer(entry.char) : entry.char }));
+    const unique = [];
+    const seen = new Set();
+    sorted.forEach((entry) => {
+      if (!seen.has(entry.char)) {
+        seen.add(entry.char);
+        unique.push(entry);
+      }
+    });
+    pools.push(unique);
+    return unique[0]?.char || '<';
+  });
+  return { line: chars.join(''), pools };
+};
+
+const correctByCheckDigitWithPools = (rawValue, rawCheckDigit, pools) => {
+  const targetDigit = whitelistMrzDateChar(rawCheckDigit);
+  if (getMrzCheckDigit(rawValue) === targetDigit) {
+    return { value: rawValue, corrected: false, valid: true };
+  }
+  const slots = rawValue.split('').map((ch, idx) => {
+    const poolChars = (pools[idx] || []).map((entry) => entry.char);
+    const confusion = CORE_CONFUSION_DICT[ch] || [ch];
+    return [...new Set([...poolChars, ...confusion])].filter((candidate) => /[A-Z0-9<]/.test(candidate)).slice(0, 5);
+  });
+  let best = null;
+  const limit = 3000;
+  let generated = 0;
+  const dfs = (pos, acc, score) => {
+    if (generated > limit || best) return;
+    if (pos === slots.length) {
+      generated += 1;
+      if (getMrzCheckDigit(acc) === targetDigit) {
+        best = { value: acc, score };
+      }
+      return;
+    }
+    const options = slots[pos];
+    options.forEach((candidate) => {
+      const optionScore = (pools[pos] || []).find((item) => item.char === candidate)?.score || 0;
+      dfs(pos + 1, `${acc}${candidate}`, score + optionScore);
+    });
+  };
+  dfs(0, '', 0);
+  if (best) return { value: best.value, corrected: true, valid: true };
+  return { value: rawValue, corrected: false, valid: false };
+};
+
+const parseTd3FromConsensus = (line1, line2, line2Pools) => {
+  const l1 = normalizeTo44(line1);
+  const l2 = normalizeTo44(line2);
+  const passportRaw = l2.slice(0, 9).split('').map(whitelistPassportChar).join('');
+  const passportCheck = whitelistMrzDateChar(l2.slice(9, 10));
+  const birthRaw = l2.slice(13, 19).split('').map(whitelistMrzDateChar).join('');
+  const birthCheck = whitelistMrzDateChar(l2.slice(19, 20));
+  const expiryRaw = l2.slice(21, 27).split('').map(whitelistMrzDateChar).join('');
+  const expiryCheck = whitelistMrzDateChar(l2.slice(27, 28));
+
+  const passportFixed = correctByCheckDigitWithPools(passportRaw, passportCheck, line2Pools.slice(0, 9));
+  const birthValid = getMrzCheckDigit(birthRaw) === birthCheck;
+  const expiryValid = getMrzCheckDigit(expiryRaw) === expiryCheck;
+
+  const name = l1.slice(5).replace(/<+/g, ' ').trim();
+  return {
+    passportNumber: passportFixed.value.replace(/</g, ''),
+    birthDate: birthRaw,
+    expiryDate: expiryRaw,
+    sex: l2.slice(20, 21).replace('<', ''),
+    nationalityCode: l2.slice(10, 13).replace(/</g, ''),
+    fullName: name,
+    checksumValid: passportFixed.valid && birthValid && expiryValid
   };
 };
 
 const buildObservation = (ocrRaw) => {
   const viz = ocrRaw?.viz || {};
   const mrz = ocrRaw?.mrz || {};
-  const parsedMrz = parseMrzFromText(ocrRaw?.text);
+  const extractedMrz = extractMrzLinesFromText(ocrRaw?.text);
   return {
-    isPassport: Boolean(ocrRaw?.isPassport || parsedMrz?.checksumValid),
+    isPassport: Boolean(ocrRaw?.isPassport),
     fullName: normalizeValue(pickFirst(ocrRaw?.fullName, viz?.fullName, viz?.name)),
-    birthDate: normalizeBirthDate(pickFirst(ocrRaw?.birthDate, viz?.birthDate, viz?.dateOfBirth, mrz?.birthDate, parsedMrz?.birthDate)),
-    nationalityCode: normalizeValue(pickFirst(ocrRaw?.nationalityCode, viz?.nationalityCode, mrz?.nationalityCode, parsedMrz?.nationalityCode)),
-    sex: normalizeValue(pickFirst(ocrRaw?.sex, viz?.sex, mrz?.sex, parsedMrz?.sex)),
-    passportNumber: normalizeValue(pickFirst(ocrRaw?.passportNumber, viz?.passportNumber, mrz?.passportNumber, parsedMrz?.passportNumber)),
-    mrzPassportNumber: normalizeValue(pickFirst(ocrRaw?.mrzPassportNumber, mrz?.passportNumber, parsedMrz?.passportNumber)),
-    mrzBirthDate: normalizeBirthDate(pickFirst(ocrRaw?.mrzBirthDate, mrz?.birthDate, parsedMrz?.birthDate)),
-    mrzNationality: normalizeValue(pickFirst(ocrRaw?.mrzNationality, mrz?.nationalityCode, parsedMrz?.nationalityCode)),
-    mrzSex: normalizeValue(pickFirst(ocrRaw?.mrzSex, mrz?.sex, parsedMrz?.sex)),
-    mrzFullName: normalizeValue(pickFirst(ocrRaw?.mrzFullName, mrz?.fullName, mrz?.name, parsedMrz?.fullName)),
+    birthDate: normalizeBirthDate(pickFirst(ocrRaw?.birthDate, viz?.birthDate, viz?.dateOfBirth, mrz?.birthDate)),
+    nationalityCode: normalizeValue(pickFirst(ocrRaw?.nationalityCode, viz?.nationalityCode, mrz?.nationalityCode)),
+    sex: normalizeValue(pickFirst(ocrRaw?.sex, viz?.sex, mrz?.sex)),
+    passportNumber: normalizeValue(pickFirst(ocrRaw?.passportNumber, viz?.passportNumber, mrz?.passportNumber)),
+    mrzPassportNumber: normalizeValue(pickFirst(ocrRaw?.mrzPassportNumber, mrz?.passportNumber)),
+    mrzBirthDate: normalizeBirthDate(pickFirst(ocrRaw?.mrzBirthDate, mrz?.birthDate)),
+    mrzNationality: normalizeValue(pickFirst(ocrRaw?.mrzNationality, mrz?.nationalityCode)),
+    mrzSex: normalizeValue(pickFirst(ocrRaw?.mrzSex, mrz?.sex)),
+    mrzFullName: normalizeValue(pickFirst(ocrRaw?.mrzFullName, mrz?.fullName, mrz?.name)),
+    mrzLine1: extractedMrz?.line1 || '',
+    mrzLine2: extractedMrz?.line2 || '',
     confidence: Number(ocrRaw?.confidence ?? 0.65),
-    checksumValid: Boolean(parsedMrz?.checksumValid)
+    checksumValid: false
   };
 };
 
@@ -187,6 +324,10 @@ const getTopVote = (bucket) => {
 
 const createEmptyAccumulator = () => ({
   attempts: 0,
+  mrzReferenceLine1: '',
+  mrzReferenceLine2: '',
+  mrzVotesLine1: initVotes44(),
+  mrzVotesLine2: initVotes44(),
   votes: {
     fullName: new Map(),
     birthDate: new Map(),
@@ -204,12 +345,40 @@ const createEmptyAccumulator = () => ({
 const checkImageQuality = async (base64, recognizeFrame, accumulatorRef) => {
   const ocrRaw = await recognizeFrame(base64);
   const observation = buildObservation(ocrRaw || {});
+  const acc = accumulatorRef.current;
+  acc.attempts += 1;
+
+  if (observation.mrzLine1 && observation.mrzLine2) {
+    if (!acc.mrzReferenceLine1) {
+      acc.mrzReferenceLine1 = normalizeTo44(observation.mrzLine1);
+      acc.mrzReferenceLine2 = normalizeTo44(observation.mrzLine2);
+    }
+    const aligned1 = alignWithLcsToReference(acc.mrzReferenceLine1, observation.mrzLine1);
+    const aligned2 = alignWithLcsToReference(acc.mrzReferenceLine2, observation.mrzLine2);
+    voteLine(acc.mrzVotesLine1, aligned1, observation.confidence || 0.6);
+    voteLine(acc.mrzVotesLine2, aligned2, observation.confidence || 0.6);
+    const consensusLine1 = composeConsensusLine(acc.mrzVotesLine1, (ch) => (/[A-Z<]/.test(ch) ? ch : '<'));
+    const consensusLine2 = composeConsensusLine(acc.mrzVotesLine2, (ch) => (/[A-Z0-9<]/.test(ch) ? ch : '<'));
+    const td3 = parseTd3FromConsensus(consensusLine1.line, consensusLine2.line, consensusLine2.pools);
+    if (td3.checksumValid) {
+      observation.checksumValid = true;
+      observation.isPassport = true;
+      observation.passportNumber = normalizeValue(td3.passportNumber || observation.passportNumber);
+      observation.mrzPassportNumber = normalizeValue(td3.passportNumber || observation.mrzPassportNumber);
+      observation.birthDate = normalizeBirthDate(td3.birthDate || observation.birthDate);
+      observation.mrzBirthDate = normalizeBirthDate(td3.birthDate || observation.mrzBirthDate);
+      observation.sex = normalizeValue(td3.sex || observation.sex);
+      observation.mrzSex = normalizeValue(td3.sex || observation.mrzSex);
+      observation.nationalityCode = normalizeValue(td3.nationalityCode || observation.nationalityCode);
+      observation.mrzNationality = normalizeValue(td3.nationalityCode || observation.mrzNationality);
+      observation.fullName = normalizeValue(td3.fullName || observation.fullName);
+      observation.mrzFullName = normalizeValue(td3.fullName || observation.mrzFullName);
+    }
+  }
+
   if (!observation.isPassport) {
     return { passed: false, reason: 'NOT_PASSPORT' };
   }
-
-  const acc = accumulatorRef.current;
-  acc.attempts += 1;
 
   const baseWeight = Math.min(Math.max(observation.confidence || 0.65, 0.25), 0.99);
   const mrzBonus = observation.mrzPassportNumber && observation.mrzBirthDate ? 0.18 : 0;

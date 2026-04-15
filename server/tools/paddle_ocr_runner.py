@@ -5,11 +5,24 @@ import sys
 import logging
 from datetime import date, datetime
 from pathlib import Path
+from typing import List, Dict
+
+import cv2
+import numpy as np
+from PIL import Image, ImageOps
 
 # 强制设置输出编码为 UTF-8，防止 Node.js 在读取非 ASCII 字符时崩溃
 if sys.stdout.encoding != 'utf-8':
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+
+# 全局黑名单定义
+MONTH_BLACKLIST = {'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'}
+NAME_BLACKLIST = {
+    'SIGNATURE', 'BEARER', 'MINISTRY', 'PASSPORT', 'REPUBLIC', 'KOREA',
+    'DATE', 'SURNAME', 'GIVEN', 'NATIONALITY', 'BIRTH', 'AUTHORITY',
+    'COUNTRY', 'NUMBER', 'SEX', 'TYPE', 'CODE', 'ISSUING', 'AFFAIRS', 'FOREIGN', 'NAMES'
+}
 
 def _mrz_char_value(ch: str) -> int:
     # 容错：处理 OCR 常见的符号误识别
@@ -186,6 +199,77 @@ def extract_nationality(text: str):
         return '', raw
     return '', ''
 
+
+# ==========================================
+# 增强与防呆模块 (Fallback & Enhancements)
+# ==========================================
+
+def safe_load_image_with_exif(image_path: Path) -> np.ndarray:
+    """安全读取图片，应用 EXIF 旋转信息，避免由于手机竖拍导致 OCR 将文本垂直识别。"""
+    with Image.open(image_path) as img:
+        normalized = ImageOps.exif_transpose(img)
+        rgb = normalized.convert('RGB')
+        arr = np.array(rgb)
+    # OpenCV 默认使用 BGR
+    return cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+
+def fallback_extract_viz(text_lines: List[str]) -> Dict[str, str]:
+    """
+    当 MRZ 缺失时的 VIZ 备用提取器。
+    引入强大的启发式过滤与防呆黑名单，防止误伤 Boilerplate。
+    """
+    passport_number = ''
+    full_name = ''
+
+    # 1. 提取护照号: 利用 \b 词边界，不管旁边有多少垃圾字符都能精准抓取
+    for line in text_lines:
+        if not line: continue
+        tokens = re.findall(r'\b[A-Z0-9]{8,10}\b', line.upper())
+        for token in tokens:
+            # 严格防止把截断的生日当成护照号 (如 710OCT197)
+            if not any(month in token for month in MONTH_BLACKLIST):
+                passport_number = token
+                break
+        if passport_number:
+            break
+
+    # 2. 提取姓名: 修复死代码，利用原始字符串判断小写，严格的整词黑名单
+    name_candidates: List[str] = []
+    for orig_line in text_lines:
+        if not orig_line or len(orig_line) < 5:
+            continue
+            
+        # 大多数护照上的姓名只有大写字母。包含小写的通常是印刷说明文字。
+        if re.search(r'[a-z]', orig_line):
+            continue
+            
+        line_upper = orig_line.upper()
+        words = [re.sub(r'[^A-Z]', '', w) for w in line_upper.split()]
+        words = [w for w in words if w]
+        
+        if not words:
+            continue
+            
+        # 严格整词匹配，杜绝类似 GIVENCHY 被 GIVEN 误杀的情况
+        if any(word in NAME_BLACKLIST for word in words):
+            continue
+            
+        # 姓名行一般不会包含任何数字
+        if re.search(r'\d', orig_line):
+            continue
+            
+        name_candidates.append(' '.join(words))
+
+    if name_candidates:
+        # 取长度最长的合法候选者作为姓名（启发式：姓名通常较长）
+        full_name = sorted(name_candidates, key=len, reverse=True)[0]
+
+    return {
+        'passportNumber': passport_number,
+        'fullName': full_name
+    }
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(json.dumps({'success': False, 'error': 'No image path provided'}))
@@ -205,9 +289,20 @@ def main() -> int:
         return 2
 
     try:
-        # 初始化 OCR
-        ocr = PaddleOCR(use_angle_cls=True, lang='en', show_log=False)
-        result = ocr.ocr(str(image_path), cls=True)
+        # ==========================================
+        # 核心修改：提升高分辨率与长文本区域检出能力
+        # ==========================================
+        ocr = PaddleOCR(
+            use_angle_cls=True, 
+            lang='en', 
+            show_log=False,
+            det_limit_side_len=1920,   # 防止高分辨率照片过度缩小导致 MRZ 模糊
+            det_db_unclip_ratio=2.0    # 稍微放大文本框，防止超长 MRZ 被“砍头去尾”
+        )
+        
+        # 应用 EXIF 修复的图像加载器
+        image_bgr = safe_load_image_with_exif(image_path)
+        result = ocr.ocr(image_bgr, cls=True)
         
         chunks = []
         if result:
@@ -217,12 +312,25 @@ def main() -> int:
                     if row and len(row) > 1 and row[1]:
                         chunks.append(str(row[1][0]))
         
-        text = '\n'.join(chunks)
+        text_lines = [c.strip() for c in chunks if c.strip()]
+        text = '\n'.join(text_lines)
+        
         passport_number = extract_passport_number(text)
         is_passport = is_likely_passport(text)
         full_name = extract_name(text)
         age = extract_age(text)
         nationality_code, nationality_raw = extract_nationality(text)
+
+        # 检查是否包含 MRZ 特征码
+        has_mrz = bool(re.search(r'P<[A-Z<]{2,}', text.upper())) or ('<<<<' in text)
+        
+        # 若完全没有 MRZ，则启用严格的 VIZ 防呆兜底提取
+        if not has_mrz:
+            fallback = fallback_extract_viz(text_lines)
+            if not passport_number and fallback.get('passportNumber'):
+                passport_number = fallback['passportNumber']
+            if not full_name and fallback.get('fullName'):
+                full_name = fallback['fullName']
 
         # 只要能提取到关键信息，就认为 success
         print(json.dumps({

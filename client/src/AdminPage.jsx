@@ -21,7 +21,10 @@ import {
   Globe,
   Trash2,
   RotateCcw,
-  ExternalLink
+  ExternalLink,
+  Eye,
+  EyeOff,
+  Sparkles
 } from 'lucide-react';
 
 
@@ -43,6 +46,33 @@ const sanitizeRichHtml = (html) => DOMPurify.sanitize(html || '', {
   ALLOWED_ATTR: ['href', 'target', 'rel', 'src', 'alt'],
   ALLOW_UNKNOWN_PROTOCOLS: false
 });
+
+const AI_CONFIG_STORAGE_KEY = 'checkin.admin.aiExtractConfig';
+const DEFAULT_AI_SYSTEM_PROMPT = '你是一个证件解析专家。我会给你一段护照 OCR 原始文本，请你过滤掉无用的印刷体（如 AUTHORITY, SIGNATURE），提取以下字段：passportNumber, fullName (名在前姓在后), birthDate (YYYYMMDD), sex (M/F), nationalityCode (ISO 2位代码), expiryDate (YYYYMMDD)。请直接返回 JSON 格式，不要有任何多余描述。';
+
+const loadAiConfigFromStorage = () => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(AI_CONFIG_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return {
+      apiKey: typeof parsed?.apiKey === 'string' ? parsed.apiKey : '',
+      modelName: typeof parsed?.modelName === 'string' ? parsed.modelName : '',
+      systemPrompt: typeof parsed?.systemPrompt === 'string' ? parsed.systemPrompt : DEFAULT_AI_SYSTEM_PROMPT,
+      baseUrl: typeof parsed?.baseUrl === 'string' ? parsed.baseUrl : 'https://api.openai.com/v1'
+    };
+  } catch {
+    return null;
+  }
+};
+
+const saveAiConfigToStorage = (config) => {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(AI_CONFIG_STORAGE_KEY, JSON.stringify(config || {}));
+};
 
 
 const RichTextEditor = ({ value, onChange, placeholder }) => {
@@ -428,6 +458,18 @@ const AdminDashboard = ({
   const [completionSaved, setCompletionSaved] = useState(false);
   const [showDeletedRows, setShowDeletedRows] = useState(false);
   const [pendingActionKey, setPendingActionKey] = useState('');
+  const [aiConfig, setAiConfig] = useState(() => (
+    loadAiConfigFromStorage() || {
+      apiKey: '',
+      modelName: '',
+      systemPrompt: DEFAULT_AI_SYSTEM_PROMPT,
+      baseUrl: 'https://api.openai.com/v1'
+    }
+  ));
+  const [showAiApiKey, setShowAiApiKey] = useState(false);
+  const [aiModels, setAiModels] = useState([]);
+  const [aiConfigSaved, setAiConfigSaved] = useState(false);
+  const [aiModelLoading, setAiModelLoading] = useState(false);
 
   const missingBuiltinSteps = useMemo(() => {
     const defaults = buildDefaultSteps(stepLang);
@@ -485,6 +527,37 @@ const AdminDashboard = ({
         setServerStatus('offline');
       });
   }, [adminToken]);
+
+  useEffect(() => {
+    let active = true;
+    const storedConfig = loadAiConfigFromStorage();
+    db.getAiExtractConfig(adminToken)
+      .then((serverConfig) => {
+        if (!active) return;
+        const merged = {
+          apiKey: serverConfig?.apiKey || storedConfig?.apiKey || '',
+          modelName: serverConfig?.modelName || storedConfig?.modelName || '',
+          systemPrompt: serverConfig?.systemPrompt || storedConfig?.systemPrompt || DEFAULT_AI_SYSTEM_PROMPT,
+          baseUrl: serverConfig?.baseUrl || storedConfig?.baseUrl || 'https://api.openai.com/v1'
+        };
+        setAiConfig(merged);
+        saveAiConfigToStorage(merged);
+      })
+      .catch(() => {
+        if (!active) return;
+        const stored = loadAiConfigFromStorage();
+        if (stored) {
+          setAiConfig(stored);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [adminToken]);
+
+  useEffect(() => {
+    saveAiConfigToStorage(aiConfig);
+  }, [aiConfig]);
 
   useEffect(() => {
     let isActive = true;
@@ -631,6 +704,47 @@ const AdminDashboard = ({
   const handleResetCompletion = () => {
     setCompletionTemplate(buildDefaultCompletionTemplate(stepLang));
     setCompletionSaved(false);
+  };
+
+  const handleAiConfigChange = (field, value) => {
+    setAiConfig((prev) => ({ ...prev, [field]: value }));
+    setAiConfigSaved(false);
+  };
+
+  const handleLoadModels = async () => {
+    if (!aiConfig.apiKey) {
+      alert('请先输入 API Key。');
+      return;
+    }
+    setAiModelLoading(true);
+    try {
+      const payload = await db.getAiModels(adminToken, aiConfig.apiKey, aiConfig.baseUrl);
+      const models = Array.isArray(payload?.models) ? payload.models : [];
+      setAiModels(models);
+      if (!aiConfig.modelName && models.length > 0) {
+        setAiConfig((prev) => ({ ...prev, modelName: models[0] }));
+      }
+    } catch (error) {
+      alert('模型列表获取失败，请检查 API Key / Base URL。');
+    } finally {
+      setAiModelLoading(false);
+    }
+  };
+
+  const handleSaveAiConfig = async () => {
+    try {
+      await db.updateAiExtractConfig(adminToken, aiConfig);
+      saveAiConfigToStorage(aiConfig);
+      setAiConfigSaved(true);
+    } catch (error) {
+      alert('AI 提取配置保存失败，请稍后重试。');
+      setAiConfigSaved(false);
+    }
+  };
+
+  const handleResetAiPrompt = () => {
+    setAiConfig((prev) => ({ ...prev, systemPrompt: DEFAULT_AI_SYSTEM_PROMPT }));
+    setAiConfigSaved(false);
   };
 
   const renderContent = () => {
@@ -819,6 +933,89 @@ const AdminDashboard = ({
                     {serverStatus === 'online' ? '已連接 (Online)' : '斷開 (Offline)'}
                   </span>
                 </div>
+              </div>
+            </div>
+            <div className="bg-white rounded-3xl border border-slate-200 p-8 shadow-sm space-y-5">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white">
+                  <Sparkles className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-xl text-slate-800">AI 提取配置</h3>
+                  <p className="text-sm text-slate-500">用于护照 OCR 语义纠错与字段补全（支持 OpenAI 兼容协议）</p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wide text-slate-500">OpenAI Compatible Base URL</label>
+                <input
+                  type="text"
+                  value={aiConfig.baseUrl}
+                  onChange={(e) => handleAiConfigChange('baseUrl', e.target.value)}
+                  placeholder="https://api.openai.com/v1"
+                  className="w-full p-3 rounded-xl border border-slate-200 text-sm"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wide text-slate-500">OpenAI API Key</label>
+                <div className="relative">
+                  <input
+                    type={showAiApiKey ? 'text' : 'password'}
+                    value={aiConfig.apiKey}
+                    onChange={(e) => handleAiConfigChange('apiKey', e.target.value)}
+                    placeholder="sk-..."
+                    className="w-full p-3 pr-12 rounded-xl border border-slate-200 text-sm font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowAiApiKey((prev) => !prev)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700"
+                    aria-label="toggle api key visibility"
+                  >
+                    {showAiApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wide text-slate-500">模型选择</label>
+                <div className="flex gap-3">
+                  <select
+                    value={aiConfig.modelName}
+                    onChange={(e) => handleAiConfigChange('modelName', e.target.value)}
+                    className="flex-1 p-3 rounded-xl border border-slate-200 text-sm bg-white"
+                  >
+                    <option value="">请选择模型</option>
+                    {aiModels.map((model) => (
+                      <option value={model} key={model}>{model}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={handleLoadModels}
+                    disabled={aiModelLoading}
+                    className="px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                  >
+                    {aiModelLoading ? '加载中...' : '获取模型'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wide text-slate-500">System Prompt</label>
+                <textarea
+                  rows={6}
+                  value={aiConfig.systemPrompt}
+                  onChange={(e) => handleAiConfigChange('systemPrompt', e.target.value)}
+                  className="w-full p-3 rounded-xl border border-slate-200 text-sm"
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <button onClick={handleSaveAiConfig} className="px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-bold">保存 AI 配置</button>
+                <button onClick={handleResetAiPrompt} className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-700 text-sm font-bold">重置默认 Prompt</button>
+                {aiConfigSaved && <span className="text-sm text-emerald-600 font-bold">已保存</span>}
               </div>
             </div>
           </div>

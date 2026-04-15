@@ -60,6 +60,7 @@ const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'hotel.db');
 const PADDLE_OCR_PYTHON_PATH = process.env.PADDLE_OCR_PYTHON_PATH || 'python3';
 const PADDLE_OCR_RUNNER = process.env.PADDLE_OCR_RUNNER || path.join(__dirname, 'tools', 'paddle_ocr_runner.py');
+const OPENAI_COMPAT_BASE_URL = process.env.OPENAI_COMPAT_BASE_URL || 'https://api.openai.com/v1';
 const ALLOWED_IMAGE_TYPES = new Map([
   'image/jpeg',
   'image/jpg',
@@ -111,6 +112,17 @@ db.run(`
     counter INTEGER NOT NULL DEFAULT 0,
     transports TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
+db.run(`
+  CREATE TABLE IF NOT EXISTS ai_extract_configs (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    api_key TEXT,
+    model_name TEXT,
+    system_prompt TEXT,
+    base_url TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `);
 
@@ -258,7 +270,22 @@ const parseDataImage = (dataImage) => {
   };
 };
 
-const runLocalPaddleOcr = async (dataImage) => {
+const getAiExtractConfig = () => new Promise((resolve, reject) => {
+  db.get('SELECT api_key, model_name, system_prompt, base_url FROM ai_extract_configs WHERE id = 1', [], (err, row) => {
+    if (err) {
+      reject(err);
+      return;
+    }
+    resolve({
+      apiKey: row?.api_key || '',
+      modelName: row?.model_name || '',
+      systemPrompt: row?.system_prompt || '',
+      baseUrl: row?.base_url || OPENAI_COMPAT_BASE_URL
+    });
+  });
+});
+
+const runLocalPaddleOcr = async (dataImage, aiConfig = {}) => {
   const parsed = parseDataImage(dataImage);
   if (!parsed) {
     return { success: false, unsupported: true, error: 'Invalid image payload' };
@@ -269,7 +296,15 @@ const runLocalPaddleOcr = async (dataImage) => {
 
   try {
     await fs.writeFile(imagePath, parsed.buffer);
-    const { stdout, stderr } = await execFileAsync(PADDLE_OCR_PYTHON_PATH, [PADDLE_OCR_RUNNER, imagePath], {
+    const runnerArgs = [
+      PADDLE_OCR_RUNNER,
+      imagePath,
+      aiConfig.apiKey || '',
+      aiConfig.modelName || '',
+      aiConfig.systemPrompt || '',
+      aiConfig.baseUrl || OPENAI_COMPAT_BASE_URL
+    ];
+    const { stdout, stderr } = await execFileAsync(PADDLE_OCR_PYTHON_PATH, runnerArgs, {
       maxBuffer: 10 * 1024 * 1024,
       timeout: 120000
     });
@@ -807,6 +842,78 @@ app.put('/api/admin/completion-template', requireAdminAuth, (req, res) => {
   );
 });
 
+app.get('/api/admin/ai-config', requireAdminAuth, async (req, res) => {
+  try {
+    const config = await getAiExtractConfig();
+    res.json(config);
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Failed to load AI extract config' });
+  }
+});
+
+app.put('/api/admin/ai-config', requireAdminAuth, (req, res) => {
+  const {
+    apiKey = '',
+    modelName = '',
+    systemPrompt = '',
+    baseUrl = OPENAI_COMPAT_BASE_URL
+  } = req.body || {};
+
+  db.run(
+    `INSERT INTO ai_extract_configs (id, api_key, model_name, system_prompt, base_url, updated_at)
+     VALUES (1, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(id) DO UPDATE SET
+       api_key = excluded.api_key,
+       model_name = excluded.model_name,
+       system_prompt = excluded.system_prompt,
+       base_url = excluded.base_url,
+       updated_at = CURRENT_TIMESTAMP`,
+    [String(apiKey || ''), String(modelName || ''), String(systemPrompt || ''), String(baseUrl || OPENAI_COMPAT_BASE_URL)],
+    (err) => {
+      if (err) {
+        res.status(500).json({ error: err.message });
+        return;
+      }
+      res.json({ success: true });
+    }
+  );
+});
+
+app.get('/api/admin/ai-models', requireAdminAuth, async (req, res) => {
+  try {
+    const config = await getAiExtractConfig();
+    const apiKey = (req.query.apiKey || config.apiKey || '').trim();
+    const baseUrl = (req.query.baseUrl || config.baseUrl || OPENAI_COMPAT_BASE_URL).trim().replace(/\/$/, '');
+
+    if (!apiKey) {
+      res.status(400).json({ error: 'apiKey is required' });
+      return;
+    }
+
+    const modelsResponse = await fetch(`${baseUrl}/models`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`
+      }
+    });
+    if (!modelsResponse.ok) {
+      const details = await modelsResponse.text();
+      res.status(modelsResponse.status).json({ error: details || 'Failed to fetch model list' });
+      return;
+    }
+
+    const payload = await modelsResponse.json();
+    const models = Array.isArray(payload?.data)
+      ? payload.data
+        .map((item) => item?.id)
+        .filter((id) => typeof id === 'string' && id.length > 0)
+        .sort((a, b) => a.localeCompare(b))
+      : [];
+    res.json({ models });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Failed to fetch model list' });
+  }
+});
+
 app.post('/api/submit', async (req, res) => {
   try {
     const { guests } = req.body;
@@ -853,7 +960,13 @@ app.post('/api/ocr/passport', async (req, res) => {
       return;
     }
 
-    const ocrResult = await runLocalPaddleOcr(image);
+    const aiConfig = await getAiExtractConfig().catch(() => ({
+      apiKey: '',
+      modelName: '',
+      systemPrompt: '',
+      baseUrl: OPENAI_COMPAT_BASE_URL
+    }));
+    const ocrResult = await runLocalPaddleOcr(image, aiConfig);
     res.json(ocrResult);
   } catch (error) {
     console.error('護照 OCR 接口錯誤:', error);

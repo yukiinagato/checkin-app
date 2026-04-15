@@ -16,7 +16,7 @@ if sys.stdout.encoding != 'utf-8':
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-# 全局容错月份映射表（专门对付 OCR 错别字，如 0CT, 1AN）
+# 全局容错月份映射表
 MONTH_MAP = {
     'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
     'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12,
@@ -24,12 +24,13 @@ MONTH_MAP = {
 }
 MONTH_BLACKLIST = set(MONTH_MAP.keys())
 
-# 全局印刷体黑名单
+# 全局印刷体黑名单 - 增加更多干扰词
 NAME_BLACKLIST = {
     'SIGNATURE', 'BEARER', 'MINISTRY', 'PASSPORT', 'REPUBLIC', 'KOREA',
     'DATE', 'SURNAME', 'GIVEN', 'NATIONALITY', 'BIRTH', 'AUTHORITY',
-    'COUNTRY', 'NUMBER', 'SEX', 'TYPE', 'CODE', 'ISSUING', 'AFFAIRS', 'FOREIGN', 'NAMES',
-    'KOR', 'CHN', 'JPN', 'USA', 'GBR'
+    'COUNTRY', 'NUMBER', 'SEX', 'TYPE', 'CODE', 'ISSUING', 'AFFAIRS', 
+    'FOREIGN', 'NAMES', 'KOR', 'CHN', 'JPN', 'USA', 'GBR', 'HONG', 'KONG',
+    'REGION', 'SPECIAL', 'ADMINISTRATIVE', 'PEOPLE', 'CHINA', 'IMMIGRATION'
 }
 
 def _mrz_char_value(ch: str) -> int:
@@ -47,12 +48,12 @@ def _mrz_check_digit(value: str) -> str:
     return str(total % 10)
 
 def extract_passport_number(text: str) -> str:
-    """极其严格的 MRZ 提取。删除了所有危险的关键字盲猜逻辑。"""
+    """极其严格的 MRZ 提取。"""
     text = (text or '').upper()
     text = text.replace('(', '<').replace('{', '<').replace('[', '<')
     compact = re.sub(r'\s+', '', text)
     
-    # 1) 紧凑模式正则：优先匹配完整标准的两行式 MRZ
+    # 1) 紧凑模式正则
     mrz_compact = re.search(r'([A-Z0-9<]{9})(\d)[A-Z0-9<]{3}(\d{6})(\d)[MF<](\d{6})(\d)', compact)
     if mrz_compact:
         field = mrz_compact.group(1)
@@ -81,38 +82,63 @@ def is_likely_passport(text: str) -> bool:
     return sum(1 for h in hints if h in t) >= 2
 
 def _normalize_name(raw: str) -> str:
-    cleaned = re.sub(r'[^A-Z,\s]', '', (raw or '').upper()).strip(' ,')
-    if not cleaned: return ''
-    if ',' in cleaned:
-        parts = [p.strip() for p in cleaned.split(',') if p.strip()]
-        if len(parts) >= 2: return f"{parts[1]} {parts[0]}".strip()
-    return cleaned.replace(',', ' ').strip()
+    # 移除标签前缀和非字母字符
+    cleaned = re.sub(r'^[/]+', '', raw.upper())
+    cleaned = re.sub(r'[^A-Z\s]', '', cleaned).strip()
+    if not cleaned or cleaned in NAME_BLACKLIST: return ''
+    return cleaned
 
 def extract_name(text: str) -> str:
     t = (text or '').upper()
     
-    # 核心修复：不再暴力删除所有换行符，改为按行处理，彻底防止正则的“跨行贪婪吞噬”
+    # 1. MRZ 提取
     lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
     for line in lines:
         compact_line = line.replace(' ', '').replace('(', '<').replace('[', '<')
-        # 使用 +? 非贪婪匹配，要求必须在遇到 << 时停下，防止吃掉后面的无关印刷体
         mrz_name = re.search(r'P[A-Z<]{4}([A-Z<]+?)<<([A-Z<]+)', compact_line)
         if mrz_name:
             surname = mrz_name.group(1).replace('<', ' ').strip()
-            # 提取名字部分：以遇到第一个 << 为界，剔除后面超长的填充符和可能粘连的脏数据
             given_raw = mrz_name.group(2)
             given = given_raw.split('<<')[0].strip('<').replace('<', ' ').strip()
             return f"{given} {surname}".strip()
 
-    # Fallback to Text (VIZ)
+    # 2. VIZ 提取 - 针对特定标签寻找后续行
     for i, line in enumerate(lines):
-        if 'NAME' in line and i + 1 < len(lines):
-            candidate = _normalize_name(lines[i + 1])
-            if candidate: return candidate
+        # 排除掉本身就是关键词的行作为名字
+        if any(k in line for k in ['SURNAME', 'GIVEN NAMES']):
+            # 寻找接下来的 3 行中第一个看起来像名字的
+            for j in range(i + 1, min(len(lines), i + 4)):
+                candidate = _normalize_name(lines[j])
+                if candidate and len(candidate) >= 2:
+                    return candidate
+    
+    # 3. 兜底逻辑由 fallback_extract_viz 处理
     return ''
 
+def _parse_date_token(token: str):
+    token = token.upper().strip().replace('O', '0')
+    # 匹配 DDMMMYYYY 或 DDMMMYY
+    m = re.match(r'^(\d{2})([A-Z0-9]{3})(\d{2,4})$', token)
+    if m:
+        dd, mm_str, yy_str = int(m.group(1)), m.group(2), m.group(3)
+        mm = MONTH_MAP.get(mm_str)
+        if mm:
+            try:
+                # 处理 2 位年份
+                year = int(yy_str)
+                if len(yy_str) == 2:
+                    # 简单规则：当前年份以后认为是 19XX
+                    current_yy = date.today().year % 100
+                    year += 2000 if year <= current_yy else 1900
+                return date(year, mm, dd)
+            except: pass
+
+    for fmt in ('%d/%m/%Y', '%Y/%m/%d', '%d-%m-%Y', '%Y-%m-%d'):
+        try: return datetime.strptime(token, fmt).date()
+        except ValueError: pass
+    return None
+
 def extract_dob_and_age(text: str):
-    """强大容错的出生日期提取，返回 (YYYMMDD, age)"""
     t = (text or '').upper()
     compact = re.sub(r'\s+', '', t).replace('(', '<')
     mrz = re.search(r'[A-Z0-9<]{9}\d[A-Z0-9<]{3}(\d{6})\d[MF<]', compact)
@@ -129,23 +155,23 @@ def extract_dob_and_age(text: str):
     lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
     for i, line in enumerate(lines):
         if 'BIRTH' in line:
-            nearby = ' '.join(lines[max(0, i):min(len(lines), i + 3)])
-            # 兼容 "1710/0CT1978" 这种紧凑混杂格式
-            m = re.search(r'\b(\d{2})[\s\d/.-]*([A-Z0-9]{3})[\s/.-]*(\d{4})\b', nearby)
-            if m:
-                dd, mm_str, yy = int(m.group(1)), m.group(2), int(m.group(3))
-                mm = MONTH_MAP.get(mm_str)
-                if mm:
-                    try:
-                        dob = date(yy, mm, dd)
-                        today = date.today()
-                        age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-                        return dob.strftime('%Y%m%d'), age
-                    except: pass
+            # 扩大搜索范围到 5 行，应对排版松散的情况
+            nearby = ' '.join(lines[max(0, i):min(len(lines), i + 6)])
+            # 匹配 DDMMM YY/YYYY
+            candidates = re.findall(r'(\d{2}[A-Z0-9]{3}\s?\d{2,4})', nearby)
+            # 也要匹配标准格式
+            candidates += re.findall(r'(\d{2}[/-]\d{2}[/-]\d{2,4}|\d{4}[/-]\d{2}[/-]\d{2})', nearby)
+            
+            for token in candidates:
+                # 移除空格再解析
+                dob = _parse_date_token(token.replace(' ', ''))
+                if dob:
+                    today = date.today()
+                    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+                    return dob.strftime('%Y%m%d'), age
     return '', None
 
 def extract_sex(text: str) -> str:
-    """提取性别"""
     t = (text or '').upper()
     compact = re.sub(r'\s+', '', t).replace('(', '<')
     mrz = re.search(r'[A-Z0-9<]{9}\d[A-Z0-9<]{3}\d{6}\d([MF<])', compact)
@@ -153,11 +179,19 @@ def extract_sex(text: str) -> str:
     
     lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
     for i, line in enumerate(lines):
-        if 'BIRTH' in line or 'SEX' in line:
-            # 向下寻找孤立的 M 或 F
-            for j in range(i, min(len(lines), i + 4)):
-                if lines[j] == 'M': return 'M'
-                if lines[j] == 'F': return 'F'
+        if 'SEX' in line:
+            # 向下寻找 5 行
+            for j in range(i, min(len(lines), i + 6)):
+                content = lines[j].strip('/')
+                if content == 'M': return 'M'
+                if content == 'F': return 'F'
+                # 处理粘连情况，如 "/M" 或 "SEX M"
+                if re.search(r'\bM\b', content): return 'M'
+                if re.search(r'\bF\b', content): return 'F'
+    
+    # 最后的尝试：搜索整个文本中独立的 M/F
+    if re.search(r'\bM\b', t): return 'M'
+    if re.search(r'\bF\b', t): return 'F'
     return ''
 
 ISO3_TO_ISO2 = {
@@ -191,11 +225,6 @@ def extract_nationality(text: str):
         return '', raw
     return '', ''
 
-
-# ==========================================
-# 增强与防呆模块 (Fallback & Enhancements)
-# ==========================================
-
 def safe_load_image_with_exif(image_path: Path) -> np.ndarray:
     with Image.open(image_path) as img:
         normalized = ImageOps.exif_transpose(img)
@@ -207,36 +236,38 @@ def fallback_extract_viz(text_lines: List[str]) -> Dict[str, str]:
     passport_number = ''
     full_name = ''
 
-    # 1. 提取护照号
+    # 1. 护照号
     for line in text_lines:
         if not line: continue
         tokens = re.findall(r'\b[A-Z0-9]{8,10}\b', line.upper())
         for token in tokens:
-            # 要求必须含数字，且不能包含月份
             if any(c.isdigit() for c in token) and not any(month in token for month in MONTH_BLACKLIST):
                 passport_number = token
                 break
         if passport_number: break
 
-    # 2. 提取姓名
+    # 2. 姓名
     name_candidates: List[str] = []
     for orig_line in text_lines:
         if not orig_line or len(orig_line) < 3: continue
         if re.search(r'[a-z]', orig_line): continue
         if '<' in orig_line: continue
-            
-        line_upper = orig_line.upper()
+        
+        line_upper = orig_line.upper().replace('/', ' ').strip()
         words = [re.sub(r'[^A-Z]', '', w) for w in line_upper.split()]
         words = [w for w in words if w]
         
         if not words: continue
+        # 排除包含黑名单单词的行
         if any(word in NAME_BLACKLIST for word in words): continue
         if re.search(r'\d', orig_line): continue
             
         name_candidates.append(' '.join(words))
 
     if name_candidates:
-        full_name = sorted(name_candidates, key=len, reverse=True)[0]
+        # 优先取包含多个单词且长度适中的作为姓名
+        name_candidates.sort(key=lambda x: (len(x.split()) > 1, len(x)), reverse=True)
+        full_name = name_candidates[0]
 
     return {
         'passportNumber': passport_number,
@@ -290,7 +321,6 @@ def main() -> int:
         sex = extract_sex(text)
         nationality_code, nationality_raw = extract_nationality(text)
 
-        # 执行严苛的 VIZ Fallback 并智能合并
         fallback = fallback_extract_viz(text_lines)
         if not passport_number:
             passport_number = fallback.get('passportNumber', '')

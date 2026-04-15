@@ -34,6 +34,19 @@ VIZ_NAME_BLACKLIST = {
     'DEPARTMENT', 'STATE', 'OFFICE', 'GOVERNMENT', 'HKSAR'
 }
 
+ISO3_TO_ISO2 = {
+    'CHN': 'CN', 'JPN': 'JP', 'KOR': 'KR', 'USA': 'US', 'GBR': 'GB', 'CAN': 'CA',
+    'AUS': 'AU', 'FRA': 'FR', 'DEU': 'DE', 'ITA': 'IT', 'ESP': 'ES', 'RUS': 'RU',
+    'IND': 'IN', 'PHL': 'PH', 'VNM': 'VN', 'MYS': 'MY', 'THA': 'TH', 'IDN': 'ID',
+    'SGP': 'SG', 'TWN': 'TW', 'HKG': 'HK', 'MAC': 'MO'
+}
+
+NATIONALITY_KEYWORDS = {
+    'CHINESE': 'CN', 'CHINA': 'CN', 'JAPANESE': 'JP', 'JAPAN': 'JP', 
+    'KOREAN': 'KR', 'KOREA': 'KR', 'REPUBLIC OF KOREA': 'KR',
+    'AMERICAN': 'US', 'BRITISH': 'GB', 'CANADIAN': 'CA', 'AUSTRALIAN': 'AU'
+}
+
 # ==========================================
 # MRZ 基礎校驗工具
 # ==========================================
@@ -51,6 +64,12 @@ def _mrz_check_digit(value: str) -> str:
     weights = (7, 3, 1)
     total = sum(_mrz_char_value(ch) * weights[i % 3] for i, ch in enumerate(value))
     return str(total % 10)
+
+def _fuzzy_iso3_check(raw: str) -> str:
+    """處理 OCR 對 ISO 代碼的常見混淆 (如 K0R -> KOR)"""
+    if not raw or len(raw) != 3: return raw
+    fixed = raw.replace('0', 'O').replace('1', 'I').replace('2', 'Z').replace('5', 'S')
+    return fixed
 
 # ==========================================
 # 核心 MRZ 解析模組 (最高優先級)
@@ -107,6 +126,26 @@ def extract_dob_sex_mrz(text: str):
             except: pass
     return '', None, ''
 
+def extract_nationality_mrz(text: str) -> str:
+    """從機讀碼提取國籍。"""
+    text = (text or '').upper()
+    compact = re.sub(r'\s+', '', text).replace('(', '<')
+    
+    # 策略 1: 從第二行提取 (護照號+校驗位 之後的 3 位)
+    # 匹配模式: 護照號(9) + 1位校驗 + 國籍(3)
+    m2 = re.search(r'([A-Z0-9<]{9})\d([A-Z0-9<]{3})', compact)
+    if m2:
+        iso3 = _fuzzy_iso3_check(m2.group(2))
+        if iso3 in ISO3_TO_ISO2: return iso3
+
+    # 策略 2: 從第一行提取 (P+類型(1)+國籍(3))
+    m1 = re.search(r'P[A-Z<]{1}([A-Z0-9<]{3})', compact)
+    if m1:
+        iso3 = _fuzzy_iso3_check(m1.group(1))
+        if iso3 in ISO3_TO_ISO2: return iso3
+        
+    return ''
+
 # ==========================================
 # VIZ 可視區解析模組 (次要補全)
 # ==========================================
@@ -134,8 +173,9 @@ def fallback_extract_viz_all(text_lines: List[str]) -> Dict:
     當 MRZ 缺失或不完整時的備用提取器。
     包含關鍵字過濾與黑名單防禦。
     """
-    res = {'passportNumber': '', 'fullName': '', 'birthDate': '', 'age': None, 'sex': ''}
-    
+    res = {'passportNumber': '', 'fullName': '', 'birthDate': '', 'age': None, 'sex': '', 'nationalityCode': ''}
+    text = '\n'.join(text_lines).upper()
+
     # 1. 護照號與日期備選
     for i, line in enumerate(text_lines):
         ln = line.upper()
@@ -146,9 +186,8 @@ def fallback_extract_viz_all(text_lines: List[str]) -> Dict:
                 if any(c.isdigit() for c in tk) and not any(m in tk for m in MONTH_BLACKLIST):
                     res['passportNumber'] = tk; break
 
-        # 出生日期 (針對 22JUL00 這種格式)
+        # 出生日期
         if not res['birthDate'] and ('BIRTH' in ln or 'BIH' in ln):
-            # 搜索附近 5 行
             nearby = ' '.join(text_lines[max(0, i):min(len(text_lines), i+6)]).upper()
             dates = re.findall(r'(\d{2}[A-Z0-9]{3}\d{2,4})', nearby)
             for d_str in dates:
@@ -175,7 +214,6 @@ def fallback_extract_viz_all(text_lines: List[str]) -> Dict:
             for j in range(i + 1, min(len(text_lines), i + 4)):
                 cand = re.sub(r'^[/]+', '', text_lines[j].upper())
                 cand = re.sub(r'[^A-Z\s]', '', cand).strip()
-                # 過濾黑名單，且長度合理（避免把整個機構名稱當作名字）
                 if 3 < len(cand) < 30 and not any(w in VIZ_NAME_BLACKLIST for w in cand.split()):
                     name_cands.append(cand)
     
@@ -183,7 +221,13 @@ def fallback_extract_viz_all(text_lines: List[str]) -> Dict:
         name_cands.sort(key=lambda x: (2 <= len(x.split()) <= 3, len(x)), reverse=True)
         res['fullName'] = name_cands[0]
 
-    # 性別最後兜底：全局搜索獨立的 M/F
+    # 3. 國籍備選 (VIZ 掃描關鍵字)
+    for keyword, iso2 in NATIONALITY_KEYWORDS.items():
+        if keyword in text:
+            res['nationalityCode'] = iso2
+            break
+
+    # 性別最後兜底
     if not res['sex']:
         for ln in text_lines:
             if ln.strip().upper() in ('M', 'F'): res['sex'] = ln.strip().upper(); break
@@ -213,6 +257,8 @@ def main() -> int:
         passport_number = extract_passport_number_mrz(text)
         full_name = extract_name_mrz(text)
         birthDate, age, sex = extract_dob_sex_mrz(text)
+        nationality_iso3 = extract_nationality_mrz(text)
+        nationality_code = ISO3_TO_ISO2.get(nationality_iso3, '')
 
         # 2. 只有當 MRZ 缺失時，才執行 VIZ 備選提取
         viz = fallback_extract_viz_all(chunks)
@@ -222,6 +268,7 @@ def main() -> int:
         if not birthDate: birthDate = viz['birthDate']
         if not age: age = viz['age']
         if not sex: sex = viz['sex']
+        if not nationality_code: nationality_code = viz['nationalityCode']
 
         # 只要護照號拿到了就算成功
         print(json.dumps({
@@ -232,7 +279,7 @@ def main() -> int:
             'birthDate': birthDate,
             'age': age,
             'sex': sex,
-            'nationalityCode': 'CN' if 'CHN' in text.upper() else '',
+            'nationalityCode': nationality_code,
             'text': text,
             'engine': 'paddleocr-python-local'
         }, ensure_ascii=False))

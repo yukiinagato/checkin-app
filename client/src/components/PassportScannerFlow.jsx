@@ -402,7 +402,7 @@ const parseTd3FromConsensus = (line1, line2) => {
     passportNumber: (passportSolved?.value || passportClean).slice(0, 9).replace(/</g, ''),
     birthDate: (birthSolved?.value || birthClean).slice(0, 6),
     expiryDate: (expirySolved?.value || expiryClean).slice(0, 6),
-    sex: sexRaw.replace('<', ''),
+    sex: sexRaw.replace(/</g, ''),
     nationalityCode: natRaw.replace(/</g, ''),
     fullName: l1.slice(5).replace(/<+/g, ' ').trim(),
     checksumValid: isValid

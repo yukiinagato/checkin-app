@@ -123,7 +123,8 @@ const extractMrzLinesFromText = (text) => {
     .sort((a, b) => b.length - a.length);
 
   const line2Candidates = lines
-    .filter((line) => !line.startsWith('P') && line.length >= 18 && line.includes('<'))
+    // 不再强制要求包含 '<'。只要长度够，且包含至少4个连续数字(如出生年份)，就认为是第二行
+    .filter((line) => !line.startsWith('P') && line.length >= 28 && /\d{4}/.test(line))
     .sort((a, b) => b.length - a.length);
 
   const line1 = line1Candidates[0];
@@ -372,7 +373,8 @@ const parseTd3FromConsensus = (line1, line2) => {
 
   // 🎯 核心杀招：动态正则锚点
   // 匹配：3位字母(国籍) + 7位字符(生日) + 1位字符(性别) + 7位字符(有效期)
-  const anchorMatch = l2.match(/([A-Z<]{3})([0-9A-Z<]{7})([A-Z0-9<])([0-9A-Z<]{7})/i);
+  // 允许国籍区出现数字(如 K0R)，确保锚点在最恶劣的 OCR 下依然坚挺
+  const anchorMatch = l2.match(/([A-Z0-9<]{3})([0-9A-Z<]{7})([A-Z0-9<])([0-9A-Z<]{7})/i);
   
   if (anchorMatch) {
     console.log(`⚓ [正则锚点触发] 成功定位特征序列！免疫一切位移错乱。(Index: ${anchorMatch.index})`);

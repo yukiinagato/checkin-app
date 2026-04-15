@@ -80,14 +80,35 @@ def is_likely_passport(text: str) -> bool:
     hints = ['NATIONALITY', 'SURNAME', 'GIVEN', 'DATE OF BIRTH', 'SEX']
     return sum(1 for h in hints if h in t) >= 2
 
+def _normalize_name(raw: str) -> str:
+    cleaned = re.sub(r'[^A-Z,\s]', '', (raw or '').upper()).strip(' ,')
+    if not cleaned: return ''
+    if ',' in cleaned:
+        parts = [p.strip() for p in cleaned.split(',') if p.strip()]
+        if len(parts) >= 2: return f"{parts[1]} {parts[0]}".strip()
+    return cleaned.replace(',', ' ').strip()
+
 def extract_name(text: str) -> str:
     t = (text or '').upper()
-    compact = re.sub(r'\s+', '', t).replace('(', '<')
-    mrz_name = re.search(r'P[A-Z<]{4}([A-Z<]+)<<([A-Z<]+)', compact)
-    if mrz_name:
-        surname = mrz_name.group(1).replace('<', ' ').strip()
-        given = mrz_name.group(2).replace('<', ' ').strip()
-        return f"{given} {surname}".strip()
+    
+    # 核心修复：不再暴力删除所有换行符，改为按行处理，彻底防止正则的“跨行贪婪吞噬”
+    lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
+    for line in lines:
+        compact_line = line.replace(' ', '').replace('(', '<').replace('[', '<')
+        # 使用 +? 非贪婪匹配，要求必须在遇到 << 时停下，防止吃掉后面的无关印刷体
+        mrz_name = re.search(r'P[A-Z<]{4}([A-Z<]+?)<<([A-Z<]+)', compact_line)
+        if mrz_name:
+            surname = mrz_name.group(1).replace('<', ' ').strip()
+            # 提取名字部分：以遇到第一个 << 为界，剔除后面超长的填充符和可能粘连的脏数据
+            given_raw = mrz_name.group(2)
+            given = given_raw.split('<<')[0].strip('<').replace('<', ' ').strip()
+            return f"{given} {surname}".strip()
+
+    # Fallback to Text (VIZ)
+    for i, line in enumerate(lines):
+        if 'NAME' in line and i + 1 < len(lines):
+            candidate = _normalize_name(lines[i + 1])
+            if candidate: return candidate
     return ''
 
 def extract_dob_and_age(text: str):

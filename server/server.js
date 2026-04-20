@@ -14,6 +14,39 @@ const {
   generateAuthenticationOptions,
   verifyAuthenticationResponse
 } = require('@simplewebauthn/server');
+
+const ALLOWED_AI_BASE_URL_HOSTS = new Set(
+  String(process.env.AI_BASE_URL_ALLOWLIST || 'api.openai.com')
+    .split(',')
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean)
+);
+
+function normalizeAndValidateAiBaseUrl(input) {
+  const raw = String(input || OPENAI_COMPAT_BASE_URL).trim();
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch (err) {
+    throw new Error('Invalid baseUrl');
+  }
+
+  if (!['https:'].includes(parsed.protocol)) {
+    throw new Error('baseUrl must use https');
+  }
+
+  if (parsed.username || parsed.password) {
+    throw new Error('baseUrl must not include credentials');
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  if (!ALLOWED_AI_BASE_URL_HOSTS.has(hostname)) {
+    throw new Error('baseUrl host is not allowed');
+  }
+
+  const normalizedPath = parsed.pathname.replace(/\/+$/, '');
+  return `${parsed.origin}${normalizedPath}`;
+}
 const STEP_TEMPLATES = require('./stepTemplates');
 const COMPLETION_TEMPLATES = require('./completionTemplates');
 const envPath = process.env.NODE_ENV === 'development' ? '.env.development' : '.env.production';
@@ -859,6 +892,14 @@ app.put('/api/admin/ai-config', requireAdminAuth, (req, res) => {
     baseUrl = OPENAI_COMPAT_BASE_URL
   } = req.body || {};
 
+  let validatedBaseUrl;
+  try {
+    validatedBaseUrl = normalizeAndValidateAiBaseUrl(baseUrl || OPENAI_COMPAT_BASE_URL);
+  } catch (error) {
+    res.status(400).json({ error: error.message || 'Invalid baseUrl' });
+    return;
+  }
+
   db.run(
     `INSERT INTO ai_extract_configs (id, api_key, model_name, system_prompt, base_url, updated_at)
      VALUES (1, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -868,7 +909,7 @@ app.put('/api/admin/ai-config', requireAdminAuth, (req, res) => {
        system_prompt = excluded.system_prompt,
        base_url = excluded.base_url,
        updated_at = CURRENT_TIMESTAMP`,
-    [String(apiKey || ''), String(modelName || ''), String(systemPrompt || ''), String(baseUrl || OPENAI_COMPAT_BASE_URL)],
+    [String(apiKey || ''), String(modelName || ''), String(systemPrompt || ''), validatedBaseUrl],
     (err) => {
       if (err) {
         res.status(500).json({ error: err.message });
@@ -883,14 +924,24 @@ app.post('/api/admin/ai-models', requireAdminAuth, async (req, res) => {
   try {
     const config = await getAiExtractConfig();
     const apiKey = (req.body?.apiKey || config.apiKey || '').trim();
-    const baseUrl = (req.body?.baseUrl || config.baseUrl || OPENAI_COMPAT_BASE_URL).trim().replace(/\/$/, '');
+
+    let validatedBaseUrl;
+    try {
+      validatedBaseUrl = normalizeAndValidateAiBaseUrl(
+        req.body?.baseUrl || config.baseUrl || OPENAI_COMPAT_BASE_URL
+      );
+    } catch (error) {
+      res.status(400).json({ error: error.message || 'Invalid baseUrl' });
+      return;
+    }
 
     if (!apiKey) {
       res.status(400).json({ error: 'apiKey is required' });
       return;
     }
 
-    const modelsResponse = await fetch(`${baseUrl}/models`, {
+    const modelsUrl = new URL('/models', validatedBaseUrl).toString();
+    const modelsResponse = await fetch(modelsUrl, {
       headers: {
         Authorization: `Bearer ${apiKey}`
       }

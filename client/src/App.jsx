@@ -218,6 +218,12 @@ const DB = {
     return await res.json();
   },
 
+  async getTemplateBundle(lang) {
+    const res = await fetch(`${API_URL}/template-bundle?lang=${encodeURIComponent(lang)}`);
+    if (!res.ok) throw new Error('Failed to fetch template bundle');
+    return await res.json();
+  },
+
   async updateCompletionTemplate(adminToken, lang, template) {
     const res = await fetch(`${API_URL}/admin/completion-template?lang=${encodeURIComponent(lang)}`, {
       method: 'PUT',
@@ -840,47 +846,25 @@ const GuestFlow = ({
     let isActive = true;
     if (!lang) return () => { };
 
-    DB.getSteps(lang)
-      .then((steps) => {
+    DB.getTemplateBundle(lang)
+      .then((bundle) => {
         if (!isActive) return;
-        const normalized = normalizeSteps(steps, buildDefaultSteps(lang));
-        setStepsConfig(normalized);
-        saveSteps(lang, normalized);
+        const normalizedSteps = normalizeSteps(bundle?.steps?.data, buildDefaultSteps(lang));
+        const normalizedCompletionTemplate = normalizeCompletionTemplate(
+          bundle?.completionTemplate?.data,
+          buildDefaultCompletionTemplate(lang)
+        );
+        setStepsConfig(normalizedSteps);
+        setCompletionTemplate(normalizedCompletionTemplate);
+        saveSteps(lang, normalizedSteps);
+        saveCompletionTemplate(lang, normalizedCompletionTemplate);
       })
       .catch(() => {
         if (!isActive) return;
         const storedSteps = loadSteps(lang);
-        if (storedSteps) {
-          setStepsConfig(storedSteps);
-          return;
-        }
-        setStepsConfig(buildDefaultSteps(lang));
-      });
-
-    return () => {
-      isActive = false;
-    };
-  }, [lang]);
-
-  useEffect(() => {
-    let isActive = true;
-    if (!lang) return () => { };
-
-    DB.getCompletionTemplate(lang)
-      .then((template) => {
-        if (!isActive) return;
-        const normalized = normalizeCompletionTemplate(template, buildDefaultCompletionTemplate(lang));
-        setCompletionTemplate(normalized);
-        saveCompletionTemplate(lang, normalized);
-      })
-      .catch(() => {
-        if (!isActive) return;
-        const stored = loadCompletionTemplate(lang);
-        if (stored) {
-          setCompletionTemplate(stored);
-          return;
-        }
-        setCompletionTemplate(buildDefaultCompletionTemplate(lang));
+        const storedCompletionTemplate = loadCompletionTemplate(lang);
+        setStepsConfig(storedSteps || buildDefaultSteps(lang));
+        setCompletionTemplate(storedCompletionTemplate || buildDefaultCompletionTemplate(lang));
       });
 
     return () => {

@@ -59,7 +59,7 @@ const loadAiConfigFromStorage = () => {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     return {
-      apiKey: typeof parsed?.apiKey === 'string' ? parsed.apiKey : '',
+      apiKey: '',
       modelName: typeof parsed?.modelName === 'string' ? parsed.modelName : '',
       systemPrompt: typeof parsed?.systemPrompt === 'string' ? parsed.systemPrompt : DEFAULT_AI_SYSTEM_PROMPT,
       baseUrl: typeof parsed?.baseUrl === 'string' ? parsed.baseUrl : 'https://api.openai.com/v1'
@@ -71,7 +71,12 @@ const loadAiConfigFromStorage = () => {
 
 const saveAiConfigToStorage = (config) => {
   if (typeof window === 'undefined') return;
-  window.localStorage.setItem(AI_CONFIG_STORAGE_KEY, JSON.stringify(config || {}));
+  const safeConfig = {
+    modelName: typeof config?.modelName === 'string' ? config.modelName : '',
+    systemPrompt: typeof config?.systemPrompt === 'string' ? config.systemPrompt : DEFAULT_AI_SYSTEM_PROMPT,
+    baseUrl: typeof config?.baseUrl === 'string' ? config.baseUrl : 'https://api.openai.com/v1'
+  };
+  window.localStorage.setItem(AI_CONFIG_STORAGE_KEY, JSON.stringify(safeConfig));
 };
 
 

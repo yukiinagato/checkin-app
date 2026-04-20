@@ -249,13 +249,18 @@ const DB = {
   },
 
   async updateAiExtractConfig(adminToken, config) {
+    const safeConfig = {
+      modelName: config?.modelName || '',
+      systemPrompt: config?.systemPrompt || DEFAULT_AI_SYSTEM_PROMPT,
+      baseUrl: config?.baseUrl || 'https://api.openai.com/v1'
+    };
     const res = await fetch(`${API_URL}/admin/ai-config`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${adminToken}`
       },
-      body: JSON.stringify(config || {})
+      body: JSON.stringify(safeConfig)
     });
     if (!res.ok) throw new Error('Failed to save AI extract config');
     return await res.json();

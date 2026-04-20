@@ -879,11 +879,11 @@ app.put('/api/admin/ai-config', requireAdminAuth, (req, res) => {
   );
 });
 
-app.get('/api/admin/ai-models', requireAdminAuth, async (req, res) => {
+app.post('/api/admin/ai-models', requireAdminAuth, async (req, res) => {
   try {
     const config = await getAiExtractConfig();
-    const apiKey = (req.query.apiKey || config.apiKey || '').trim();
-    const baseUrl = (req.query.baseUrl || config.baseUrl || OPENAI_COMPAT_BASE_URL).trim().replace(/\/$/, '');
+    const apiKey = (req.body?.apiKey || config.apiKey || '').trim();
+    const baseUrl = (req.body?.baseUrl || config.baseUrl || OPENAI_COMPAT_BASE_URL).trim().replace(/\/$/, '');
 
     if (!apiKey) {
       res.status(400).json({ error: 'apiKey is required' });

@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const os = require('os');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
+const rateLimit = require('express-rate-limit');
 const {
   generateRegistrationOptions,
   verifyRegistrationResponse,
@@ -884,7 +885,15 @@ app.get('/api/admin/ai-config', requireAdminAuth, async (req, res) => {
   }
 });
 
-app.put('/api/admin/ai-config', requireAdminAuth, (req, res) => {
+const adminConfigWriteLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' }
+});
+
+app.put('/api/admin/ai-config', requireAdminAuth, adminConfigWriteLimiter, (req, res) => {
   const {
     apiKey = '',
     modelName = '',

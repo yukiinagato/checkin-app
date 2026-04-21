@@ -382,6 +382,29 @@ const parseRecordData = (row) => {
 
 const parseAge = (value) => Number.parseInt(String(value ?? '').trim(), 10);
 
+const getTemplateRowWithFallback = (tableName, columnName, targetLang, fallbackLang = 'jp') => new Promise((resolve, reject) => {
+  const preferred = typeof targetLang === 'string' && targetLang.trim() ? targetLang.trim() : fallbackLang;
+  const sql = `
+    SELECT lang, ${columnName} AS payload
+    FROM ${tableName}
+    WHERE lang IN (?, ?)
+    ORDER BY CASE WHEN lang = ? THEN 0 WHEN lang = ? THEN 1 ELSE 2 END
+    LIMIT 1
+  `;
+
+  db.get(sql, [preferred, fallbackLang, preferred, fallbackLang], (err, row) => {
+    if (err) {
+      reject(err);
+      return;
+    }
+    resolve({
+      requestedLang: preferred,
+      resolvedLang: row?.lang || null,
+      payload: row?.payload || null
+    });
+  });
+});
+
 const validateGuestPayload = (guest) => {
   if (!guest || typeof guest !== 'object') {
     return { valid: false, error: 'Invalid guest item' };
@@ -777,29 +800,73 @@ app.post('/api/admin/logout', requireAdminAuth, (req, res) => {
 app.get('/api/steps', (req, res) => {
   const { lang } = req.query;
   const targetLang = typeof lang === 'string' ? lang : 'zh-hans';
-  db.get('SELECT steps FROM step_templates WHERE lang = ?', [targetLang], (err, row) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!row) return res.status(404).json({ error: 'Steps not found' });
-    try {
-      res.json(JSON.parse(row.steps));
-    } catch (parseErr) {
-      res.status(500).json({ error: 'Invalid step data' });
+  getTemplateRowWithFallback('step_templates', 'steps', targetLang)
+    .then((row) => {
+      if (!row.payload) return res.status(404).json({ error: 'Steps not found' });
+      try {
+        res.json(JSON.parse(row.payload));
+      } catch (parseErr) {
+        res.status(500).json({ error: 'Invalid step data' });
+      }
+    })
+    .catch((err) => {
+      res.status(500).json({ error: err.message });
+    });
+});
+
+app.get('/api/template-bundle', async (req, res) => {
+  const { lang } = req.query;
+  const targetLang = typeof lang === 'string' ? lang : 'zh-hans';
+
+  try {
+    const [stepsRow, completionRow] = await Promise.all([
+      getTemplateRowWithFallback('step_templates', 'steps', targetLang),
+      getTemplateRowWithFallback('completion_templates', 'template', targetLang)
+    ]);
+
+    if (!stepsRow.payload || !completionRow.payload) {
+      return res.status(404).json({ error: 'Template bundle not found' });
     }
-  });
+
+    try {
+      const parsedSteps = JSON.parse(stepsRow.payload);
+      const parsedCompletionTemplate = JSON.parse(completionRow.payload);
+      return res.json({
+        lang: targetLang,
+        steps: {
+          resolvedLang: stepsRow.resolvedLang,
+          fallbackUsed: stepsRow.resolvedLang !== targetLang,
+          data: parsedSteps
+        },
+        completionTemplate: {
+          resolvedLang: completionRow.resolvedLang,
+          fallbackUsed: completionRow.resolvedLang !== targetLang,
+          data: parsedCompletionTemplate
+        }
+      });
+    } catch (parseErr) {
+      return res.status(500).json({ error: 'Invalid template bundle data' });
+    }
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/completion-template', (req, res) => {
   const { lang } = req.query;
   const targetLang = typeof lang === 'string' ? lang : 'zh-hans';
-  db.get('SELECT template FROM completion_templates WHERE lang = ?', [targetLang], (err, row) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!row) return res.status(404).json({ error: 'Completion template not found' });
-    try {
-      res.json(JSON.parse(row.template));
-    } catch (parseErr) {
-      res.status(500).json({ error: 'Invalid completion template data' });
-    }
-  });
+  getTemplateRowWithFallback('completion_templates', 'template', targetLang)
+    .then((row) => {
+      if (!row.payload) return res.status(404).json({ error: 'Completion template not found' });
+      try {
+        res.json(JSON.parse(row.payload));
+      } catch (parseErr) {
+        res.status(500).json({ error: 'Invalid completion template data' });
+      }
+    })
+    .catch((err) => {
+      res.status(500).json({ error: err.message });
+    });
 });
 
 app.patch('/api/records/:recordId/guests/:guestId', requireAdminAuth, (req, res) => {

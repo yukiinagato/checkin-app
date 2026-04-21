@@ -475,6 +475,7 @@ const AdminDashboard = ({
   const [aiModels, setAiModels] = useState([]);
   const [aiConfigSaved, setAiConfigSaved] = useState(false);
   const [aiModelLoading, setAiModelLoading] = useState(false);
+  const [translationSourceLang, setTranslationSourceLang] = useState(defaultLang);
 
   const missingBuiltinSteps = useMemo(() => {
     const defaults = buildDefaultSteps(stepLang);
@@ -693,6 +694,30 @@ const AdminDashboard = ({
   const updateCompletionField = (field, value) => {
     setCompletionTemplate((prev) => ({ ...prev, [field]: value }));
     setCompletionSaved(false);
+  };
+
+  const copyStepsFromLanguage = async () => {
+    if (!translationSourceLang || translationSourceLang === stepLang) return;
+    try {
+      const sourceSteps = await db.getSteps(translationSourceLang);
+      const normalized = normalizeSteps(sourceSteps, buildDefaultSteps(stepLang));
+      setEditableSteps(normalized);
+      setStepsSaved(false);
+    } catch (error) {
+      alert('复制源语言步骤失败，请稍后重试');
+    }
+  };
+
+  const copyCompletionFromLanguage = async () => {
+    if (!translationSourceLang || translationSourceLang === stepLang) return;
+    try {
+      const sourceTemplate = await db.getCompletionTemplate(translationSourceLang);
+      const normalized = normalizeCompletionTemplate(sourceTemplate, buildDefaultCompletionTemplate(stepLang));
+      setCompletionTemplate(normalized);
+      setCompletionSaved(false);
+    } catch (error) {
+      alert('复制源语言完成页失败，请稍后重试');
+    }
   };
 
   const handleSaveCompletion = async () => {
@@ -1055,6 +1080,22 @@ const AdminDashboard = ({
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </select>
+                <select
+                  value={translationSourceLang}
+                  onChange={(e) => setTranslationSourceLang(e.target.value)}
+                  className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm text-slate-700"
+                >
+                  {(langOptions || []).map((option) => (
+                    <option key={option.value} value={option.value}>{`翻译来源：${option.label}`}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={copyStepsFromLanguage}
+                  disabled={translationSourceLang === stepLang}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-700 text-sm font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  复制来源步骤
+                </button>
                 <button onClick={addCustomStep} className="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-bold">新增步骤</button>
               </div>
             </div>
@@ -1161,6 +1202,13 @@ const AdminDashboard = ({
               </div>
               <div className="flex flex-wrap items-center gap-3">
                 <button onClick={handleSaveCompletion} className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-bold">保存完成页</button>
+                <button
+                  onClick={copyCompletionFromLanguage}
+                  disabled={translationSourceLang === stepLang}
+                  className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  复制来源完成页
+                </button>
                 <button onClick={handleResetCompletion} className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-bold">恢复默认</button>
                 {completionSaved && <span className="text-sm text-emerald-600 font-bold">已保存</span>}
               </div>

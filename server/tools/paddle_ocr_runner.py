@@ -3,6 +3,7 @@ import json
 import re
 import sys
 import logging
+import time
 from datetime import date, datetime
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
@@ -10,6 +11,7 @@ from typing import List, Dict, Optional, Tuple
 import cv2
 import numpy as np
 from PIL import Image, ImageOps
+import requests
 
 # 强制设置输出编码为 UTF-8
 if sys.stdout.encoding != 'utf-8':
@@ -40,6 +42,12 @@ ISO3_TO_ISO2 = {
     'IND': 'IN', 'PHL': 'PH', 'VNM': 'VN', 'MYS': 'MY', 'THA': 'TH', 'IDN': 'ID',
     'SGP': 'SG', 'TWN': 'TW', 'HKG': 'HK', 'MAC': 'MO', 'CHE': 'CH'
 }
+
+DEFAULT_SYSTEM_PROMPT = (
+    "你是一个证件解析专家。我会给你一段护照 OCR 原始文本，请你过滤掉无用的印刷体（如 AUTHORITY, SIGNATURE），"
+    "提取以下字段：passportNumber, fullName (名在前姓在后), birthDate (YYYYMMDD), sex (M/F), "
+    "nationalityCode (ISO 2位代码), expiryDate (YYYYMMDD)。请直接返回 JSON 格式，不要有任何多余描述。"
+)
 
 # ==========================================
 # MRZ 工具函数 (位置敏感)
@@ -125,6 +133,108 @@ def parse_mrz_block(lines: List[str]) -> Optional[Dict]:
 def _mrz_fix_iso(raw: str) -> str:
     return raw.replace('0', 'O').replace('1', 'I').replace('2', 'Z').replace('5', 'S')
 
+
+def _normalize_date(value: str) -> str:
+    raw = re.sub(r'[^0-9]', '', str(value or ''))
+    if len(raw) == 8:
+        return raw
+    return ''
+
+
+def _extract_json_payload(text: str) -> Optional[Dict]:
+    if not text:
+        return None
+    stripped = text.strip()
+    try:
+        payload = json.loads(stripped)
+        if isinstance(payload, dict):
+            return payload
+    except Exception:
+        pass
+
+    fenced = re.search(r'```(?:json)?\s*(\{[\s\S]*\})\s*```', stripped, re.IGNORECASE)
+    if fenced:
+        try:
+            payload = json.loads(fenced.group(1))
+            if isinstance(payload, dict):
+                return payload
+        except Exception:
+            return None
+    return None
+
+
+def extract_with_llm(
+    ocr_text: str,
+    api_key: str,
+    model: str,
+    prompt: str,
+    base_url: str = "https://api.openai.com/v1",
+    max_retries: int = 4
+) -> Optional[Dict]:
+    """
+    使用 OpenAI 兼容协议调用 LLM，对 OCR 原文进行语义化结构提取。
+    带指数退避重试，处理超时/限流场景。
+    """
+    if not api_key or not model:
+        return None
+
+    endpoint = base_url.rstrip('/') + '/chat/completions'
+    system_prompt = prompt or DEFAULT_SYSTEM_PROMPT
+    user_prompt = (
+        "请从以下护照 OCR 原始文本中提取字段并仅返回 JSON 对象：\n"
+        "{\n"
+        "  \"passportNumber\": \"\",\n"
+        "  \"fullName\": \"\",\n"
+        "  \"birthDate\": \"YYYYMMDD\",\n"
+        "  \"sex\": \"M/F\",\n"
+        "  \"nationalityCode\": \"ISO2\",\n"
+        "  \"expiryDate\": \"YYYYMMDD\"\n"
+        "}\n\n"
+        f"OCR文本：\n{ocr_text}"
+    )
+
+    headers = {
+        'Authorization': f'Bearer {api_key}',
+        'Content-Type': 'application/json'
+    }
+    payload = {
+        'model': model,
+        'temperature': 0,
+        'response_format': {'type': 'json_object'},
+        'messages': [
+            {'role': 'system', 'content': system_prompt},
+            {'role': 'user', 'content': user_prompt}
+        ]
+    }
+
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(endpoint, headers=headers, json=payload, timeout=30)
+            if response.status_code in (429, 500, 502, 503, 504):
+                raise requests.HTTPError(f"{response.status_code}: {response.text}", response=response)
+            response.raise_for_status()
+
+            body = response.json()
+            raw_content = body['choices'][0]['message']['content']
+            parsed = _extract_json_payload(raw_content)
+            if not parsed:
+                return None
+
+            return {
+                'passportNumber': str(parsed.get('passportNumber', '')).strip().replace(' ', ''),
+                'fullName': str(parsed.get('fullName', '')).strip(),
+                'birthDate': _normalize_date(parsed.get('birthDate', '')),
+                'sex': str(parsed.get('sex', '')).strip().upper()[:1] if str(parsed.get('sex', '')).strip().upper()[:1] in ('M', 'F') else '',
+                'nationalityCode': str(parsed.get('nationalityCode', '')).strip().upper()[:2],
+                'expiryDate': _normalize_date(parsed.get('expiryDate', ''))
+            }
+        except Exception:
+            if attempt >= max_retries - 1:
+                break
+            backoff_s = min(8.0, (2 ** attempt) + 0.2)
+            time.sleep(backoff_s)
+    return None
+
 # ==========================================
 # VIZ 备选方案 (基于评分系统的鲁棒提取)
 # ==========================================
@@ -195,6 +305,10 @@ def main() -> int:
         return 1
 
     image_path = Path(sys.argv[1])
+    api_key = sys.argv[2].strip() if len(sys.argv) > 2 else ''
+    model_name = sys.argv[3].strip() if len(sys.argv) > 3 else ''
+    system_prompt = sys.argv[4] if len(sys.argv) > 4 else DEFAULT_SYSTEM_PROMPT
+    base_url = sys.argv[5].strip() if len(sys.argv) > 5 and sys.argv[5].strip() else 'https://api.openai.com/v1'
     try:
         logging.getLogger("ppocr").setLevel(logging.ERROR)
         from paddleocr import PaddleOCR
@@ -215,11 +329,25 @@ def main() -> int:
         # 2. VIZ 提取 (备选/补全)
         viz_data = fallback_extract_viz(chunks)
         
-        # 3. 智能合并：MRZ 优先，VIZ 补全
+        # 3. LLM 语义提取（MRZ失败时兜底；MRZ成功时做 VIZ 校验和补全）
+        llm_data = extract_with_llm('\n'.join(chunks), api_key, model_name, system_prompt, base_url)
+        
+        # 4. 智能合并：MRZ 优先，LLM 与 VIZ 补全
         final = mrz_data if mrz_data else {}
+        for key in ['passportNumber', 'fullName', 'birthDate', 'sex', 'nationalityCode', 'expiryDate']:
+            if not final.get(key) and llm_data and llm_data.get(key):
+                final[key] = llm_data.get(key)
+
         for key in ['passportNumber', 'fullName', 'birthDate', 'age', 'sex', 'nationalityCode']:
-            if not final.get(key):
+            if not final.get(key) and viz_data.get(key):
                 final[key] = viz_data.get(key)
+
+        if final.get('birthDate') and not final.get('age'):
+            try:
+                d = datetime.strptime(final['birthDate'], '%Y%m%d').date()
+                final['age'] = date.today().year - d.year - ((date.today().month, date.today().day) < (d.month, d.day))
+            except Exception:
+                pass
 
         print(json.dumps({
             'success': bool(final.get('passportNumber')),
@@ -230,9 +358,12 @@ def main() -> int:
             'age': final.get('age'),
             'sex': final.get('sex', ''),
             'nationalityCode': final.get('nationalityCode', ''),
+            'expiryDate': final.get('expiryDate', ''),
             'text': '\n'.join(chunks),
             'engine': 'paddleocr-python-local',
-            'method': 'mrz_structural' if mrz_data else 'viz_fallback'
+            'method': 'mrz_structural+llm' if mrz_data and llm_data else ('llm' if llm_data else ('mrz_structural' if mrz_data else 'viz_fallback')),
+            'llmUsed': bool(llm_data),
+            'goldenSource': 'mrz_structural' if mrz_data else 'llm_or_viz'
         }, ensure_ascii=False))
         return 0
     except Exception as exc:

@@ -117,6 +117,7 @@ const GUEST_STORAGE_KEY = 'checkin.guests';
 const PET_COUNT_STORAGE_KEY = 'checkin.petCount';
 const CHECKIN_DATE_STORAGE_KEY = 'checkin.checkInDate';
 const CHECKOUT_DATE_STORAGE_KEY = 'checkin.checkOutDate';
+const DEFAULT_AI_SYSTEM_PROMPT = '你是一个证件解析专家。我会给你一段护照 OCR 原始文本，请你过滤掉无用的印刷体（如 AUTHORITY, SIGNATURE），提取以下字段：passportNumber, fullName (名在前姓在后), birthDate (YYYYMMDD), sex (M/F), nationalityCode (ISO 2位代码), expiryDate (YYYYMMDD)。请直接返回 JSON 格式，不要有任何多余描述。';
 
 const DB = {
   async getAllRecords(adminToken) {
@@ -234,6 +235,56 @@ const DB = {
       body: JSON.stringify({ template })
     });
     if (!res.ok) throw new Error('Failed to save completion template');
+    return await res.json();
+  },
+
+  async getAiExtractConfig(adminToken) {
+    const res = await fetch(`${API_URL}/admin/ai-config`, {
+      headers: {
+        Authorization: `Bearer ${adminToken}`
+      }
+    });
+    if (!res.ok) throw new Error('Failed to fetch AI extract config');
+    const payload = await res.json();
+    return {
+      apiKey: payload?.apiKey || '',
+      modelName: payload?.modelName || '',
+      systemPrompt: payload?.systemPrompt || DEFAULT_AI_SYSTEM_PROMPT,
+      baseUrl: payload?.baseUrl || 'https://api.openai.com/v1'
+    };
+  },
+
+  async updateAiExtractConfig(adminToken, config) {
+    const safeConfig = {
+      modelName: config?.modelName || '',
+      systemPrompt: config?.systemPrompt || DEFAULT_AI_SYSTEM_PROMPT,
+      baseUrl: config?.baseUrl || 'https://api.openai.com/v1'
+    };
+    const res = await fetch(`${API_URL}/admin/ai-config`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${adminToken}`
+      },
+      body: JSON.stringify(safeConfig)
+    });
+    if (!res.ok) throw new Error('Failed to save AI extract config');
+    return await res.json();
+  },
+
+  async getAiModels(adminToken, apiKey, baseUrl) {
+    const res = await fetch(`${API_URL}/admin/ai-models`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${adminToken}`
+      },
+      body: JSON.stringify({
+        apiKey: apiKey || '',
+        baseUrl: baseUrl || ''
+      })
+    });
+    if (!res.ok) throw new Error('Failed to fetch AI models');
     return await res.json();
   },
 

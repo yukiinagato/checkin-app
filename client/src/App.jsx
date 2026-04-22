@@ -273,13 +273,16 @@ const DB = {
   },
 
   async getAiModels(adminToken, apiKey, baseUrl) {
-    const query = new URLSearchParams();
-    if (apiKey) query.set('apiKey', apiKey);
-    if (baseUrl) query.set('baseUrl', baseUrl);
-    const res = await fetch(`${API_URL}/admin/ai-models?${query.toString()}`, {
+    const res = await fetch(`${API_URL}/admin/ai-models`, {
+      method: 'POST',
       headers: {
+        'Content-Type': 'application/json',
         Authorization: `Bearer ${adminToken}`
-      }
+      },
+      body: JSON.stringify({
+        apiKey: apiKey || '',
+        baseUrl: baseUrl || ''
+      })
     });
     if (!res.ok) throw new Error('Failed to fetch AI models');
     return await res.json();

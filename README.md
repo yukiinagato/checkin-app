@@ -120,7 +120,7 @@ pnpm dev
 在仓库根目录执行：
 
 ```bash
-pnpm deploy
+pnpm run deploy
 ```
 
 该命令会完成：

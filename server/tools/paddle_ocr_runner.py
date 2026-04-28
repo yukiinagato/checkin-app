@@ -1,11 +1,30 @@
 #!/usr/bin/env python3
 import json
+import os
 import re
 import sys
 import logging
 from datetime import date, datetime
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
+
+PROJECT_SERVER_DIR = Path(__file__).resolve().parents[1]
+
+def _set_project_cache_env(name: str, default_dir: str) -> None:
+    raw = os.environ.get(name) or default_dir
+    resolved = Path(raw)
+    if not resolved.is_absolute():
+        resolved = PROJECT_SERVER_DIR / resolved
+    os.environ[name] = str(resolved)
+
+_set_project_cache_env('PADDLEOCR_HOME', '.ocr-models')
+_set_project_cache_env('XDG_CACHE_HOME', '.cache')
+_set_project_cache_env('PADDLE_HOME', '.paddle')
+_set_project_cache_env('PYTHONPYCACHEPREFIX', '.cache/pycache')
+_ocr_home = Path(os.environ.get('CHECKIN_OCR_HOME') or '.cache/home')
+if not _ocr_home.is_absolute():
+    _ocr_home = PROJECT_SERVER_DIR / _ocr_home
+os.environ['HOME'] = str(_ocr_home)
 
 import cv2
 import numpy as np

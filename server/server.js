@@ -58,8 +58,12 @@ app.use(express.json({ limit: '50mb' })); // 允許大文件上傳(圖片)
 // ----------------------------------------------------------------------
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'hotel.db');
-const PADDLE_OCR_PYTHON_PATH = process.env.PADDLE_OCR_PYTHON_PATH || 'python3';
+const PADDLE_OCR_PYTHON_PATH = process.env.PADDLE_OCR_PYTHON_PATH || process.env.PADDLE_OCR_PYTHON || 'python3';
 const PADDLE_OCR_RUNNER = process.env.PADDLE_OCR_RUNNER || path.join(__dirname, 'tools', 'paddle_ocr_runner.py');
+const OCR_CACHE_HOME = path.resolve(__dirname, process.env.CHECKIN_OCR_HOME || path.join('.cache', 'home'));
+const OCR_CACHE_DIR = path.resolve(__dirname, process.env.XDG_CACHE_HOME || '.cache');
+const OCR_PADDLE_HOME = path.resolve(__dirname, process.env.PADDLE_HOME || '.paddle');
+const OCR_MODEL_HOME = path.resolve(__dirname, process.env.PADDLEOCR_HOME || '.ocr-models');
 const ALLOWED_IMAGE_TYPES = new Map([
   'image/jpeg',
   'image/jpg',
@@ -245,6 +249,23 @@ const saveImagesLocally = async (guests) => {
   return processedGuests;
 };
 
+const savePassportImage = async (dataImage) => {
+  const parsed = parseDataImage(dataImage);
+  if (!parsed) {
+    throw new Error('Invalid image payload');
+  }
+
+  const filename = `${crypto.randomUUID()}_passport.${parsed.extension}`;
+  const safeUploadDir = path.resolve(UPLOAD_DIR);
+  const filePath = path.resolve(safeUploadDir, filename);
+  if (!filePath.startsWith(`${safeUploadDir}${path.sep}`)) {
+    throw new Error('Invalid upload path');
+  }
+
+  await fs.outputFile(filePath, parsed.buffer, { flag: 'wx' });
+  return filename;
+};
+
 const parseDataImage = (dataImage) => {
   if (typeof dataImage !== 'string') return null;
   const matches = dataImage.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
@@ -271,7 +292,16 @@ const runLocalPaddleOcr = async (dataImage) => {
     await fs.writeFile(imagePath, parsed.buffer);
     const { stdout, stderr } = await execFileAsync(PADDLE_OCR_PYTHON_PATH, [PADDLE_OCR_RUNNER, imagePath], {
       maxBuffer: 10 * 1024 * 1024,
-      timeout: 120000
+      timeout: 120000,
+      cwd: __dirname,
+      env: {
+        ...process.env,
+        HOME: OCR_CACHE_HOME,
+        XDG_CACHE_HOME: OCR_CACHE_DIR,
+        PADDLE_HOME: OCR_PADDLE_HOME,
+        PADDLEOCR_HOME: OCR_MODEL_HOME,
+        PYTHONPYCACHEPREFIX: path.join(OCR_CACHE_DIR, 'pycache')
+      }
     });
 
     const outputLines = `${String(stdout || '')}\n${String(stderr || '')}`
@@ -920,8 +950,9 @@ app.post('/api/ocr/passport', async (req, res) => {
       return;
     }
 
+    const passportPhoto = await savePassportImage(image);
     const ocrResult = await runLocalPaddleOcr(image);
-    res.json(ocrResult);
+    res.json({ ...ocrResult, passportPhoto });
   } catch (error) {
     console.error('護照 OCR 接口錯誤:', error);
     res.status(500).json({ success: false, error: 'Passport OCR failed' });

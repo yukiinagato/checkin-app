@@ -332,7 +332,8 @@ const translations = {
     service: "紧急协助", serviceDetail: "优先拨打紧急电话，再前往别栋联系管理人", welcomeTitle: "欢迎入住！", welcomeSub: "请开始您的愉快旅程",
     footer: "您的安全与舒适是我们的最高宗旨。", guideTitle: "入住导览", changeLang: "语言", manualLink: "说明书 PDF",
     regResident: "日本居民", regTourist: "访日游客", startNewCheckin: "开始新登记", regFormName: "姓名", regFormAge: "年龄", regFormOcc: "职业", regFormPhone: "电话号码",
-    regFormNation: "国籍", regFormPass: "护照号码", regPassportUpload: "拍摄/上传护照照片", regMinorAlert: "未成年人需填监护人信息",
+    regFormNation: "国籍", regFormPass: "护照号码", regPassportUpload: "拍摄/上传护照照片", regPassportUploaded: "护照照片已上传", regMinorAlert: "未成年人需填监护人信息",
+    passportModalTitle: "护照拍摄与上传", passportModalClose: "关闭", passportModalIntro: "请使用系统相机拍摄护照信息页，或从相册选择清晰照片。上传后会自动识别并填入表单。", passportModalPick: "拍摄或上传护照照片", passportModalProcessing: "正在保存照片并识别护照信息，请稍候...", passportModalConfirm: "确认填入", passportModalRetake: "重新拍摄", passportModalSavedHint: "照片会保存到后端本地上传目录，仅管理后台可查看。", passportFileTooLarge: "图片过大，请上传 12MB 以内的护照照片。", passportFileInvalid: "请选择图片格式的护照照片。",
     ocrChecking: "正在本地识别证件...", ocrAutoFillSuccess: "已识别护照并自动填充护照号码。", ocrManualNeeded: "已检测到护照，但多次识别失败，请手动补充信息。", ocrInvalidDoc: "上传内容未通过证件校验，请上传护照照片或扫描件。", ocrFailed: "识别失败，请重试。", ocrUnsupported: "当前浏览器不支持本地OCR，已保留照片，请手动补充护照信息。",
     addGuest: "增加人员", guestLabel: "住客", petLabel: "宠物数量", countAdults: "住客人数 (成人/未成年)",
     checkIn: "入住日期", checkOut: "退房日期",
@@ -359,7 +360,8 @@ const translations = {
     service: "緊急協助", serviceDetail: "優先撥打緊急電話，再前往別棟聯繫管理人", welcomeTitle: "入住愉快！", welcomeSub: "請開始您的愉快旅程",
     footer: "您的安全與舒適是我們的最高宗旨。", guideTitle: "入住導覽", changeLang: "語言", manualLink: "說明書 PDF",
     regResident: "日本居民", regTourist: "訪日遊客", startNewCheckin: "開始新登記", regFormName: "姓名", regFormAge: "年齡", regFormOcc: "職業", regFormPhone: "電話號碼",
-    regFormNation: "國籍", regFormPass: "護照號碼", regPassportUpload: "拍攝/上傳護照照片", regMinorAlert: "未成年人需填監護人資訊",
+    regFormNation: "國籍", regFormPass: "護照號碼", regPassportUpload: "拍攝/上傳護照照片", regPassportUploaded: "護照照片已上傳", regMinorAlert: "未成年人需填監護人資訊",
+    passportModalTitle: "護照拍攝與上傳", passportModalClose: "關閉", passportModalIntro: "請使用系統相機拍攝護照資訊頁，或從相簿選擇清晰照片。上傳後會自動辨識並填入表單。", passportModalPick: "拍攝或上傳護照照片", passportModalProcessing: "正在保存照片並辨識護照資訊，請稍候...", passportModalConfirm: "確認填入", passportModalRetake: "重新拍攝", passportModalSavedHint: "照片會保存到後端本地上傳目錄，僅管理後台可查看。", passportFileTooLarge: "圖片過大，請上傳 12MB 以內的護照照片。", passportFileInvalid: "請選擇圖片格式的護照照片。",
     ocrChecking: "正在本地辨識證件...", ocrAutoFillSuccess: "已辨識護照並自動填入護照號碼。", ocrManualNeeded: "已檢測到護照，但多次辨識失敗，請手動補充資訊。", ocrInvalidDoc: "上傳內容未通過證件校驗，請上傳護照照片或掃描件。", ocrFailed: "辨識失敗，請重試。", ocrUnsupported: "目前瀏覽器不支援本地OCR，已保留照片，請手動補充護照資訊。",
     addGuest: "增加人員", guestLabel: "住客", petLabel: "寵物數量", countAdults: "住客人數 (成人/未成年)",
     checkIn: "入住日期", checkOut: "退房日期",
@@ -386,7 +388,8 @@ const translations = {
     service: "Emergency Support", serviceDetail: "Call emergency first, then contact the manager in another building.", welcomeTitle: "Welcome!", welcomeSub: "Start your journey",
     footer: "Your safety and comfort are our top priority.", guideTitle: "Check-in Guide", changeLang: "Language", manualLink: "Manual PDF",
     regResident: "Japan Resident", regTourist: "Visitor", startNewCheckin: "Start New Check-in", regFormName: "Name", regFormAge: "Age", regFormOcc: "Occupation", regFormPhone: "Phone Number",
-    regFormNation: "Nationality", regFormPass: "Passport No.", regPassportUpload: "Upload passport photo", regMinorAlert: "Minors need guardian info",
+    regFormNation: "Nationality", regFormPass: "Passport No.", regPassportUpload: "Upload passport photo", regPassportUploaded: "Passport photo uploaded", regMinorAlert: "Minors need guardian info",
+    passportModalTitle: "Passport Photo Upload", passportModalClose: "Close", passportModalIntro: "Use your device camera to photograph the passport information page, or choose a clear image from your library. We will read it and fill the form automatically.", passportModalPick: "Take or upload passport photo", passportModalProcessing: "Saving photo and reading passport information...", passportModalConfirm: "Apply to form", passportModalRetake: "Retake", passportModalSavedHint: "The photo is stored on the backend and is only visible in the admin console.", passportFileTooLarge: "Image is too large. Please upload a passport photo under 12MB.", passportFileInvalid: "Please choose an image file.",
     ocrChecking: "Running local document OCR...", ocrAutoFillSuccess: "Passport detected and number auto-filled.", ocrManualNeeded: "Passport detected, but OCR failed multiple times. Please enter the remaining fields manually.", ocrInvalidDoc: "Upload rejected: this image does not look like a passport document.", ocrFailed: "OCR failed. Please try again.", ocrUnsupported: "This browser does not support local OCR. Photo is kept, please complete passport details manually.",
     addGuest: "Add Guest", guestLabel: "Guest", petLabel: "Number of Pets", countAdults: "Guest Count (adult/minor)",
     checkIn: "Check-in Date", checkOut: "Check-out Date",
@@ -413,7 +416,8 @@ const translations = {
     service: "緊急連絡", serviceDetail: "先に緊急電話、次に管理人へ連絡。", welcomeTitle: "ようこそ！", welcomeSub: "旅を始めましょう",
     footer: "安全と快適さが最優先です。", guideTitle: "チェックイン案内", changeLang: "言語", manualLink: "マニュアル PDF",
     regResident: "日本在住", regTourist: "訪日観光客", startNewCheckin: "新しいチェックインを開始", regFormName: "氏名", regFormAge: "年齢", regFormOcc: "職業", regFormPhone: "電話番号",
-    regFormNation: "国籍", regFormPass: "パスポート番号", regPassportUpload: "パスポート写真をアップロード", regMinorAlert: "未成年は保護者情報が必要",
+    regFormNation: "国籍", regFormPass: "パスポート番号", regPassportUpload: "パスポート写真をアップロード", regPassportUploaded: "パスポート写真アップロード済み", regMinorAlert: "未成年は保護者情報が必要",
+    passportModalTitle: "パスポート写真のアップロード", passportModalClose: "閉じる", passportModalIntro: "端末のカメラでパスポートの情報ページを撮影するか、鮮明な写真を選択してください。アップロード後、自動で読み取りフォームに入力します。", passportModalPick: "撮影または写真をアップロード", passportModalProcessing: "写真を保存し、パスポート情報を読み取っています...", passportModalConfirm: "フォームに反映", passportModalRetake: "撮り直す", passportModalSavedHint: "写真はバックエンドに保存され、管理画面でのみ確認できます。", passportFileTooLarge: "画像が大きすぎます。12MB以内の写真をアップロードしてください。", passportFileInvalid: "画像ファイルを選択してください。",
     ocrChecking: "ローカルで書類をOCR中...", ocrAutoFillSuccess: "パスポートを検出し、番号を自動入力しました。", ocrManualNeeded: "パスポートは検出されましたが、OCRが複数回失敗しました。残りは手入力してください。", ocrInvalidDoc: "アップロード不可：パスポート画像/スキャンではありません。", ocrFailed: "OCRに失敗しました。再試行してください。", ocrUnsupported: "このブラウザはローカルOCRに未対応です。画像は保持したので、パスポート情報を手入力してください。",
     addGuest: "追加", guestLabel: "ゲスト", petLabel: "ペットの数", countAdults: "人数 (成人/未成年)",
     checkIn: "チェックイン日", checkOut: "チェックアウト日",
@@ -440,7 +444,8 @@ const translations = {
     service: "긴급 지원", serviceDetail: "긴급 전화 후 관리자에게 연락.", welcomeTitle: "환영합니다!", welcomeSub: "여행을 시작하세요",
     footer: "안전과 편안함이 최우선입니다.", guideTitle: "체크인 안내", changeLang: "언어", manualLink: "매뉴얼 PDF",
     regResident: "일본 거주자", regTourist: "방문객", startNewCheckin: "새 체크인 시작", regFormName: "이름", regFormAge: "나이", regFormOcc: "직업", regFormPhone: "전화번호",
-    regFormNation: "국적", regFormPass: "여권 번호", regPassportUpload: "여권 사진 업로드", regMinorAlert: "미성년자는 보호자 정보 필요",
+    regFormNation: "국적", regFormPass: "여권 번호", regPassportUpload: "여권 사진 업로드", regPassportUploaded: "여권 사진 업로드 완료", regMinorAlert: "미성년자는 보호자 정보 필요",
+    passportModalTitle: "여권 사진 업로드", passportModalClose: "닫기", passportModalIntro: "기기 카메라로 여권 정보면을 촬영하거나 선명한 사진을 선택해 주세요. 업로드 후 자동으로 인식해 양식에 입력합니다.", passportModalPick: "여권 사진 촬영 또는 업로드", passportModalProcessing: "사진을 저장하고 여권 정보를 인식하는 중입니다...", passportModalConfirm: "양식에 입력", passportModalRetake: "다시 촬영", passportModalSavedHint: "사진은 백엔드에 저장되며 관리자 화면에서만 확인할 수 있습니다.", passportFileTooLarge: "이미지가 너무 큽니다. 12MB 이하의 여권 사진을 업로드해 주세요.", passportFileInvalid: "이미지 파일을 선택해 주세요.",
     ocrChecking: "로컬 OCR로 문서를 분석하는 중...", ocrAutoFillSuccess: "여권을 인식해 여권번호를 자동 입력했습니다.", ocrManualNeeded: "여권은 감지했지만 OCR이 여러 번 실패했습니다. 남은 정보는 수동 입력해 주세요.", ocrInvalidDoc: "업로드 거절: 여권 사진/스캔으로 확인되지 않았습니다.", ocrFailed: "OCR 실패. 다시 시도해 주세요.", ocrUnsupported: "현재 브라우저는 로컬 OCR을 지원하지 않습니다. 사진은 보관되며 여권 정보를 수동 입력해 주세요.",
     addGuest: "인원 추가", guestLabel: "게스트", petLabel: "반려동물 수", countAdults: "인원 수 (성인/미성년)",
     checkIn: "체크인 날짜", checkOut: "체크아웃 날짜",
@@ -882,10 +887,12 @@ const GuestFlow = ({
   const addGuest = () => setGuests((prevGuests) => [...prevGuests, createGuestTemplate('adult')]);
   const removeGuest = (id) => setGuests((prevGuests) => prevGuests.filter((guest) => guest.id !== id));
   const updateGuest = (id, field, value) => setGuests((prevGuests) => prevGuests.map((guest) => (guest.id === id ? { ...guest, [field]: value } : guest)));
+  const updateCheckInDate = (value) => setCheckInDate(value);
+  const updateCheckOutDate = (value) => setCheckOutDate(value);
 
   const uploadAndOcrPassport = async (base64Image, options = { strict: true }) => {
     const ocrResult = await DB.recognizePassport(base64Image);
-    if (!ocrResult?.isPassport && options?.strict !== false) {
+    if (!ocrResult?.isPassport && !ocrResult?.unsupported && options?.strict !== false) {
       throw new Error(t.ocrInvalidDoc);
     }
     return {
@@ -902,7 +909,9 @@ const GuestFlow = ({
       mrzBirthDate: ocrResult.mrzBirthDate,
       mrzNationality: ocrResult.mrzNationality,
       mrzSex: ocrResult.mrzSex,
-      text: ocrResult.text || ''
+      text: ocrResult.text || '',
+      passportPhoto: ocrResult.passportPhoto || '',
+      unsupported: Boolean(ocrResult.unsupported)
     };
   };
 
@@ -926,8 +935,13 @@ const GuestFlow = ({
       updateGuest(guestId, 'nationalityDetected', resolvedNationality.nationalityDetected || '');
     }
 
-    updateGuest(guestId, 'passportOcrStatus', 'success');
-    updateGuest(guestId, 'passportOcrMessage', t.ocrAutoFillSuccess);
+    if (payload.passportNumber) {
+      updateGuest(guestId, 'passportOcrStatus', 'success');
+      updateGuest(guestId, 'passportOcrMessage', t.ocrAutoFillSuccess);
+    } else {
+      updateGuest(guestId, 'passportOcrStatus', 'manual-required');
+      updateGuest(guestId, 'passportOcrMessage', t.ocrManualNeeded);
+    }
   };
 
   const lookupZipCode = async (guestId, zip) => {
@@ -1161,7 +1175,8 @@ const GuestFlow = ({
                       <input
                         type="date"
                         value={checkInDate}
-                        onChange={(e) => setCheckInDate(e.target.value)}
+                        onChange={(e) => updateCheckInDate(e.target.value)}
+                        onInput={(e) => updateCheckInDate(e.currentTarget.value)}
                         readOnly={hasHistory}
                         className={`w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none focus:ring-2 focus:ring-slate-900 transition-all appearance-none ${hasHistory ? 'text-slate-400 cursor-default' : ''}`}
                       />
@@ -1171,7 +1186,8 @@ const GuestFlow = ({
                       <input
                         type="date"
                         value={checkOutDate}
-                        onChange={(e) => setCheckOutDate(e.target.value)}
+                        onChange={(e) => updateCheckOutDate(e.target.value)}
+                        onInput={(e) => updateCheckOutDate(e.currentTarget.value)}
                         readOnly={hasHistory}
                         className={`w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none focus:ring-2 focus:ring-slate-900 transition-all appearance-none ${hasHistory ? 'text-slate-400 cursor-default' : ''}`}
                       />
@@ -1267,7 +1283,7 @@ const GuestFlow = ({
                                 className={`w-full p-4 border-2 border-dashed rounded-xl flex items-center justify-center gap-2 transition-colors ${guest.passportPhoto ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-slate-100 text-slate-400 hover:border-slate-300'} disabled:opacity-60`}
                               >
                                 {guest.passportOcrStatus === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
-                                <span className="text-[10px] font-bold uppercase">{guest.passportPhoto ? 'Uploaded' : 'Scan / Upload Passport'}</span>
+                                <span className="text-[10px] font-bold uppercase">{guest.passportPhoto ? t.regPassportUploaded : t.regPassportUpload}</span>
                               </button>
                               {guest.passportOcrMessage && (
                                 <p className={`text-[11px] ${guest.passportOcrStatus === 'failed' ? 'text-rose-500' : guest.passportOcrStatus === 'manual-required' ? 'text-amber-600' : 'text-emerald-600'}`}>{guest.passportOcrMessage}</p>
@@ -1322,6 +1338,7 @@ const GuestFlow = ({
           onClose={() => setScannerGuestId(null)}
           uploadAndOcrPassport={uploadAndOcrPassport}
           onApply={(payload) => applyPassportScanResult(scannerGuestId, payload)}
+          labels={t}
         />
       </div>
     </div >

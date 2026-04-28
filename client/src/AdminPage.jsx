@@ -795,7 +795,16 @@ const AdminDashboard = ({
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
               {dates.map(date => {
-                const dayGuests = records.filter(r => r.submittedAt.startsWith(date)).flatMap(r => r.guests.filter(g => g.passportPhoto));
+                const dayGuests = records
+                  .filter(r => r.submittedAt.startsWith(date))
+                  .flatMap(r => r.guests
+                    .filter(g => g.passportPhoto)
+                    .map(g => ({
+                      ...g,
+                      recordId: r.id,
+                      checkIn: r.checkIn,
+                      checkOut: r.checkOut
+                    })));
                 if (dayGuests.length === 0) return null;
                 return (
                   <div key={date} className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm hover:shadow-lg transition-all group">
@@ -808,12 +817,20 @@ const AdminDashboard = ({
                         <p className="text-xs text-slate-400">{dayGuests.length} 張護照照片</p>
                       </div>
                     </div>
-                    <div className="grid grid-cols-4 gap-2">
+                    <div className="grid grid-cols-2 gap-3">
                       {dayGuests.map((g, i) => (
-                        <a href={g.passportPhoto} target="_blank" rel="noopener noreferrer" key={i} className="aspect-[3/4] bg-slate-100 rounded-lg overflow-hidden relative border border-slate-100 block">
-                          <img src={g.passportPhoto} alt={g.name} className="w-full h-full object-cover" />
-                          <div className="absolute inset-0 bg-black/50 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center">
-                            <ExternalLink className="w-4 h-4 text-white" />
+                        <a href={g.passportPhoto} target="_blank" rel="noopener noreferrer" key={`${g.recordId}-${g.id || i}`} className="bg-slate-50 rounded-xl overflow-hidden border border-slate-100 block hover:border-emerald-200 transition-colors">
+                          <div className="aspect-[4/3] bg-slate-100 relative">
+                            <img src={g.passportPhoto} alt={g.name || g.passportNumber || 'passport'} className="w-full h-full object-cover" />
+                            <div className="absolute right-2 top-2 w-7 h-7 rounded-lg bg-white/90 flex items-center justify-center text-slate-600">
+                              <ExternalLink className="w-4 h-4" />
+                            </div>
+                          </div>
+                          <div className="p-2 space-y-1">
+                            <p className="text-xs font-bold text-slate-800 truncate" title={g.name || ''}>{g.name || '未命名旅客'}</p>
+                            <p className="text-[10px] font-mono text-slate-500 truncate">{g.passportNumber || '-'}</p>
+                            <p className="text-[10px] text-slate-400 truncate">入住: {g.checkIn || '-'} / 退房: {g.checkOut || '-'}</p>
+                            <p className="text-[10px] text-slate-400 truncate" title={g.recordId}>記錄: {g.recordId}</p>
                           </div>
                         </a>
                       ))}

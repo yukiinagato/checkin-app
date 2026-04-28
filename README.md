@@ -115,10 +115,45 @@ pnpm dev
 
 ---
 
+## 📦 一键部署本地依赖与 OCR
+
+在仓库根目录执行：
+
+```bash
+pnpm deploy
+```
+
+该命令会完成：
+
+- 安装 Node 依赖：`pnpm install --frozen-lockfile`。
+- 创建项目内 Python 虚拟环境：`server/.venv`。
+- 将 PaddleOCR、PaddlePaddle、OpenCV 等 OCR 依赖安装到 `server/.venv`。
+- 将 PaddleOCR 模型缓存预热到 `server/.cache/home/.paddleocr`。
+- 将 Paddle/Python/pip 相关缓存限制在 `server/.cache`、`server/.ocr-models`、`server/.paddle`。
+- 生成/更新 `server/.env.development`，指向项目内 venv 和 OCR runner。
+
+这套流程不会安装 Python 包到系统环境，也不会把 OCR 模型写入用户 home 目录。部署产物均已加入 `.gitignore`。
+
+可选参数：
+
+```bash
+# 跳过 Node 依赖安装，只部署 OCR 环境
+CHECKIN_SKIP_NODE_INSTALL=1 pnpm deploy
+
+# 跳过模型预热，只安装依赖
+CHECKIN_SKIP_OCR_WARMUP=1 pnpm deploy
+
+# 指定 Python 3.9-3.11
+PYTHON=/path/to/python3.11 pnpm deploy
+```
+
+---
+
 ## 🧪 常用命令
 
 ```bash
 # 根目录
+pnpm deploy
 pnpm dev
 pnpm start
 pnpm test
@@ -162,9 +197,9 @@ pnpm --filter client preview
 
 ### 本地部署 PaddleOCR（服务端）
 
-当前项目已支持通过后端本地调用 PaddleOCR（Python 版）进行护照识别，接口为：
+当前项目已支持通过后端本地调用 PaddleOCR（Python 版）进行护照识别，并在 OCR 请求时保存护照照片，接口为：
 
-- `POST /api/ocr/passport`（body: `{ "image": "data:image/...;base64,..." }`）
+- `POST /api/ocr/passport`（body: `{ "image": "data:image/...;base64,..." }`，返回包含 `passportPhoto` 文件名）
 
 部署步骤：
 
@@ -181,7 +216,7 @@ PADDLE_OCR_RUNNER=./server/tools/paddle_ocr_runner.py \
 pnpm --filter server dev
 ```
 
-说明：前端上传护照后会优先请求该后端 OCR 接口；若本地 PaddleOCR 不可用，前端会回退到浏览器端本地识别流程。
+说明：前端使用系统拍照/相册选择上传护照照片；后端会先保存照片，再执行 OCR。若本地 PaddleOCR 不可用，照片仍会保存，前台会提示手动补充护照信息。
 
 ---
 

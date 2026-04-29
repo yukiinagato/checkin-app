@@ -265,7 +265,11 @@ const readExistingPnpmStoreDir = async () => {
 const runPnpm = async (args) => {
   const npmExecPath = process.env.npm_execpath || '';
   if (npmExecPath.toLowerCase().includes('pnpm')) {
-    return run(process.execPath, [npmExecPath, ...args]);
+    const execPathLower = npmExecPath.toLowerCase();
+    if (execPathLower.endsWith('.js') || execPathLower.endsWith('.cjs') || execPathLower.endsWith('.mjs')) {
+      return run(process.execPath, [npmExecPath, ...args]);
+    }
+    return run(npmExecPath, args);
   }
 
   try {

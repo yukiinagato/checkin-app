@@ -1,5 +1,5 @@
 rapidocr-onnxruntime==1.4.4
 opencv-python-headless==4.10.0.84
-Pillow==10.4.0
+Pillow==12.2.0
 pillow-avif-plugin==1.4.6
 numpy==1.26.4

@@ -26,6 +26,11 @@ if not _ocr_home.is_absolute():
     _ocr_home = PROJECT_SERVER_DIR / _ocr_home
 os.environ['HOME'] = str(_ocr_home)
 
+try:
+    import pillow_avif  # noqa: F401 - registers AVIF support in Pillow
+except Exception:
+    pillow_avif = None
+
 import cv2
 import numpy as np
 from PIL import Image, ImageOps
@@ -57,7 +62,8 @@ ISO3_TO_ISO2 = {
     'CHN': 'CN', 'JPN': 'JP', 'KOR': 'KR', 'USA': 'US', 'GBR': 'GB', 'CAN': 'CA',
     'AUS': 'AU', 'FRA': 'FR', 'DEU': 'DE', 'ITA': 'IT', 'ESP': 'ES', 'RUS': 'RU',
     'IND': 'IN', 'PHL': 'PH', 'VNM': 'VN', 'MYS': 'MY', 'THA': 'TH', 'IDN': 'ID',
-    'SGP': 'SG', 'TWN': 'TW', 'HKG': 'HK', 'MAC': 'MO', 'CHE': 'CH'
+    'SGP': 'SG', 'TWN': 'TW', 'HKG': 'HK', 'MAC': 'MO', 'CHE': 'CH',
+    'NOR': 'NO', 'ARE': 'AE'
 }
 
 # ==========================================
@@ -141,6 +147,60 @@ def parse_mrz_block(lines: List[str]) -> Optional[Dict]:
                 return data
     return None
 
+def _parse_date_from_ddmmyyyy(raw: str) -> Optional[date]:
+    digits = re.sub(r'\D', '', raw)
+    if len(digits) != 8:
+        return None
+    try:
+        return date(int(digits[4:8]), int(digits[2:4]), int(digits[0:2]))
+    except ValueError:
+        return None
+
+def parse_visual_mrz_line(lines: List[str]) -> Optional[Dict]:
+    """
+    Some phone photos make RapidOCR merge the visual fields into a MRZ-like line
+    that misses ICAO check digits, e.g. PASSNO + ISO3 + DDMMYYYY + SEX + DDMMYYYY.
+    This is lower confidence than parse_mrz_block but useful for auto-fill.
+    """
+    mrz_name = ''
+    for name_line in lines:
+        clean_name = re.sub(r'[^A-Z0-9<]', '', name_line.upper())
+        if not clean_name.startswith('P<'):
+            continue
+        name_part = clean_name[5:] if clean_name[2:5] in ISO3_TO_ISO2 else clean_name[2:]
+        if '<<' in name_part:
+            parts = name_part.split('<<')
+            surname = parts[0].replace('<', ' ').strip()
+            given = parts[1].replace('<', ' ').strip()
+            mrz_name = f"{given} {surname}".strip()
+        else:
+            mrz_name = name_part.replace('<', ' ').strip()
+        break
+
+    for ln in lines:
+        clean = re.sub(r'[^A-Z0-9<]', '', ln.upper())
+        match = re.search(r'([A-Z0-9]{7,10})([A-Z0-9]{3})(\d{8})([MF])(\d{8})', clean)
+        if not match:
+            continue
+        passport_no, iso3, birth_raw, sex, expiry_raw = match.groups()
+        birth = _parse_date_from_ddmmyyyy(birth_raw)
+        expiry = _parse_date_from_ddmmyyyy(expiry_raw)
+        data = {
+            'passportNumber': passport_no.replace('<', ''),
+            'nationalityCode': ISO3_TO_ISO2.get(_mrz_fix_iso(iso3), ''),
+            'sex': sex,
+            'checksumValid': False
+        }
+        if mrz_name:
+            data['fullName'] = mrz_name
+        if birth:
+            data['birthDate'] = birth.strftime('%Y%m%d')
+            data['age'] = date.today().year - birth.year - ((date.today().month, date.today().day) < (birth.month, birth.day))
+        if expiry:
+            data['expiryDate'] = expiry.strftime('%Y%m%d')
+        return data
+    return None
+
 def _mrz_fix_iso(raw: str) -> str:
     return raw.replace('0', 'O').replace('1', 'I').replace('2', 'Z').replace('5', 'S')
 
@@ -149,7 +209,7 @@ def _mrz_fix_iso(raw: str) -> str:
 # ==========================================
 
 def fallback_extract_viz(lines: List[str]) -> Dict:
-    res = {'passportNumber': '', 'fullName': '', 'birthDate': '', 'age': None, 'sex': ''}
+    res = {'passportNumber': '', 'fullName': '', 'birthDate': '', 'age': None, 'sex': '', 'nationalityCode': ''}
     text = '\n'.join(lines).upper()
 
     # 1. 护照号提取：寻找 8-10 位，包含数字，排除月份
@@ -202,7 +262,56 @@ def fallback_extract_viz(lines: List[str]) -> Dict:
             if re.search(r'\b[MF]\b', ln.upper()):
                 res['sex'] = 'M' if 'M' in ln.upper() else 'F'
 
+        if not res['nationalityCode']:
+            for iso3, iso2 in ISO3_TO_ISO2.items():
+                if re.search(rf'\b{iso3}\b', ln.upper()):
+                    res['nationalityCode'] = iso2
+                    break
+
     return res
+
+def _score_ocr_data(data: Dict, lines: List[str]) -> int:
+    score = 0
+    if data.get('checksumValid'): score += 120
+    if data.get('passportNumber'): score += 60
+    if data.get('fullName'): score += 30
+    if data.get('birthDate'): score += 25
+    if data.get('nationalityCode'): score += 20
+    if data.get('sex'): score += 10
+    score += min(len(lines), 20)
+    return score
+
+def _rapidocr_lines_for_image(engine, image: Image.Image) -> List[str]:
+    img_bgr = cv2.cvtColor(np.array(image.convert('RGB')), cv2.COLOR_RGB2BGR)
+    result, _ = engine(img_bgr)
+    if not result:
+        return []
+    return [str(row[1]) for row in result if row and len(row) >= 2 and row[1]]
+
+def run_rapidocr(image_path: Path) -> Tuple[Dict, List[str], int]:
+    from rapidocr_onnxruntime import RapidOCR
+
+    engine = RapidOCR()
+    with Image.open(image_path) as img:
+        base = ImageOps.exif_transpose(img).convert('RGB')
+
+    best = ({}, [], -1)
+    for degrees in (0, 90, 180, 270):
+        image = base.rotate(degrees, expand=True) if degrees else base
+        lines = _rapidocr_lines_for_image(engine, image)
+        mrz_data = parse_mrz_block(lines) or parse_visual_mrz_line(lines) or {}
+        viz_data = fallback_extract_viz(lines)
+
+        final = dict(mrz_data)
+        for key in ['passportNumber', 'fullName', 'birthDate', 'age', 'sex', 'nationalityCode']:
+            if not final.get(key):
+                final[key] = viz_data.get(key)
+
+        score = _score_ocr_data(final, lines)
+        if score > best[2]:
+            best = (final, lines, score)
+
+    return best
 
 # ==========================================
 # 主流程
@@ -216,33 +325,11 @@ def main() -> int:
     image_path = Path(sys.argv[1])
     try:
         logging.getLogger("ppocr").setLevel(logging.ERROR)
-        from paddleocr import PaddleOCR
-        
-        # 提升检测极限边长，确保大图中细小的 MRZ 也能被看清
-        ocr = PaddleOCR(use_angle_cls=True, lang='en', show_log=False, det_limit_side_len=1920, det_db_unclip_ratio=2.2)
-        
-        with Image.open(image_path) as img:
-            img = ImageOps.exif_transpose(img)
-            img_bgr = cv2.cvtColor(np.array(img.convert('RGB')), cv2.COLOR_RGB2BGR)
-        
-        result = ocr.ocr(img_bgr, cls=True)
-        chunks = [str(row[1][0]) for page in result for row in page if row and row[1]] if result else []
-        
-        # 1. 结构化 MRZ 解析 (Golden Source)
-        mrz_data = parse_mrz_block(chunks)
-        
-        # 2. VIZ 提取 (备选/补全)
-        viz_data = fallback_extract_viz(chunks)
-        
-        # 3. 智能合并：MRZ 优先，VIZ 补全
-        final = mrz_data if mrz_data else {}
-        for key in ['passportNumber', 'fullName', 'birthDate', 'age', 'sex', 'nationalityCode']:
-            if not final.get(key):
-                final[key] = viz_data.get(key)
+        final, chunks, score = run_rapidocr(image_path)
 
         print(json.dumps({
             'success': bool(final.get('passportNumber')),
-            'isPassport': True,
+            'isPassport': bool(final.get('passportNumber') or parse_mrz_block(chunks) or parse_visual_mrz_line(chunks)),
             'passportNumber': final.get('passportNumber', ''),
             'fullName': final.get('fullName', ''),
             'birthDate': final.get('birthDate', ''),
@@ -250,8 +337,9 @@ def main() -> int:
             'sex': final.get('sex', ''),
             'nationalityCode': final.get('nationalityCode', ''),
             'text': '\n'.join(chunks),
-            'engine': 'paddleocr-python-local',
-            'method': 'mrz_structural' if mrz_data else 'viz_fallback'
+            'confidence': min(0.99, max(0.35, score / 180)),
+            'engine': 'rapidocr-onnxruntime-local',
+            'method': 'mrz_or_viz_multirotation'
         }, ensure_ascii=False))
         return 0
     except Exception as exc:

@@ -15,7 +15,7 @@ const cacheDir = path.join(serverDir, '.cache');
 const cacheHomeDir = path.join(cacheDir, 'home');
 const pipCacheDir = path.join(cacheDir, 'pip');
 const pycacheDir = path.join(cacheDir, 'pycache');
-const paddleDir = path.join(serverDir, '.paddle');
+const legacyPaddleDir = path.join(serverDir, '.paddle');
 const uploadDir = path.join(serverDir, 'uploads_dev');
 const dbPath = path.join(serverDir, 'hotel_dev.db');
 
@@ -35,7 +35,7 @@ const run = (command, args, options = {}) => new Promise((resolve, reject) => {
       ...process.env,
       PADDLEOCR_HOME: ocrModelDir,
       XDG_CACHE_HOME: cacheDir,
-      PADDLE_HOME: paddleDir,
+      PADDLE_HOME: legacyPaddleDir,
       HOME: cacheHomeDir,
       PIP_CACHE_DIR: pipCacheDir,
       PIP_DISABLE_PIP_VERSION_CHECK: '1',
@@ -143,7 +143,7 @@ const ensureDirs = async () => {
     fs.mkdir(cacheHomeDir, { recursive: true }),
     fs.mkdir(pipCacheDir, { recursive: true }),
     fs.mkdir(pycacheDir, { recursive: true }),
-    fs.mkdir(paddleDir, { recursive: true }),
+    fs.mkdir(legacyPaddleDir, { recursive: true }),
     fs.mkdir(uploadDir, { recursive: true })
   ]);
 };
@@ -178,21 +178,24 @@ const warmOcrModel = async () => {
     return;
   }
 
-  console.log('[deploy] Warming PaddleOCR model cache inside project-local server/.cache/home...');
+  console.log('[deploy] Warming RapidOCR ONNX runtime inside project-local server/.cache/home...');
   await run(venvPython, [
     '-c',
     [
       'import os',
-      'from paddleocr import PaddleOCR',
-      'PaddleOCR(use_angle_cls=True, lang="en", show_log=False, det_limit_side_len=1920, det_db_unclip_ratio=2.2)',
-      'print("PaddleOCR model cache ready:", os.environ.get("PADDLEOCR_HOME"))'
+      'from rapidocr_onnxruntime import RapidOCR',
+      'RapidOCR()',
+      'print("RapidOCR runtime ready:", os.environ.get("XDG_CACHE_HOME"))'
     ].join('; ')
   ], { cwd: serverDir });
 };
 
 const verifyOcrImports = async () => {
   console.log('[deploy] Verifying OCR runtime imports...');
-  await run(venvPython, ['-c', 'import cv2, numpy, PIL; from paddleocr import PaddleOCR; print("OCR runtime OK")'], { cwd: serverDir });
+  await run(venvPython, [
+    '-c',
+    'import cv2, numpy, PIL, pillow_avif; from rapidocr_onnxruntime import RapidOCR; print("OCR runtime OK")'
+  ], { cwd: serverDir });
 };
 
 const main = async () => {
@@ -206,7 +209,7 @@ const main = async () => {
   console.log('');
   console.log('[deploy] Done.');
   console.log(`[deploy] OCR venv: ${path.relative(rootDir, venvDir)}`);
-  console.log(`[deploy] OCR models/cache: ${path.relative(rootDir, path.join(cacheHomeDir, '.paddleocr'))}`);
+  console.log(`[deploy] OCR cache home: ${path.relative(rootDir, cacheHomeDir)}`);
   console.log(`[deploy] OCR auxiliary cache: ${path.relative(rootDir, ocrModelDir)}`);
   console.log(`[deploy] Uploads: ${path.relative(rootDir, uploadDir)}`);
   console.log(`[deploy] Dev DB path: ${path.relative(rootDir, dbPath)}`);

@@ -23,6 +23,7 @@ import {
   RotateCcw,
   ExternalLink
 } from 'lucide-react';
+import { DEFAULT_APP_SETTINGS, TAIWAN_NAMING_MODE_OPTIONS, getCountryName } from './countryOptions';
 
 
 const fileToBase64 = (file) => {
@@ -429,6 +430,8 @@ const AdminDashboard = ({
   const [showDeletedRows, setShowDeletedRows] = useState(false);
   const [pendingActionKey, setPendingActionKey] = useState('');
   const [translationSourceLang, setTranslationSourceLang] = useState(defaultLang);
+  const [appSettings, setAppSettings] = useState(DEFAULT_APP_SETTINGS);
+  const [settingsSaved, setSettingsSaved] = useState(false);
 
   const missingBuiltinSteps = useMemo(() => {
     const defaults = buildDefaultSteps(stepLang);
@@ -486,6 +489,25 @@ const AdminDashboard = ({
         setServerStatus('offline');
       });
   }, [adminToken]);
+
+  useEffect(() => {
+    let active = true;
+    db.getAppSettings()
+      .then((settings) => {
+        if (!active) return;
+        setAppSettings({ ...DEFAULT_APP_SETTINGS, ...(settings || {}) });
+        setSettingsSaved(false);
+      })
+      .catch(() => {
+        if (!active) return;
+        setAppSettings(DEFAULT_APP_SETTINGS);
+        setSettingsSaved(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [db]);
 
   useEffect(() => {
     let isActive = true;
@@ -658,6 +680,16 @@ const AdminDashboard = ({
     setCompletionSaved(false);
   };
 
+  const handleSaveAppSettings = async () => {
+    try {
+      await db.updateAppSettings(adminToken, appSettings);
+      setSettingsSaved(true);
+    } catch (error) {
+      alert('系统设置保存失败，请稍后重试');
+      setSettingsSaved(false);
+    }
+  };
+
   const renderContent = () => {
     if (serverStatus === 'offline') {
       return (
@@ -732,7 +764,7 @@ const AdminDashboard = ({
                         <td className="p-3">{guest.phone || '-'}</td>
                         <td className="p-3">{guest.postalCode || '-'}</td>
                         <td className="p-3 max-w-[220px] truncate" title={guest.address || ''}>{guest.address || '-'}</td>
-                        <td className="p-3">{guest.nationality || '-'}</td>
+                        <td className="p-3">{guest.nationality ? getCountryName(guest.nationality, 'zh-hant', appSettings.taiwanNamingMode) : '-'}</td>
                         <td className="p-3 font-mono text-xs">{guest.passportNumber || '-'}</td>
                         <td className="p-3">{guest.guardianName || '-'}</td>
                         <td className="p-3">{guest.guardianPhone || '-'}</td>
@@ -861,6 +893,41 @@ const AdminDashboard = ({
                     {serverStatus === 'online' ? '已連接 (Online)' : '斷開 (Offline)'}
                   </span>
                 </div>
+              </div>
+            </div>
+            <div className="bg-white rounded-3xl border border-slate-200 p-8 shadow-sm space-y-5">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-700">
+                  <Globe className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-xl text-slate-800">国家与地区显示</h3>
+                  <p className="text-sm text-slate-500">前台和后台都使用 ISO 3166-1 标准国家代码，台湾表述可在这里调整。</p>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">台湾表述模式</label>
+                <select
+                  value={appSettings.taiwanNamingMode}
+                  onChange={(e) => {
+                    setAppSettings((prev) => ({ ...prev, taiwanNamingMode: e.target.value }));
+                    setSettingsSaved(false);
+                  }}
+                  className="w-full p-3 rounded-xl border border-slate-200 text-sm bg-white"
+                >
+                  {TAIWAN_NAMING_MODE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-600 space-y-1">
+                <p>简体中文示例：{getCountryName('TW', 'zh-hans', appSettings.taiwanNamingMode)}</p>
+                <p>繁體中文示例：{getCountryName('TW', 'zh-hant', appSettings.taiwanNamingMode)}</p>
+                <p>English example: {getCountryName('TW', 'en', appSettings.taiwanNamingMode)}</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <button onClick={handleSaveAppSettings} className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-bold">保存系统设置</button>
+                {settingsSaved && <span className="text-sm text-emerald-600 font-bold">已保存</span>}
               </div>
             </div>
           </div>

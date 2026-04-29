@@ -127,9 +127,9 @@ pnpm deploy
 
 - 安装 Node 依赖：`pnpm install --frozen-lockfile`。
 - 创建项目内 Python 虚拟环境：`server/.venv`。
-- 将 PaddleOCR、PaddlePaddle、OpenCV 等 OCR 依赖安装到 `server/.venv`。
-- 将 PaddleOCR 模型缓存预热到 `server/.cache/home/.paddleocr`。
-- 将 Paddle/Python/pip 相关缓存限制在 `server/.cache`、`server/.ocr-models`、`server/.paddle`。
+- 将 RapidOCR ONNX Runtime、OpenCV、Pillow/AVIF 等 OCR 依赖安装到 `server/.venv`。
+- 在项目内预热 OCR runtime，避免首次识别时才初始化。
+- 将 OCR/Python/pip 相关缓存限制在 `server/.cache`、`server/.ocr-models`、`server/.paddle`。
 - 生成/更新 `server/.env.development`，指向项目内 venv 和 OCR runner。
 
 这套流程不会安装 Python 包到系统环境，也不会把 OCR 模型写入用户 home 目录。部署产物均已加入 `.gitignore`。
@@ -190,33 +190,33 @@ pnpm --filter client preview
 - `WEBAUTHN_RP_ID`：WebAuthn Relying Party ID（默认 `localhost`）。
 - `WEBAUTHN_RP_NAME`：WebAuthn RP 展示名称（默认 `Checkin Admin`）。
 - `WEBAUTHN_ORIGIN`：WebAuthn 验证 Origin（会移除末尾 `/`）。
-- `PADDLE_OCR_PYTHON`：本地 PaddleOCR 运行的 Python 命令（默认 `python3`）。
-- `PADDLE_OCR_RUNNER`：本地 PaddleOCR 识别脚本路径（默认 `server/tools/paddle_ocr_runner.py`）。
+- `PADDLE_OCR_PYTHON`：本地护照 OCR 运行的 Python 命令（默认 `python3`，变量名保留用于兼容旧配置）。
+- `PADDLE_OCR_RUNNER`：本地护照 OCR 识别脚本路径（默认 `server/tools/paddle_ocr_runner.py`，变量名保留用于兼容旧配置）。
 
 如果缺少 `ADMIN_API_TOKEN` 或 `CORS_ORIGIN`，服务将直接抛错退出。
 
-### 本地部署 PaddleOCR（服务端）
+### 本地部署 OCR（服务端）
 
-当前项目已支持通过后端本地调用 PaddleOCR（Python 版）进行护照识别，并在 OCR 请求时保存护照照片，接口为：
+当前项目已支持通过后端本地调用 RapidOCR ONNX Runtime 进行护照识别，并在 OCR 请求时保存护照照片，接口为：
 
 - `POST /api/ocr/passport`（body: `{ "image": "data:image/...;base64,..." }`，返回包含 `passportPhoto` 文件名）
 
 部署步骤：
 
 ```bash
-# 1) 安装 Python 依赖（建议在虚拟环境）
-pip install paddleocr paddlepaddle
+# 1) 一键部署项目内虚拟环境和 OCR 依赖
+pnpm deploy
 
 # 2) 确认运行脚本存在
 ls server/tools/paddle_ocr_runner.py
 
 # 3) 启动后端（按需设置环境变量）
-PADDLE_OCR_PYTHON=python3 \
+PADDLE_OCR_PYTHON=./server/.venv/bin/python \
 PADDLE_OCR_RUNNER=./server/tools/paddle_ocr_runner.py \
 pnpm --filter server dev
 ```
 
-说明：前端使用系统拍照/相册选择上传护照照片；后端会先保存照片，再执行 OCR。若本地 PaddleOCR 不可用，照片仍会保存，前台会提示手动补充护照信息。
+说明：前端使用系统拍照/相册选择上传护照照片；后端会先保存照片，再执行 OCR。若本地 OCR 不可用，照片仍会保存，前台会提示手动补充护照信息。
 
 ---
 

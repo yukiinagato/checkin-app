@@ -24,6 +24,7 @@ const execFileAsync = promisify(execFile);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const HOST = process.env.HOST || '0.0.0.0';
 
 // ----------------------------------------------------------------------
 // 1. 環境變數檢查
@@ -64,11 +65,16 @@ const OCR_CACHE_HOME = path.resolve(__dirname, process.env.CHECKIN_OCR_HOME || p
 const OCR_CACHE_DIR = path.resolve(__dirname, process.env.XDG_CACHE_HOME || '.cache');
 const OCR_PADDLE_HOME = path.resolve(__dirname, process.env.PADDLE_HOME || '.paddle');
 const OCR_MODEL_HOME = path.resolve(__dirname, process.env.PADDLEOCR_HOME || '.ocr-models');
+const DEFAULT_APP_SETTINGS = Object.freeze({
+  taiwanNamingMode: 'locale-default'
+});
+const TAIWAN_NAMING_MODES = new Set(['locale-default', 'neutral', 'cn', 'roc']);
 const ALLOWED_IMAGE_TYPES = new Map([
   'image/jpeg',
   'image/jpg',
   'image/png',
   'image/webp',
+  'image/avif',
   'image/heic',
   'image/heif'
 ].map((mime) => [mime, mime === 'image/jpg' ? 'jpg' : mime.split('/')[1]]));
@@ -104,6 +110,14 @@ db.run(`
   CREATE TABLE IF NOT EXISTS completion_templates (
     lang TEXT PRIMARY KEY,
     template TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
+db.run(`
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `);
@@ -279,7 +293,7 @@ const parseDataImage = (dataImage) => {
   };
 };
 
-const runLocalPaddleOcr = async (dataImage) => {
+const runLocalPassportOcr = async (dataImage) => {
   const parsed = parseDataImage(dataImage);
   if (!parsed) {
     return { success: false, unsupported: true, error: 'Invalid image payload' };
@@ -319,13 +333,13 @@ const runLocalPaddleOcr = async (dataImage) => {
       }
     }
 
-    throw new Error('PaddleOCR output does not contain JSON payload');
+    throw new Error('Passport OCR output does not contain JSON payload');
   } catch (error) {
-    console.error('PaddleOCR 本地識別失敗:', error.message || error);
+    console.error('護照 OCR 本地識別失敗:', error.message || error);
     return {
       success: false,
       unsupported: true,
-      error: error.message || 'PaddleOCR execution failed'
+      error: error.message || 'Passport OCR execution failed'
     };
   } finally {
     await fs.remove(tempDir);
@@ -340,6 +354,60 @@ const parseRecordData = (row) => {
     return [];
   }
 };
+
+const loadAppSettings = () => new Promise((resolve, reject) => {
+  db.all('SELECT key, value FROM app_settings', [], (err, rows) => {
+    if (err) {
+      reject(err);
+      return;
+    }
+
+    const settings = { ...DEFAULT_APP_SETTINGS };
+    (rows || []).forEach((row) => {
+      if (row.key === 'taiwanNamingMode' && TAIWAN_NAMING_MODES.has(row.value)) {
+        settings.taiwanNamingMode = row.value;
+      }
+    });
+
+    resolve(settings);
+  });
+});
+
+const validateAppSettings = (settings) => {
+  if (!settings || typeof settings !== 'object') {
+    return { valid: false, error: 'settings must be an object' };
+  }
+
+  if (settings.taiwanNamingMode && !TAIWAN_NAMING_MODES.has(settings.taiwanNamingMode)) {
+    return { valid: false, error: 'Invalid taiwanNamingMode' };
+  }
+
+  return { valid: true };
+};
+
+const saveAppSettings = (settings) => new Promise((resolve, reject) => {
+  const merged = { ...DEFAULT_APP_SETTINGS, ...settings };
+  const entries = Object.entries(merged);
+
+  db.serialize(() => {
+    const stmt = db.prepare(
+      `INSERT INTO app_settings (key, value, updated_at)
+       VALUES (?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(key) DO UPDATE SET
+         value = excluded.value,
+         updated_at = CURRENT_TIMESTAMP`
+    );
+
+    entries.forEach(([key, value]) => {
+      stmt.run([key, String(value)]);
+    });
+
+    stmt.finalize((err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+});
 
 const parseAge = (value) => Number.parseInt(String(value ?? '').trim(), 10);
 
@@ -775,14 +843,24 @@ app.get('/api/steps', (req, res) => {
     });
 });
 
+app.get('/api/app-settings', async (req, res) => {
+  try {
+    const settings = await loadAppSettings();
+    res.json(settings);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/template-bundle', async (req, res) => {
   const { lang } = req.query;
   const targetLang = typeof lang === 'string' ? lang : 'zh-hans';
 
   try {
-    const [stepsRow, completionRow] = await Promise.all([
+    const [stepsRow, completionRow, appSettings] = await Promise.all([
       getTemplateRowWithFallback('step_templates', 'steps', targetLang),
-      getTemplateRowWithFallback('completion_templates', 'template', targetLang)
+      getTemplateRowWithFallback('completion_templates', 'template', targetLang),
+      loadAppSettings()
     ]);
 
     if (!stepsRow.payload || !completionRow.payload) {
@@ -803,7 +881,8 @@ app.get('/api/template-bundle', async (req, res) => {
           resolvedLang: completionRow.resolvedLang,
           fallbackUsed: completionRow.resolvedLang !== targetLang,
           data: parsedCompletionTemplate
-        }
+        },
+        appSettings
       });
     } catch (parseErr) {
       return res.status(500).json({ error: 'Invalid template bundle data' });
@@ -904,6 +983,20 @@ app.put('/api/admin/completion-template', requireAdminAuth, (req, res) => {
   );
 });
 
+app.put('/api/admin/app-settings', requireAdminAuth, async (req, res) => {
+  const { settings } = req.body || {};
+  const validation = validateAppSettings(settings);
+  if (!validation.valid) return res.status(400).json({ error: validation.error });
+
+  try {
+    await saveAppSettings(settings);
+    const saved = await loadAppSettings();
+    res.json({ success: true, settings: saved });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/submit', async (req, res) => {
   try {
     const { guests } = req.body;
@@ -951,7 +1044,7 @@ app.post('/api/ocr/passport', async (req, res) => {
     }
 
     const passportPhoto = await savePassportImage(image);
-    const ocrResult = await runLocalPaddleOcr(image);
+    const ocrResult = await runLocalPassportOcr(image);
     res.json({ ...ocrResult, passportPhoto });
   } catch (error) {
     console.error('護照 OCR 接口錯誤:', error);
@@ -959,12 +1052,24 @@ app.post('/api/ocr/passport', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+const startServer = () => app.listen(PORT, HOST, () => {
   console.log(`--------------------------------------------------`);
   console.log(`🏨 飯店管理後台服務已啟動`);
-  console.log(`📡 API 地址: http://localhost:${PORT}`);
+  console.log(`📡 API 地址: http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
   console.log(`📂 圖片存儲: ${UPLOAD_DIR}`);
   console.log(`💾 數據庫: ${DB_PATH}`);
   console.log(`🌐 WebAuthn Origin: ${EXPECTED_ORIGIN}`);
   console.log(`--------------------------------------------------`);
 });
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = {
+  app,
+  parseDataImage,
+  runLocalPassportOcr,
+  savePassportImage,
+  startServer
+};

@@ -1,5 +1,36 @@
 export const parseAge = (ageValue) => Number.parseInt(String(ageValue ?? '').trim(), 10);
 
+export const parsePassportBirthDateToAge = (birthDate, todayValue = new Date()) => {
+  const normalized = String(birthDate ?? '').replace(/\D/g, '');
+  if (normalized.length !== 8) return '';
+
+  const year = Number.parseInt(normalized.slice(0, 4), 10);
+  const month = Number.parseInt(normalized.slice(4, 6), 10);
+  const day = Number.parseInt(normalized.slice(6, 8), 10);
+  const birth = new Date(year, month - 1, day);
+
+  if (
+    Number.isNaN(birth.getTime()) ||
+    birth.getFullYear() !== year ||
+    birth.getMonth() !== month - 1 ||
+    birth.getDate() !== day
+  ) {
+    return '';
+  }
+
+  const today = todayValue instanceof Date ? todayValue : new Date(todayValue);
+  let age = today.getFullYear() - year;
+  const hasHadBirthday =
+    today.getMonth() > month - 1 ||
+    (today.getMonth() === month - 1 && today.getDate() >= day);
+
+  if (!hasHadBirthday) {
+    age -= 1;
+  }
+
+  return age >= 0 ? String(age) : '';
+};
+
 export const validateGuestForm = (guest) => {
   if (!guest || typeof guest !== 'object') return false;
 

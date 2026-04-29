@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseAge, validateGuestForm, isRegistrationValid } from '../src/formValidation.js';
+import { parseAge, parsePassportBirthDateToAge, validateGuestForm, isRegistrationValid } from '../src/formValidation.js';
 
 const createResident = (overrides = {}) => ({
   name: 'Resident Guest',
@@ -25,6 +25,12 @@ test('parseAge handles whitespace, invalid string, and decimal value', () => {
   assert.equal(parseAge(' 16 '), 16);
   assert.equal(parseAge('abc'), Number.NaN);
   assert.equal(parseAge('17.9'), 17);
+});
+
+test('parsePassportBirthDateToAge derives age from YYYYMMDD birth date', () => {
+  assert.equal(parsePassportBirthDateToAge('19881204', new Date('2026-04-29T00:00:00Z')), '37');
+  assert.equal(parsePassportBirthDateToAge('20100430', new Date('2026-04-29T00:00:00Z')), '15');
+  assert.equal(parsePassportBirthDateToAge('bad-input', new Date('2026-04-29T00:00:00Z')), '');
 });
 
 test('resident age < 16 does not require phone but still requires address', () => {

@@ -26,8 +26,9 @@ import {
   Calendar
 } from 'lucide-react';
 import AdminPage from './AdminPage';
-import { isRegistrationValid } from './formValidation';
+import { isRegistrationValid, parsePassportBirthDateToAge } from './formValidation';
 import PassportScannerFlow from './components/PassportScannerFlow';
+import { DEFAULT_APP_SETTINGS, getCountryOptions, isOfficialIsoCountryCode } from './countryOptions';
 
 // ----------------------------------------------------------------------
 // 輔助函數與常量
@@ -42,54 +43,11 @@ const createGuestTemplate = (type = 'adult') => ({
   isEditable: true
 });
 
-// 國家/地區數據 (支持多語言)
-const COUNTRY_DATA = [
-  { code: 'CN', names: { 'zh-hans': '中国', 'zh-hant': '中國', 'en': 'China', 'jp': '中国', 'ko': '중국' } },
-  { code: 'TW', names: { 'zh-hans': '中国台湾', 'zh-hant': '台灣', 'en': 'Taiwan', 'jp': '台湾', 'ko': '대만' } },
-  { code: 'HK', names: { 'zh-hans': '中国香港', 'zh-hant': '香港', 'en': 'Hong Kong', 'jp': '香港', 'ko': '홍콩' } },
-  { code: 'MO', names: { 'zh-hans': '中国澳门', 'zh-hant': '澳門', 'en': 'Macau', 'jp': 'マカオ', 'ko': '마카오' } },
-  { code: 'US', names: { 'zh-hans': '美国', 'zh-hant': '美國', 'en': 'USA', 'jp': 'アメリカ', 'ko': '미국' } },
-  { code: 'GB', names: { 'zh-hans': '英国', 'zh-hant': '英國', 'en': 'UK', 'jp': 'イギリス', 'ko': '영국' } },
-  { code: 'KR', names: { 'zh-hans': '韩国', 'zh-hant': '韓國', 'en': 'South Korea', 'jp': '韓国', 'ko': '대한민국' } },
-  { code: 'SG', names: { 'zh-hans': '新加坡', 'zh-hant': '新加坡', 'en': 'Singapore', 'jp': 'シンガポール', 'ko': '싱가포르' } },
-  { code: 'MY', names: { 'zh-hans': '马来西亚', 'zh-hant': '馬來西亞', 'en': 'Malaysia', 'jp': 'マレーシア', 'ko': '말레이시아' } },
-  { code: 'TH', names: { 'zh-hans': '泰国', 'zh-hant': '泰國', 'en': 'Thailand', 'jp': 'タイ', 'ko': '태국' } },
-  { code: 'VN', names: { 'zh-hans': '越南', 'zh-hant': '越南', 'en': 'Vietnam', 'jp': 'ベトナム', 'ko': '베트남' } },
-  { code: 'PH', names: { 'zh-hans': '菲律宾', 'zh-hant': '菲律賓', 'en': 'Philippines', 'jp': 'フィリピン', 'ko': '필리핀' } },
-  { code: 'ID', names: { 'zh-hans': '印度尼西亚', 'zh-hant': '印尼', 'en': 'Indonesia', 'jp': 'インドネシア', 'ko': '인도네시아' } },
-  { code: 'AU', names: { 'zh-hans': '澳大利亚', 'zh-hant': '澳大利亞', 'en': 'Australia', 'jp': 'オーストラリア', 'ko': '호주' } },
-  { code: 'CA', names: { 'zh-hans': '加拿大', 'zh-hant': '加拿大', 'en': 'Canada', 'jp': 'カナダ', 'ko': '캐나다' } },
-  { code: 'FR', names: { 'zh-hans': '法国', 'zh-hant': '法國', 'en': 'France', 'jp': 'フランス', 'ko': '프랑스' } },
-  { code: 'DE', names: { 'zh-hans': '德国', 'zh-hant': '德國', 'en': 'Germany', 'jp': 'ドイツ', 'ko': '독일' } },
-  { code: 'IT', names: { 'zh-hans': '意大利', 'zh-hant': '義大利', 'en': 'Italy', 'jp': 'イタリア', 'ko': '이탈리아' } },
-  { code: 'ES', names: { 'zh-hans': '西班牙', 'zh-hant': '西班牙', 'en': 'Spain', 'jp': 'スペイン', 'ko': '스페인' } },
-  { code: 'JP', names: { 'zh-hans': '日本', 'zh-hant': '日本', 'en': 'Japan', 'jp': '日本', 'ko': '일본' } },
-  { code: 'IN', names: { 'zh-hans': '印度', 'zh-hant': '印度', 'en': 'India', 'jp': 'インド', 'ko': '인도' } },
-  { code: 'RU', names: { 'zh-hans': '俄罗斯', 'zh-hant': '俄羅斯', 'en': 'Russia', 'jp': 'ロシア', 'ko': '러시아' } },
-  { code: 'NL', names: { 'zh-hans': '荷兰', 'zh-hant': '荷蘭', 'en': 'Netherlands', 'jp': 'オランダ', 'ko': '네덜란드' } },
-  { code: 'CH', names: { 'zh-hans': '瑞士', 'zh-hant': '瑞士', 'en': 'Switzerland', 'jp': 'スイス', 'ko': '스위스' } },
-  { code: 'SE', names: { 'zh-hans': '瑞典', 'zh-hant': '瑞典', 'en': 'Sweden', 'jp': 'スウェーデン', 'ko': '스웨덴' } },
-  { code: 'NO', names: { 'zh-hans': '挪威', 'zh-hant': '挪威', 'en': 'Norway', 'jp': 'ノルウェー', 'ko': '노르웨이' } },
-  { code: 'DK', names: { 'zh-hans': '丹麦', 'zh-hant': '丹麥', 'en': 'Denmark', 'jp': 'デンマーク', 'ko': '덴마크' } },
-  { code: 'FI', names: { 'zh-hans': '芬兰', 'zh-hant': '芬蘭', 'en': 'Finland', 'jp': 'フィンランド', 'ko': '핀란드' } },
-  { code: 'NZ', names: { 'zh-hans': '新西兰', 'zh-hant': '紐西蘭', 'en': 'New Zealand', 'jp': 'ニュージーランド', 'ko': '뉴질랜드' } },
-  { code: 'BR', names: { 'zh-hans': '巴西', 'zh-hant': '巴西', 'en': 'Brazil', 'jp': 'ブラジル', 'ko': '브라질' } },
-  { code: 'MX', names: { 'zh-hans': '墨西哥', 'zh-hant': '墨西哥', 'en': 'Mexico', 'jp': 'メキシコ', 'ko': '멕시코' } },
-  { code: 'AR', names: { 'zh-hans': '阿根廷', 'zh-hant': '阿根廷', 'en': 'Argentina', 'jp': 'アルゼンチン', 'ko': '아르헨티나' } },
-  { code: 'TR', names: { 'zh-hans': '土耳其', 'zh-hant': '土耳其', 'en': 'Turkey', 'jp': 'トルコ', 'ko': '튀르키예' } },
-  { code: 'SA', names: { 'zh-hans': '沙特阿拉伯', 'zh-hant': '沙烏地阿拉伯', 'en': 'Saudi Arabia', 'jp': 'サウジアラビア', 'ko': '사우디아라비아' } },
-  { code: 'AE', names: { 'zh-hans': '阿联酋', 'zh-hant': '阿聯酋', 'en': 'UAE', 'jp': 'アラブ首長国連邦', 'ko': '아랍에미리트' } },
-  { code: 'ZA', names: { 'zh-hans': '南非', 'zh-hant': '南非', 'en': 'South Africa', 'jp': '南アフリカ', 'ko': '남아프리카공화국' } },
-  { code: 'OTHER', names: { 'zh-hans': '其他', 'zh-hant': '其他', 'en': 'Other', 'jp': 'その他', 'ko': '기타' } },
-];
-
-const COUNTRY_CODE_SET = new Set(COUNTRY_DATA.map((item) => item.code));
-
 const resolveNationalityForForm = (ocrResult) => {
   const code = typeof ocrResult?.nationalityCode === 'string' ? ocrResult.nationalityCode.trim().toUpperCase() : '';
   const raw = typeof ocrResult?.nationalityRaw === 'string' ? ocrResult.nationalityRaw.trim().toUpperCase() : '';
 
-  if (code && COUNTRY_CODE_SET.has(code)) {
+  if (code && isOfficialIsoCountryCode(code)) {
     return { nationality: code, nationalityDetected: '' };
   }
 
@@ -224,6 +182,12 @@ const DB = {
     return await res.json();
   },
 
+  async getAppSettings() {
+    const res = await fetch(`${API_URL}/app-settings`);
+    if (!res.ok) throw new Error('Failed to fetch app settings');
+    return await res.json();
+  },
+
   async updateCompletionTemplate(adminToken, lang, template) {
     const res = await fetch(`${API_URL}/admin/completion-template?lang=${encodeURIComponent(lang)}`, {
       method: 'PUT',
@@ -234,6 +198,19 @@ const DB = {
       body: JSON.stringify({ template })
     });
     if (!res.ok) throw new Error('Failed to save completion template');
+    return await res.json();
+  },
+
+  async updateAppSettings(adminToken, settings) {
+    const res = await fetch(`${API_URL}/admin/app-settings`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${adminToken}`
+      },
+      body: JSON.stringify({ settings })
+    });
+    if (!res.ok) throw new Error('Failed to save app settings');
     return await res.json();
   },
 
@@ -846,6 +823,7 @@ const GuestFlow = ({
 
   const [stepsConfig, setStepsConfig] = useState([]);
   const [completionTemplate, setCompletionTemplate] = useState(() => buildDefaultCompletionTemplate(lang || DEFAULT_LANG));
+  const [appSettings, setAppSettings] = useState(DEFAULT_APP_SETTINGS);
 
   useEffect(() => {
     let isActive = true;
@@ -859,6 +837,10 @@ const GuestFlow = ({
           bundle?.completionTemplate?.data,
           buildDefaultCompletionTemplate(lang)
         );
+        setAppSettings({
+          ...DEFAULT_APP_SETTINGS,
+          ...(bundle?.appSettings || {})
+        });
         setStepsConfig(normalizedSteps);
         setCompletionTemplate(normalizedCompletionTemplate);
         saveSteps(lang, normalizedSteps);
@@ -868,6 +850,7 @@ const GuestFlow = ({
         if (!isActive) return;
         const storedSteps = loadSteps(lang);
         const storedCompletionTemplate = loadCompletionTemplate(lang);
+        setAppSettings(DEFAULT_APP_SETTINGS);
         setStepsConfig(storedSteps || buildDefaultSteps(lang));
         setCompletionTemplate(storedCompletionTemplate || buildDefaultCompletionTemplate(lang));
       });
@@ -889,6 +872,7 @@ const GuestFlow = ({
   const updateGuest = (id, field, value) => setGuests((prevGuests) => prevGuests.map((guest) => (guest.id === id ? { ...guest, [field]: value } : guest)));
   const updateCheckInDate = (value) => setCheckInDate(value);
   const updateCheckOutDate = (value) => setCheckOutDate(value);
+  const countryOptions = getCountryOptions(lang, appSettings.taiwanNamingMode);
 
   const uploadAndOcrPassport = async (base64Image, options = { strict: true }) => {
     const ocrResult = await DB.recognizePassport(base64Image);
@@ -899,6 +883,7 @@ const GuestFlow = ({
       isPassport: Boolean(ocrResult?.isPassport),
       passportNumber: ocrResult.passportNumber || '',
       fullName: ocrResult.fullName || '',
+      age: ocrResult.age,
       nationalityCode: ocrResult.nationalityCode || '',
       birthDate: ocrResult.birthDate || '',
       sex: ocrResult.sex || '',
@@ -925,6 +910,14 @@ const GuestFlow = ({
 
     if (payload.fullName) {
       updateGuest(guestId, 'name', payload.fullName);
+    }
+
+    const normalizedAge = Number.isFinite(payload.age)
+      ? String(payload.age)
+      : parsePassportBirthDateToAge(payload.birthDate);
+
+    if (normalizedAge) {
+      updateGuest(guestId, 'age', normalizedAge);
     }
 
     if (payload.nationalityCode) {
@@ -1216,42 +1209,75 @@ const GuestFlow = ({
                         <button disabled={!guest.isEditable} onClick={() => updateGuest(guest.id, 'isResident', false)} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${!guest.isResident ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400'} disabled:opacity-70`}>{t.regTourist}</button>
                       </div>
                       <div className="grid grid-cols-2 gap-3">
-                        <div className="col-span-2">
-                          <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormName}</label>
-                          <input disabled={!guest.isEditable} type="text" value={guest.name} onChange={(e) => updateGuest(guest.id, 'name', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none disabled:bg-slate-100" />
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormAge}</label>
-                          <input disabled={!guest.isEditable} type="number" value={guest.age} onChange={(e) => updateGuest(guest.id, 'age', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none disabled:bg-slate-100" />
-                        </div>
-                        <div>
-                          <label className={`text-[10px] font-bold ml-1 uppercase ${parseInt(guest.age) < 18 ? 'text-slate-300' : 'text-slate-400'}`}>{t.regFormPhone}</label>
-                          <input
-                            disabled={!guest.isEditable || parseInt(guest.age) < 16}
-                            type="text"
-                            value={parseInt(guest.age) < 16 ? "000-0000-0000" : guest.phone}
-                            onChange={(e) => updateGuest(guest.id, 'phone', e.target.value)}
-                            className={`w-full p-3 border border-slate-100 rounded-xl text-sm shadow-sm outline-none transition-colors ${parseInt(guest.age) < 16 ? 'bg-slate-100/50 text-slate-300 cursor-not-allowed' : 'bg-white text-slate-900'} disabled:bg-slate-100`}
-                          />
-                        </div>
                         {guest.isResident ? (
-                          <div className="col-span-2 space-y-3">
+                          <>
+                            <div className="col-span-2">
+                              <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormName}</label>
+                              <input disabled={!guest.isEditable} type="text" value={guest.name} onChange={(e) => updateGuest(guest.id, 'name', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none disabled:bg-slate-100" />
+                            </div>
                             <div>
-                              <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormZip}</label>
-                              <div className="flex gap-3">
-                                <input disabled={!guest.isEditable} type="text" placeholder={t.zipPlaceholder} value={guest.postalCode} onChange={(e) => updateGuest(guest.id, 'postalCode', e.target.value.replace(/\D/g, ''))} className="flex-1 p-3 bg-white border border-slate-100 rounded-xl text-sm font-mono disabled:bg-slate-100" maxLength={7} />
-                                <button disabled={!guest.isEditable} onClick={() => lookupZipCode(guest.id, guest.postalCode)} className="flex-1 px-4 bg-slate-900 text-white rounded-xl text-xs font-bold disabled:bg-slate-200 flex items-center gap-2">
-                                  {isLookingUpZip === guest.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />} {isLookingUpZip === guest.id ? t.zipLoading : t.zipLookup}
-                                </button>
+                              <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormAge}</label>
+                              <input disabled={!guest.isEditable} type="number" value={guest.age} onChange={(e) => updateGuest(guest.id, 'age', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none disabled:bg-slate-100" />
+                            </div>
+                            <div>
+                              <label className={`text-[10px] font-bold ml-1 uppercase ${parseInt(guest.age) < 18 ? 'text-slate-300' : 'text-slate-400'}`}>{t.regFormPhone}</label>
+                              <input
+                                disabled={!guest.isEditable || parseInt(guest.age) < 16}
+                                type="text"
+                                value={parseInt(guest.age) < 16 ? "000-0000-0000" : guest.phone}
+                                onChange={(e) => updateGuest(guest.id, 'phone', e.target.value)}
+                                className={`w-full p-3 border border-slate-100 rounded-xl text-sm shadow-sm outline-none transition-colors ${parseInt(guest.age) < 16 ? 'bg-slate-100/50 text-slate-300 cursor-not-allowed' : 'bg-white text-slate-900'} disabled:bg-slate-100`}
+                              />
+                            </div>
+                            <div className="col-span-2 space-y-3">
+                              <div>
+                                <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormZip}</label>
+                                <div className="flex gap-3">
+                                  <input disabled={!guest.isEditable} type="text" placeholder={t.zipPlaceholder} value={guest.postalCode} onChange={(e) => updateGuest(guest.id, 'postalCode', e.target.value.replace(/\D/g, ''))} className="flex-1 p-3 bg-white border border-slate-100 rounded-xl text-sm font-mono disabled:bg-slate-100" maxLength={7} />
+                                  <button disabled={!guest.isEditable} onClick={() => lookupZipCode(guest.id, guest.postalCode)} className="flex-1 px-4 bg-slate-900 text-white rounded-xl text-xs font-bold disabled:bg-slate-200 flex items-center gap-2">
+                                    {isLookingUpZip === guest.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />} {isLookingUpZip === guest.id ? t.zipLoading : t.zipLookup}
+                                  </button>
+                                </div>
+                              </div>
+                              <div>
+                                <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormAddr}</label>
+                                <input disabled={!guest.isEditable} type="text" value={guest.address} onChange={(e) => updateGuest(guest.id, 'address', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm disabled:bg-slate-100" placeholder="大阪府大阪市…" />
                               </div>
                             </div>
-                            <div>
-                              <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormAddr}</label>
-                              <input disabled={!guest.isEditable} type="text" value={guest.address} onChange={(e) => updateGuest(guest.id, 'address', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm disabled:bg-slate-100" placeholder="大阪府大阪市…" />
+                          </>
+                        ) : guest.passportPhoto ? (
+                          <>
+                            <div className="col-span-2 space-y-2">
+                              <button
+                                disabled={!guest.isEditable || guest.passportOcrStatus === 'processing'}
+                                onClick={() => setScannerGuestId(guest.id)}
+                                className="w-full p-4 border-2 border-dashed rounded-xl flex items-center justify-center gap-2 transition-colors bg-emerald-50 border-emerald-200 text-emerald-600 disabled:opacity-60"
+                              >
+                                {guest.passportOcrStatus === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+                                <span className="text-[10px] font-bold uppercase">{t.regPassportUploaded}</span>
+                              </button>
+                              {guest.passportOcrMessage && (
+                                <p className={`text-[11px] ${guest.passportOcrStatus === 'failed' ? 'text-rose-500' : guest.passportOcrStatus === 'manual-required' ? 'text-amber-600' : 'text-emerald-600'}`}>{guest.passportOcrMessage}</p>
+                              )}
                             </div>
-                          </div>
-                        ) : (
-                          <div className="col-span-2 grid grid-cols-2 gap-3">
+                            <div className="col-span-2">
+                              <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormName}</label>
+                              <input disabled={!guest.isEditable} type="text" value={guest.name} onChange={(e) => updateGuest(guest.id, 'name', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none disabled:bg-slate-100" />
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormAge}</label>
+                              <input disabled={!guest.isEditable} type="number" value={guest.age} onChange={(e) => updateGuest(guest.id, 'age', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none disabled:bg-slate-100" />
+                            </div>
+                            <div>
+                              <label className={`text-[10px] font-bold ml-1 uppercase ${parseInt(guest.age) < 18 ? 'text-slate-300' : 'text-slate-400'}`}>{t.regFormPhone}</label>
+                              <input
+                                disabled={!guest.isEditable || parseInt(guest.age) < 16}
+                                type="text"
+                                value={parseInt(guest.age) < 16 ? "000-0000-0000" : guest.phone}
+                                onChange={(e) => updateGuest(guest.id, 'phone', e.target.value)}
+                                className={`w-full p-3 border border-slate-100 rounded-xl text-sm shadow-sm outline-none transition-colors ${parseInt(guest.age) < 16 ? 'bg-slate-100/50 text-slate-300 cursor-not-allowed' : 'bg-white text-slate-900'} disabled:bg-slate-100`}
+                              />
+                            </div>
                             <div className="col-span-2">
                               <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormNation}</label>
                               <select
@@ -1264,8 +1290,8 @@ const GuestFlow = ({
                                 className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none appearance-none cursor-pointer disabled:bg-slate-100"
                               >
                                 <option value="">-- {t.selectCountry} --</option>
-                                {COUNTRY_DATA.map(c => (
-                                  <option key={c.code} value={c.code}>{c.names[lang] || c.names['en']}</option>
+                                {countryOptions.map((country) => (
+                                  <option key={country.code} value={country.code}>{country.label}</option>
                                 ))}
                               </select>
                               {guest.nationalityDetected && (
@@ -1276,19 +1302,20 @@ const GuestFlow = ({
                               <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormPass}</label>
                               <input disabled={!guest.isEditable} type="text" value={guest.passportNumber} onChange={(e) => updateGuest(guest.id, 'passportNumber', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm disabled:bg-slate-100" />
                             </div>
-                            <div className="col-span-2 space-y-2">
-                              <button
-                                disabled={!guest.isEditable || guest.passportOcrStatus === 'processing'}
-                                onClick={() => setScannerGuestId(guest.id)}
-                                className={`w-full p-4 border-2 border-dashed rounded-xl flex items-center justify-center gap-2 transition-colors ${guest.passportPhoto ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-slate-100 text-slate-400 hover:border-slate-300'} disabled:opacity-60`}
-                              >
-                                {guest.passportOcrStatus === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
-                                <span className="text-[10px] font-bold uppercase">{guest.passportPhoto ? t.regPassportUploaded : t.regPassportUpload}</span>
-                              </button>
-                              {guest.passportOcrMessage && (
-                                <p className={`text-[11px] ${guest.passportOcrStatus === 'failed' ? 'text-rose-500' : guest.passportOcrStatus === 'manual-required' ? 'text-amber-600' : 'text-emerald-600'}`}>{guest.passportOcrMessage}</p>
-                              )}
-                            </div>
+                          </>
+                        ) : (
+                          <div className="col-span-2 space-y-2">
+                            <button
+                              disabled={!guest.isEditable || guest.passportOcrStatus === 'processing'}
+                              onClick={() => setScannerGuestId(guest.id)}
+                              className="w-full p-5 border-2 border-dashed rounded-xl flex items-center justify-center gap-2 transition-colors bg-white border-slate-200 text-slate-500 hover:border-slate-400 disabled:opacity-60"
+                            >
+                              {guest.passportOcrStatus === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+                              <span className="text-[10px] font-bold uppercase">{t.regPassportUpload}</span>
+                            </button>
+                            {guest.passportOcrMessage && (
+                              <p className={`text-[11px] ${guest.passportOcrStatus === 'failed' ? 'text-rose-500' : guest.passportOcrStatus === 'manual-required' ? 'text-amber-600' : 'text-emerald-600'}`}>{guest.passportOcrMessage}</p>
+                            )}
                           </div>
                         )}
                         {guest.age && parseInt(guest.age) < 18 && (

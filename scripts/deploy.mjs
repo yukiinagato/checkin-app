@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import https from 'node:https';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -16,8 +18,19 @@ const cacheHomeDir = path.join(cacheDir, 'home');
 const pipCacheDir = path.join(cacheDir, 'pip');
 const pycacheDir = path.join(cacheDir, 'pycache');
 const legacyPaddleDir = path.join(serverDir, '.paddle');
+const embeddedPythonRootDir = path.join(serverDir, '.python');
 const uploadDir = path.join(serverDir, 'uploads_dev');
 const dbPath = path.join(serverDir, 'hotel_dev.db');
+const modulesYamlPath = path.join(rootDir, 'node_modules', '.modules.yaml');
+const standalonePythonTag = process.env.CHECKIN_PYTHON_STANDALONE_TAG || '20260414';
+const standalonePythonVersion = process.env.CHECKIN_PYTHON_STANDALONE_VERSION || '3.11.15';
+const standalonePythonPlatform = resolveStandalonePlatform();
+const standalonePythonAssetName = standalonePythonPlatform
+  ? `cpython-${standalonePythonVersion}+${standalonePythonTag}-${standalonePythonPlatform}-install_only.tar.gz`
+  : null;
+const standalonePythonInstallDir = standalonePythonAssetName
+  ? path.join(embeddedPythonRootDir, standalonePythonAssetName.replace(/\.tar\.gz$/, ''))
+  : null;
 
 const isWindows = process.platform === 'win32';
 const venvPython = path.join(venvDir, isWindows ? 'Scripts/python.exe' : 'bin/python');
@@ -27,6 +40,14 @@ const pythonCandidates = [
   'python3',
   'python'
 ].filter(Boolean);
+
+function resolveStandalonePlatform() {
+  if (process.platform === 'darwin' && process.arch === 'arm64') return 'aarch64-apple-darwin';
+  if (process.platform === 'darwin' && process.arch === 'x64') return 'x86_64-apple-darwin';
+  if (process.platform === 'linux' && process.arch === 'arm64') return 'aarch64-unknown-linux-gnu';
+  if (process.platform === 'linux' && process.arch === 'x64') return 'x86_64-unknown-linux-gnu';
+  return null;
+}
 
 const run = (command, args, options = {}) => new Promise((resolve, reject) => {
   const child = spawn(command, args, {
@@ -68,29 +89,232 @@ const run = (command, args, options = {}) => new Promise((resolve, reject) => {
   });
 });
 
+const githubJsonGet = (pathname) => new Promise((resolve, reject) => {
+  const request = https.get({
+    hostname: 'api.github.com',
+    path: pathname,
+    headers: {
+      'User-Agent': 'checkin-app-deploy',
+      Accept: 'application/vnd.github+json'
+    }
+  }, (response) => {
+    let body = '';
+    response.on('data', (chunk) => {
+      body += chunk.toString();
+    });
+    response.on('end', () => {
+      if (response.statusCode && response.statusCode >= 400) {
+        reject(new Error(`GitHub API ${pathname} failed with ${response.statusCode}`));
+        return;
+      }
+      try {
+        resolve(JSON.parse(body));
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+  request.on('error', reject);
+});
+
+const downloadFile = (url, destination) => new Promise((resolve, reject) => {
+  const request = https.get(url, {
+    headers: {
+      'User-Agent': 'checkin-app-deploy',
+      Accept: 'application/octet-stream'
+    }
+  }, (response) => {
+    if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+      response.resume();
+      downloadFile(response.headers.location, destination).then(resolve, reject);
+      return;
+    }
+    if (response.statusCode !== 200) {
+      reject(new Error(`Download failed with HTTP ${response.statusCode}`));
+      response.resume();
+      return;
+    }
+
+    const fileHandlePromise = fs.open(destination, 'w');
+    fileHandlePromise.then((fileHandle) => {
+      response.on('data', async (chunk) => {
+        response.pause();
+        try {
+          await fileHandle.write(chunk);
+          response.resume();
+        } catch (error) {
+          await fileHandle.close().catch(() => {});
+          reject(error);
+        }
+      });
+      response.on('end', async () => {
+        await fileHandle.close();
+        resolve();
+      });
+      response.on('error', async (error) => {
+        await fileHandle.close().catch(() => {});
+        reject(error);
+      });
+    }, reject);
+  });
+  request.on('error', reject);
+});
+
+const readPythonVersion = async (pythonExecutable) => {
+  const result = await run(pythonExecutable, ['-c', 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")'], { capture: true });
+  return result.stdout.trim();
+};
+
+const parsePythonVersion = (version) => version.split('.').map((part) => Number(part));
+
+const isSupportedPythonVersion = (version) => {
+  const [major, minor] = parsePythonVersion(version);
+  return major === 3 && minor >= 9 && minor <= 11;
+};
+
+const isPreferredPythonVersion = (version) => {
+  const [major, minor] = parsePythonVersion(version);
+  return major === 3 && minor >= 10 && minor <= 11;
+};
+
+const getStandalonePythonPath = () => {
+  if (!standalonePythonInstallDir) return null;
+  return path.join(standalonePythonInstallDir, isWindows ? 'python.exe' : 'bin/python3.11');
+};
+
+const verifySha256 = async (filePath, expectedDigest) => {
+  const digest = createHash('sha256');
+  const handle = await fs.open(filePath, 'r');
+  try {
+    const buffer = Buffer.allocUnsafe(1024 * 1024);
+    while (true) {
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      if (!bytesRead) break;
+      digest.update(buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    await handle.close();
+  }
+  const actual = digest.digest('hex');
+  if (actual !== expectedDigest) {
+    throw new Error(`Standalone Python checksum mismatch: expected ${expectedDigest}, got ${actual}`);
+  }
+};
+
+const ensureStandalonePython = async () => {
+  const standalonePython = getStandalonePythonPath();
+  if (!standalonePythonPlatform || !standalonePythonAssetName || !standalonePythonInstallDir || !standalonePython) {
+    throw new Error(`Automatic Python bootstrap is not supported on ${process.platform}/${process.arch}. Set PYTHON=/path/to/python3.10 or python3.11.`);
+  }
+
+  try {
+    await fs.access(standalonePython);
+    const version = await readPythonVersion(standalonePython);
+    console.log(`[deploy] Reusing project-local Python ${version} from ${path.relative(rootDir, standalonePythonInstallDir)}`);
+    return standalonePython;
+  } catch {
+    // Download below.
+  }
+
+  console.log(`[deploy] Bootstrapping project-local CPython ${standalonePythonVersion} for ${standalonePythonPlatform}...`);
+  await fs.mkdir(embeddedPythonRootDir, { recursive: true });
+  const release = await githubJsonGet(`/repos/astral-sh/python-build-standalone/releases/tags/${standalonePythonTag}`);
+  const asset = (release.assets || []).find((entry) => entry.name === standalonePythonAssetName);
+  if (!asset?.browser_download_url) {
+    throw new Error(`Could not find standalone Python asset ${standalonePythonAssetName} in release ${standalonePythonTag}.`);
+  }
+
+  const archivePath = path.join(embeddedPythonRootDir, standalonePythonAssetName);
+  await downloadFile(asset.browser_download_url, archivePath);
+  if (typeof asset.digest === 'string' && asset.digest.startsWith('sha256:')) {
+    await verifySha256(archivePath, asset.digest.slice('sha256:'.length));
+  }
+
+  const extractRoot = await fs.mkdtemp(path.join(embeddedPythonRootDir, 'extract-'));
+  try {
+    await run('tar', ['-xzf', archivePath, '-C', extractRoot]);
+    const extractedPythonDir = path.join(extractRoot, 'python');
+    await fs.access(extractedPythonDir);
+    await fs.rm(standalonePythonInstallDir, { recursive: true, force: true });
+    await fs.rename(extractedPythonDir, standalonePythonInstallDir);
+  } finally {
+    await fs.rm(extractRoot, { recursive: true, force: true });
+    await fs.rm(archivePath, { force: true });
+  }
+
+  const version = await readPythonVersion(standalonePython);
+  console.log(`[deploy] Installed project-local Python ${version} into ${path.relative(rootDir, standalonePythonInstallDir)}`);
+  return standalonePython;
+};
+
+const readExistingPnpmStoreDir = async () => {
+  if (process.env.npm_config_store_dir) {
+    return process.env.npm_config_store_dir;
+  }
+
+  try {
+    const modulesYaml = await fs.readFile(modulesYamlPath, 'utf8');
+    const match = modulesYaml.match(/^\s*"storeDir":\s*"(.+)"\s*,?\s*$/m);
+    return match?.[1] || null;
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+};
+
 const runPnpm = async (args) => {
   const npmExecPath = process.env.npm_execpath || '';
   if (npmExecPath.toLowerCase().includes('pnpm')) {
     return run(process.execPath, [npmExecPath, ...args]);
   }
-  return run('pnpm', args);
+
+  try {
+    return await run('pnpm', args);
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      try {
+        return await run('corepack', ['pnpm', ...args]);
+      } catch (corepackError) {
+        if (corepackError?.code === 'ENOENT') {
+          throw new Error('pnpm is required to install Node dependencies. Run this script via `pnpm run deploy`, install pnpm globally, or enable Corepack.');
+        }
+        throw corepackError;
+      }
+    }
+    throw error;
+  }
 };
 
 const findPython = async () => {
+  const supportedCandidates = [];
   for (const candidate of pythonCandidates) {
     try {
-      const result = await run(candidate, ['-c', 'import sys; print(sys.executable); print(f"{sys.version_info.major}.{sys.version_info.minor}")'], { capture: true });
+      const result = await run(candidate, ['-c', 'import sys; print(sys.executable); print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")'], { capture: true });
       const [executable, version] = result.stdout.trim().split(/\r?\n/);
-      const [major, minor] = version.split('.').map(Number);
-      if (major === 3 && minor >= 9 && minor <= 11) {
+      if (isPreferredPythonVersion(version)) {
+        console.log(`[deploy] Using system Python ${version} from ${executable || candidate}`);
         return executable || candidate;
       }
-      console.warn(`[deploy] Skip ${candidate}: Python ${version} is not supported by the pinned OCR stack. Use Python 3.9-3.11.`);
+      if (isSupportedPythonVersion(version)) {
+        supportedCandidates.push({ executable: executable || candidate, version });
+        console.warn(`[deploy] Found fallback Python ${version} at ${candidate}; will try to upgrade to project-local Python 3.11.`);
+        continue;
+      }
+      console.warn(`[deploy] Skip ${candidate}: Python ${version} is not supported by the pinned OCR stack. Use Python 3.10-3.11 or allow automatic bootstrap.`);
     } catch {
       // Try the next candidate.
     }
   }
-  throw new Error('No supported Python found. Install Python 3.9, 3.10, or 3.11, or set PYTHON=/path/to/python.');
+
+  try {
+    return await ensureStandalonePython();
+  } catch (error) {
+    if (supportedCandidates.length) {
+      console.warn(`[deploy] Falling back to ${supportedCandidates[0].executable} because standalone Python bootstrap failed: ${error.message}`);
+      return supportedCandidates[0].executable;
+    }
+    throw error;
+  }
 };
 
 const readEnv = async () => {
@@ -138,6 +362,7 @@ const writeEnv = async () => {
 
 const ensureDirs = async () => {
   await Promise.all([
+    fs.mkdir(embeddedPythonRootDir, { recursive: true }),
     fs.mkdir(ocrModelDir, { recursive: true }),
     fs.mkdir(cacheDir, { recursive: true }),
     fs.mkdir(cacheHomeDir, { recursive: true }),
@@ -153,16 +378,36 @@ const installNodeDependencies = async () => {
     console.log('[deploy] Skip pnpm install because CHECKIN_SKIP_NODE_INSTALL=1');
     return;
   }
+
   console.log('[deploy] Installing Node dependencies with pnpm...');
-  await runPnpm(['install', '--frozen-lockfile']);
+  const pnpmArgs = ['install', '--frozen-lockfile'];
+  const storeDir = await readExistingPnpmStoreDir();
+  if (storeDir) {
+    pnpmArgs.push('--store-dir', storeDir);
+  }
+  await runPnpm(pnpmArgs);
 };
 
 const installOcrDependencies = async () => {
   const python = await findPython();
+  const targetVersion = await readPythonVersion(python);
+  let reuseVenv = false;
+
   try {
     await fs.access(venvPython);
-    console.log(`[deploy] Reusing ${path.relative(rootDir, venvDir)}`);
+    const currentVersion = await readPythonVersion(venvPython);
+    if (currentVersion.split('.').slice(0, 2).join('.') === targetVersion.split('.').slice(0, 2).join('.')) {
+      reuseVenv = true;
+      console.log(`[deploy] Reusing ${path.relative(rootDir, venvDir)} on Python ${currentVersion}`);
+    } else {
+      console.log(`[deploy] Recreating ${path.relative(rootDir, venvDir)} because it uses Python ${currentVersion}, target is ${targetVersion}`);
+      await fs.rm(venvDir, { recursive: true, force: true });
+    }
   } catch {
+    // Create below.
+  }
+
+  if (!reuseVenv) {
     console.log(`[deploy] Creating OCR virtualenv with ${python}`);
     await run(python, ['-m', 'venv', venvDir]);
   }

@@ -30,6 +30,7 @@ server/hotel_dev.db
 server/hotel.db
 server/uploads*/
 server/.venv/
+server/.python/
 server/.ocr-models/
 server/.cache/
 server/.paddle/

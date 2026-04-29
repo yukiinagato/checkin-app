@@ -126,13 +126,14 @@ pnpm run deploy
 该命令会完成：
 
 - 安装 Node 依赖：`pnpm install --frozen-lockfile`。
+- 优先复用系统 Python 3.10/3.11；若仅检测到 Python 3.9 或未检测到合适版本，会自动下载项目内 CPython 3.11 到 `server/.python/`。
 - 创建项目内 Python 虚拟环境：`server/.venv`。
 - 将 RapidOCR ONNX Runtime、OpenCV、Pillow/AVIF 等 OCR 依赖安装到 `server/.venv`。
 - 在项目内预热 OCR runtime，避免首次识别时才初始化。
 - 将 OCR/Python/pip 相关缓存限制在 `server/.cache`、`server/.ocr-models`、`server/.paddle`。
 - 生成/更新 `server/.env.development`，指向项目内 venv 和 OCR runner。
 
-这套流程不会安装 Python 包到系统环境，也不会把 OCR 模型写入用户 home 目录。部署产物均已加入 `.gitignore`。
+这套流程不会安装 Python 包到系统环境，也不会把 OCR 模型写入用户 home 目录。若触发自动升级，CPython runtime 也只会落在项目目录 `server/.python/`。部署产物均已加入 `.gitignore`。
 
 可选参数：
 
@@ -143,8 +144,11 @@ CHECKIN_SKIP_NODE_INSTALL=1 pnpm deploy
 # 跳过模型预热，只安装依赖
 CHECKIN_SKIP_OCR_WARMUP=1 pnpm deploy
 
-# 指定 Python 3.9-3.11
+# 指定 Python 3.10-3.11
 PYTHON=/path/to/python3.11 pnpm deploy
+
+# 覆盖内置的 standalone Python 版本或 release tag
+CHECKIN_PYTHON_STANDALONE_VERSION=3.11.15 CHECKIN_PYTHON_STANDALONE_TAG=20260414 pnpm deploy
 ```
 
 ---

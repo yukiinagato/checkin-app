@@ -336,6 +336,7 @@ const translations = {
       { id: 'welcome', title: "欢迎入住", subtitle: "Welcome" },
       { id: 'count', title: "入住人数", subtitle: "Guest Count" },
       { id: 'stayDuration', title: "入住时长", subtitle: "Stay Duration" },
+      { id: 'privacy', title: "个人信息保护", subtitle: "Privacy Notice" },
       { id: 'registration', title: "住客信息登记", subtitle: "Osaka Regulation" },
       { id: 'emergency', title: "安全与紧急应对", subtitle: "Safety First" },
       { id: 'child', title: "婴儿与儿童安全", subtitle: "Child Protection" },
@@ -366,6 +367,7 @@ const translations = {
       { id: 'welcome', title: "歡迎入住", subtitle: "Welcome" },
       { id: 'count', title: "入住人數", subtitle: "Guest Count" },
       { id: 'stayDuration', title: "入住時長", subtitle: "Stay Duration" },
+      { id: 'privacy', title: "個人資訊保護", subtitle: "Privacy Notice" },
       { id: 'registration', title: "住客資訊登記", subtitle: "Osaka Regulation" },
       { id: 'emergency', title: "安全與緊急應對", subtitle: "Safety First" },
       { id: 'child', title: "嬰兒與兒童安全", subtitle: "Child Protection" },
@@ -396,6 +398,7 @@ const translations = {
       { id: 'welcome', title: "Welcome", subtitle: "Welcome" },
       { id: 'count', title: "Guest Count", subtitle: "Guest Count" },
       { id: 'stayDuration', title: "Stay Duration", subtitle: "Stay Duration" },
+      { id: 'privacy', title: "Privacy Notice", subtitle: "Personal Data" },
       { id: 'registration', title: "Registration", subtitle: "Osaka Regulation" },
       { id: 'emergency', title: "Emergency", subtitle: "Safety First" },
       { id: 'child', title: "Child Safety", subtitle: "Child Protection" },
@@ -426,6 +429,7 @@ const translations = {
       { id: 'welcome', title: "ようこそ", subtitle: "Welcome" },
       { id: 'count', title: "人数", subtitle: "Guest Count" },
       { id: 'stayDuration', title: "宿泊日数", subtitle: "Stay Duration" },
+      { id: 'privacy', title: "個人情報について", subtitle: "Privacy Notice" },
       { id: 'registration', title: "登録", subtitle: "Osaka Regulation" },
       { id: 'emergency', title: "緊急", subtitle: "Safety First" },
       { id: 'child', title: "子どもの安全", subtitle: "Child Protection" },
@@ -456,6 +460,7 @@ const translations = {
       { id: 'welcome', title: "환영", subtitle: "Welcome" },
       { id: 'count', title: "인원 수", subtitle: "Guest Count" },
       { id: 'stayDuration', title: "숙박 기간", subtitle: "Stay Duration" },
+      { id: 'privacy', title: "개인정보 안내", subtitle: "Privacy Notice" },
       { id: 'registration', title: "등록", subtitle: "Osaka Regulation" },
       { id: 'emergency', title: "긴급", subtitle: "Safety First" },
       { id: 'child', title: "아동 안전", subtitle: "Child Protection" },
@@ -493,6 +498,7 @@ const normalizeSteps = (steps, fallback) => {
 const BUILTIN_STEP_FALLBACKS = {
   'zh-hans': {
     welcome: '<p>尊贵的客人，欢迎您选择入住。为确保您充分享受这里的宁静与便利，并保障所有住客安全，请逐页阅读本指南。</p>',
+    privacy: '<p><strong>个人信息保护声明</strong></p><p>依据日本《住宅宿泊事业法》（2017年第65号）第8条及《旅馆业法施行规则》第4条，本设施须依法采集以下信息并建立住宿者名册。</p><p><strong>采集项目：</strong>姓名、住所（日本居民）、国籍、护照号码、护照照片</p><p><strong>使用目的：</strong>仅用于法定住宿者名册的记录与保管，不作其他任何用途。</p><p><strong>保存期限：</strong>依据《旅馆业法施行规则》第4条第1项，自退房日起保存 <strong>3年</strong>。</p><p><strong>管理责任人：</strong>本设施管理员</p><p><strong>第三方提供：</strong>除法令规定的行政机关（警察、行政厅等）依职权调取外，不向任何第三方提供。</p><p>依据《个人信息保护法》，您有权就本人信息的查阅、更正及删除向管理员提出申请。</p>',
     emergency: '<p><strong>紧急电话：</strong>火警/急救 119，警察 110。</p><p>请优先拨打紧急电话，在确保自身安全后再联系管理方。</p><p>日本电压为 100V，请避免同时开启多个大功率电器以防跳闸。</p>',
     child: '<p><strong>儿童安全提醒</strong></p><ul><li>窗边、楼梯等区域请勿让儿童单独停留。</li><li>浴室地面湿滑，请看护儿童防止跌倒。</li><li>滚筒洗衣机存在窒息风险，平时请保持舱门关闭。</li></ul>',
     outdoor: '<p><strong>户外安全提醒</strong></p><ul><li>夜间出入请注意周边道路与边界区域。</li><li>车库及坡道附近地面高低差较大，请慢行。</li></ul>',
@@ -503,6 +509,7 @@ const BUILTIN_STEP_FALLBACKS = {
   },
   'zh-hant': {
     welcome: '<p>尊貴的客人，歡迎您選擇入住。為確保您享受寧靜與便利，並保障所有住客安全，請逐頁閱讀本指南。</p>',
+    privacy: '<p><strong>個人資訊保護聲明</strong></p><p>依據日本《住宅宿泊事業法》（2017年第65號）第8條及《旅館業法施行規則》第4條規定，本設施須依法蒐集以下資訊並建立住宿者名冊。</p><p><strong>蒐集項目：</strong>姓名、住所（日本居民）、國籍、護照號碼、護照照片</p><p><strong>使用目的：</strong>僅用於法定住宿者名冊之記錄與保管，不作其他任何用途。</p><p><strong>保存期限：</strong>依據《旅館業法施行規則》第4條第1項，自退房日起保存 <strong>3年</strong>。</p><p><strong>管理負責人：</strong>本設施管理員</p><p><strong>第三方提供：</strong>除法令規定之行政機關（警察、行政廳等）依職權調取外，不向任何第三方提供。</p><p>依據《個人資訊保護法》，您有權就本人資訊之查閱、更正及刪除向管理員提出申請。</p>',
     emergency: '<p><strong>緊急電話：</strong>火警/急救 119，警察 110。</p><p>請先撥打緊急電話，確保安全後再聯絡管理方。</p><p>日本電壓為 100V，請避免同時使用多個高功率電器。</p>',
     child: '<p><strong>兒童安全提醒</strong></p><ul><li>請勿讓兒童獨自在窗邊或樓梯附近活動。</li><li>浴室地面濕滑，請加強看護。</li><li>滾筒洗衣機有窒息風險，請保持艙門關閉。</li></ul>',
     outdoor: '<p><strong>戶外安全提醒</strong></p><ul><li>夜間請注意周邊道路與邊界區域。</li><li>車庫與坡道有高低差，請慢行。</li></ul>',
@@ -513,6 +520,7 @@ const BUILTIN_STEP_FALLBACKS = {
   },
   en: {
     welcome: '<p>Welcome! To ensure a safe and comfortable stay for everyone, please review each step carefully.</p>',
+    privacy: '<p><strong>Privacy Notice — Personal Information</strong></p><p>Under Japan\'s Act on Accommodation Business Using Private Residences (Minpaku Act, 2017, Art. 8) and the Enforcement Regulations of the Inn Business Act (Art. 4), this accommodation is legally required to record your personal details in the guest register (宿泊者名簿).</p><p><strong>Information collected:</strong> Name, address (Japan residents), nationality, passport number, passport photograph</p><p><strong>Purpose of use:</strong> Legally mandated guest register only. Your information will not be used for any other purpose.</p><p><strong>Retention period:</strong> <strong>3 years</strong> from your checkout date, as required by Inn Business Act Enforcement Regulations Art. 4(1).</p><p><strong>Data controller:</strong> The property manager of this accommodation.</p><p><strong>Third-party disclosure:</strong> Your information will not be disclosed to any third party except where required by law (e.g., official requests from police or government authorities acting under statutory authority).</p><p>Under Japan\'s Act on the Protection of Personal Information (APPI), you have the right to request access, correction, or deletion of your personal data. Please contact the property manager.</p>',
     emergency: '<p><strong>Emergency numbers:</strong> Fire/Ambulance 119, Police 110.</p><p>Call emergency services first, then contact management.</p><p>Japan uses 100V power. Avoid running multiple high-power appliances at once.</p>',
     child: '<p><strong>Child safety</strong></p><ul><li>Do not leave children unattended near windows or stairs.</li><li>Bathroom floors can be slippery.</li><li>Keep washer door closed to avoid suffocation risk.</li></ul>',
     outdoor: '<p><strong>Outdoor safety</strong></p><ul><li>Be careful around slopes and boundaries, especially at night.</li><li>Watch your step around the garage area.</li></ul>',
@@ -523,6 +531,7 @@ const BUILTIN_STEP_FALLBACKS = {
   },
   jp: {
     welcome: '<p>ようこそ。安全で快適なご滞在のため、各ステップの案内をご確認ください。</p>',
+    privacy: '<p><strong>個人情報の取り扱いについて</strong></p><p>本施設は、住宅宿泊事業法（平成29年法律第65号）第8条および旅館業法施行規則（昭和23年厚生省令第28号）第4条に基づき、宿泊者名簿への記録を目的として、以下の個人情報を収集いたします。</p><p><strong>収集する情報：</strong>氏名、住所（国内在住者）、国籍、旅券番号、旅券の写し（写真）</p><p><strong>利用目的：</strong>法令に基づく宿泊者名簿の記録・保管のみ。他の目的には一切使用いたしません。</p><p><strong>保存期間：</strong>旅館業法施行規則第4条第1項に基づき、チェックアウト日から <strong>3年間</strong></p><p><strong>管理責任者：</strong>本施設の管理者</p><p><strong>第三者提供：</strong>法令に基づく行政機関（警察・保健所等）による職権上の照会・調査を除き、第三者へは一切提供いたしません。</p><p>個人情報の保護に関する法律（個人情報保護法）に基づき、ご自身の情報に関する開示・訂正・利用停止・削除のご請求は、管理者までお申し出ください。</p>',
     emergency: '<p><strong>緊急連絡先：</strong>火災・救急 119、警察 110。</p><p>緊急時は先に通報し、その後管理者へ連絡してください。</p>',
     child: '<p><strong>お子様の安全について</strong></p><ul><li>窓辺・階段付近にお子様を一人で近づけないでください。</li><li>浴室の床は滑りやすいためご注意ください。</li></ul>',
     outdoor: '<p><strong>屋外の注意事項</strong></p><ul><li>夜間は境界・坂道付近の安全にご注意ください。</li><li>ガレージ周辺では足元にご注意ください。</li></ul>',
@@ -533,6 +542,7 @@ const BUILTIN_STEP_FALLBACKS = {
   },
   ko: {
     welcome: '<p>환영합니다. 안전하고 편안한 숙박을 위해 각 단계 안내를 확인해 주세요.</p>',
+    privacy: '<p><strong>개인정보 처리 안내</strong></p><p>일본 「주택숙박사업법」(2017년 제65호) 제8조 및 「여관업법 시행규칙」(1948년 후생성령 제28호) 제4조에 따라, 본 숙박시설은 숙박자 명부(宿泊者名簿) 작성을 목적으로 아래의 개인정보를 수집합니다.</p><p><strong>수집 항목:</strong> 성명, 주소(일본 거주자), 국적, 여권번호, 여권 사진</p><p><strong>이용 목적:</strong> 법령에 따른 숙박자 명부 기록 및 보관 이외의 목적으로는 사용하지 않습니다.</p><p><strong>보유 기간:</strong> 「여관업법 시행규칙」 제4조 제1항에 따라, 퇴실일로부터 <strong>3년간</strong> 보관합니다.</p><p><strong>관리 책임자:</strong> 본 시설 관리자</p><p><strong>제3자 제공:</strong> 법령에 근거한 행정기관(경찰·보건소 등)의 공식 직권 요청을 제외하고는 제3자에게 일절 제공하지 않습니다.</p><p>「개인정보보호법」에 따라 본인의 정보에 대한 열람·정정·이용 정지·삭제를 요청하실 수 있습니다. 시설 관리자에게 문의해 주세요.</p>',
     emergency: '<p><strong>긴급 연락처:</strong> 화재/구급 119, 경찰 110.</p><p>긴급 시 먼저 신고한 뒤 관리자에게 연락해 주세요.</p>',
     child: '<p><strong>어린이 안전</strong></p><ul><li>창가·계단 주변에 아이를 혼자 두지 마세요.</li><li>욕실 바닥은 미끄러울 수 있습니다.</li></ul>',
     outdoor: '<p><strong>야외 안전</strong></p><ul><li>특히 야간에는 경계·경사 구역을 주의해 주세요.</li><li>차고 주변 이동 시 발밑을 확인해 주세요.</li></ul>',
@@ -1155,6 +1165,7 @@ const GuestFlow = ({
       case 'welcome': return <BellRing className="w-6 h-6" />;
       case 'count': return <Users className="w-6 h-6" />;
       case 'stayDuration': return <Calendar className="w-6 h-6" />;
+      case 'privacy': return <Lock className="w-6 h-6" />;
       case 'registration': return <UserCheck className="w-6 h-6" />;
       case 'emergency': return <AlertTriangle className="w-6 h-6" />;
       case 'child': return <Dog className="w-6 h-6" />;

@@ -547,12 +547,7 @@ const getBearerToken = (req) => {
 };
 
 const getAdminSessionFromRequest = (req) => {
-  const bearerToken = getBearerToken(req);
-  if (bearerToken) {
-    return bearerToken;
-  }
-  const sessionToken = typeof req.query?.sessionToken === 'string' ? req.query.sessionToken.trim() : '';
-  return sessionToken;
+  return getBearerToken(req);
 };
 
 const requireAdminAuth = (req, res, next) => {

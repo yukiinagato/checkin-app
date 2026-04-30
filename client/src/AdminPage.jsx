@@ -240,28 +240,50 @@ const prepareAuthOptions = (options) => ({
   }))
 });
 
-const appendAdminTokenToPhotoUrl = (photoUrl, adminToken) => {
-  if (!photoUrl || !adminToken) {
-    return photoUrl;
-  }
+// 用 Authorization: Bearer header fetch 圖片，轉成 blob URL 後以 <img> 渲染
+const AuthImage = ({ src, token, alt, className }) => {
+  const [objectUrl, setObjectUrl] = useState(null);
 
-  try {
-    const parsedUrl = new URL(photoUrl, window.location.origin);
-    parsedUrl.searchParams.set('sessionToken', adminToken);
-    return parsedUrl.toString();
-  } catch (error) {
-    return photoUrl;
-  }
+  useEffect(() => {
+    if (!src || !token) return;
+    let active = true;
+    let createdUrl = null;
+
+    fetch(src, { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.blob() : Promise.reject()))
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        if (!active) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        createdUrl = url;
+        setObjectUrl(url);
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
+    };
+  }, [src, token]);
+
+  if (!objectUrl) return null;
+  return <img src={objectUrl} alt={alt} className={className} />;
 };
 
-const hydrateRecordPhotoUrls = (records, adminToken) => {
-  return (records || []).map((group) => ({
-    ...group,
-    guests: (group.guests || []).map((guest) => ({
-      ...guest,
-      passportPhoto: appendAdminTokenToPhotoUrl(guest.passportPhoto, adminToken)
-    }))
-  }));
+// 用 Authorization: Bearer header fetch 圖片後在新分頁開啟
+const openAuthImage = async (url, token) => {
+  if (!url || !token) return;
+  try {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    window.open(blobUrl, '_blank');
+  } catch {
+    // silently ignore
+  }
 };
 
 const AdminLogin = ({ db, onLogin, onBack }) => {
@@ -481,7 +503,7 @@ const AdminDashboard = ({
   useEffect(() => {
     db.getAllRecords(adminToken)
       .then(data => {
-        setRecords(hydrateRecordPhotoUrls(data, adminToken));
+        setRecords(data || []);
         setServerStatus('online');
       })
       .catch(() => {
@@ -769,7 +791,14 @@ const AdminDashboard = ({
                         <td className="p-3">{guest.guardianName || '-'}</td>
                         <td className="p-3">{guest.guardianPhone || '-'}</td>
                         <td className="p-3">
-                          {guest.passportPhoto ? <a href={guest.passportPhoto} target="_blank" rel="noreferrer" className="text-emerald-700 underline">查看</a> : '-'}
+                          {guest.passportPhoto ? (
+                            <button
+                              onClick={() => openAuthImage(guest.passportPhoto, adminToken)}
+                              className="text-emerald-700 underline"
+                            >
+                              查看
+                            </button>
+                          ) : '-'}
                         </td>
                         <td className="p-3 pr-6 text-right">
                           {showDeletedRows ? (
@@ -851,9 +880,9 @@ const AdminDashboard = ({
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       {dayGuests.map((g, i) => (
-                        <a href={g.passportPhoto} target="_blank" rel="noopener noreferrer" key={`${g.recordId}-${g.id || i}`} className="bg-slate-50 rounded-xl overflow-hidden border border-slate-100 block hover:border-emerald-200 transition-colors">
+                        <div key={`${g.recordId}-${g.id || i}`} onClick={() => openAuthImage(g.passportPhoto, adminToken)} className="bg-slate-50 rounded-xl overflow-hidden border border-slate-100 block hover:border-emerald-200 transition-colors cursor-pointer">
                           <div className="aspect-[4/3] bg-slate-100 relative">
-                            <img src={g.passportPhoto} alt={g.name || g.passportNumber || 'passport'} className="w-full h-full object-cover" />
+                            <AuthImage src={g.passportPhoto} token={adminToken} alt={g.name || g.passportNumber || 'passport'} className="w-full h-full object-cover" />
                             <div className="absolute right-2 top-2 w-7 h-7 rounded-lg bg-white/90 flex items-center justify-center text-slate-600">
                               <ExternalLink className="w-4 h-4" />
                             </div>
@@ -864,7 +893,7 @@ const AdminDashboard = ({
                             <p className="text-[10px] text-slate-400 truncate">入住: {g.checkIn || '-'} / 退房: {g.checkOut || '-'}</p>
                             <p className="text-[10px] text-slate-400 truncate" title={g.recordId}>記錄: {g.recordId}</p>
                           </div>
-                        </a>
+                        </div>
                       ))}
                     </div>
                   </div>

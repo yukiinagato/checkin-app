@@ -422,7 +422,17 @@ const saveAppSettings = (settings) => new Promise((resolve, reject) => {
 
 const parseAge = (value) => Number.parseInt(String(value ?? '').trim(), 10);
 
+const ALLOWED_TABLES = {
+  step_templates:       { steps:    true },
+  completion_templates: { template: true }
+};
+
 const getTemplateRowWithFallback = (tableName, columnName, targetLang, fallbackLang = 'jp') => new Promise((resolve, reject) => {
+  if (!ALLOWED_TABLES[tableName]?.[columnName]) {
+    reject(new Error('Invalid table or column'));
+    return;
+  }
+
   const preferred = typeof targetLang === 'string' && targetLang.trim() ? targetLang.trim() : fallbackLang;
   const sql = `
     SELECT lang, ${columnName} AS payload

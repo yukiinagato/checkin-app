@@ -384,3 +384,85 @@ test('server.js：cleanupInterval 與 purgeExpiredEntries 已匯出', () => {
   assert.ok(body.includes('purgeExpiredEntries'), 'purgeExpiredEntries 未匯出');
   assert.ok(body.includes('cleanupInterval'),     'cleanupInterval 未匯出');
 });
+
+// ─── 9. getTemplateRowWithFallback 白名單驗證 ────────────────────────────────
+//
+// 直接複製白名單邏輯，不 require 整個 server 模組
+
+const ALLOWED_TABLES = {
+  step_templates:       { steps:    true },
+  completion_templates: { template: true }
+};
+
+const validateTableColumn = (tableName, columnName) => {
+  if (!ALLOWED_TABLES[tableName]?.[columnName]) {
+    throw new Error('Invalid table or column');
+  }
+};
+
+test('白名單：合法的 (step_templates, steps) 通過驗證', () => {
+  assert.doesNotThrow(() => validateTableColumn('step_templates', 'steps'));
+});
+
+test('白名單：合法的 (completion_templates, template) 通過驗證', () => {
+  assert.doesNotThrow(() => validateTableColumn('completion_templates', 'template'));
+});
+
+test('白名單：不存在的 tableName 拋出 Error', () => {
+  assert.throws(
+    () => validateTableColumn('unknown_table', 'steps'),
+    { message: 'Invalid table or column' }
+  );
+});
+
+test('白名單：合法 table 但不存在的 columnName 拋出 Error', () => {
+  assert.throws(
+    () => validateTableColumn('step_templates', 'data'),
+    { message: 'Invalid table or column' }
+  );
+});
+
+test('白名單：columnName 屬於其他 table 的合法欄位時仍拋出 Error', () => {
+  // template 是 completion_templates 的欄位，不屬於 step_templates
+  assert.throws(
+    () => validateTableColumn('step_templates', 'template'),
+    { message: 'Invalid table or column' }
+  );
+});
+
+test('白名單：空字串參數拋出 Error', () => {
+  assert.throws(() => validateTableColumn('', ''),           { message: 'Invalid table or column' });
+  assert.throws(() => validateTableColumn('step_templates', ''), { message: 'Invalid table or column' });
+  assert.throws(() => validateTableColumn('', 'steps'),       { message: 'Invalid table or column' });
+});
+
+test('白名單：SQL injection 嘗試被拒絕', () => {
+  assert.throws(
+    () => validateTableColumn('step_templates; DROP TABLE step_templates;--', 'steps'),
+    { message: 'Invalid table or column' }
+  );
+  assert.throws(
+    () => validateTableColumn('step_templates', "steps UNION SELECT * FROM admin_passkeys--"),
+    { message: 'Invalid table or column' }
+  );
+});
+
+test('server.js：ALLOWED_TABLES 白名單已定義於 getTemplateRowWithFallback 之前', () => {
+  const allowedPos  = serverSrc.indexOf('const ALLOWED_TABLES');
+  const fnPos       = serverSrc.indexOf('const getTemplateRowWithFallback');
+  assert.ok(allowedPos !== -1, '找不到 ALLOWED_TABLES 定義');
+  assert.ok(fnPos      !== -1, '找不到 getTemplateRowWithFallback 定義');
+  assert.ok(allowedPos < fnPos, 'ALLOWED_TABLES 應定義在 getTemplateRowWithFallback 之前');
+});
+
+test('server.js：getTemplateRowWithFallback 在 SQL 執行前驗證白名單', () => {
+  const fnMatch = serverSrc.match(
+    /const getTemplateRowWithFallback[\s\S]*?db\.get\(/
+  );
+  assert.ok(fnMatch, '無法擷取函數本體');
+  const body = fnMatch[0];
+  const rejectPos = body.indexOf("reject(new Error('Invalid table or column'))");
+  const dbGetPos  = body.indexOf('db.get(');
+  assert.ok(rejectPos !== -1, "找不到 reject(new Error('Invalid table or column'))");
+  assert.ok(rejectPos < dbGetPos, '白名單驗證應在 db.get() 之前執行');
+});

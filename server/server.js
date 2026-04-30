@@ -14,6 +14,8 @@ const {
   generateAuthenticationOptions,
   verifyAuthenticationResponse
 } = require('@simplewebauthn/server');
+const { rateLimit } = require('express-rate-limit');
+const helmet = require('helmet');
 const STEP_TEMPLATES = require('./stepTemplates');
 const COMPLETION_TEMPLATES = require('./completionTemplates');
 const envPath = process.env.NODE_ENV === 'development' ? '.env.development' : '.env.production';
@@ -52,6 +54,15 @@ if (!CORS_ORIGINS.length) {
 // 2. 中間件配置
 // ----------------------------------------------------------------------
 app.use(cors({ origin: CORS_ORIGINS }));
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+      // PaddleOCR 從 cdn.jsdelivr.net 載入 WASM / JS 資源
+      'script-src': ["'self'", 'cdn.jsdelivr.net']
+    }
+  }
+}));
 app.use(express.json({ limit: '50mb' })); // 允許大文件上傳(圖片)
 
 // ----------------------------------------------------------------------
@@ -477,6 +488,19 @@ const adminSessions = new Map();
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
+const purgeExpiredEntries = () => {
+  const now = Date.now();
+  for (const [key, value] of adminChallenges) {
+    if (value.expiresAt < now) adminChallenges.delete(key);
+  }
+  for (const [token, expiresAt] of adminSessions) {
+    if (expiresAt < now) adminSessions.delete(token);
+  }
+};
+
+const cleanupInterval = setInterval(purgeExpiredEntries, 5 * 60 * 1000);
+cleanupInterval.unref();
+
 const normalizeChallenge = (str) => {
   if (!str) return '';
   return str.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
@@ -589,7 +613,34 @@ const toAdminImageUrl = (passportPhoto) => {
 };
 
 // ----------------------------------------------------------------------
-// 6. API 路由
+// 6. 限流規則
+// ----------------------------------------------------------------------
+const ocrRateLimit = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  limit: 10,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: '請求過於頻繁，護照 OCR 每分鐘最多 10 次，請稍後再試。' }
+});
+
+const submitRateLimit = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  limit: 20,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: '請求過於頻繁，表單提交每分鐘最多 20 次，請稍後再試。' }
+});
+
+const authVerifyRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: '驗證嘗試次數過多，每 15 分鐘最多 10 次，請稍後再試。' }
+});
+
+// ----------------------------------------------------------------------
+// 7. API 路由
 // ----------------------------------------------------------------------
 
 app.get('/api/records', requireAdminAuth, (req, res) => {
@@ -771,7 +822,7 @@ app.post('/api/admin/passkeys/auth/options', (req, res) => {
   });
 });
 
-app.post('/api/admin/passkeys/auth/verify', async (req, res) => {
+app.post('/api/admin/passkeys/auth/verify', authVerifyRateLimit, async (req, res) => {
   const { credential } = req.body || {};
   if (!credential || !credential.id) return res.status(400).json({ error: 'credential is required' });
 
@@ -992,7 +1043,7 @@ app.put('/api/admin/app-settings', requireAdminAuth, async (req, res) => {
   }
 });
 
-app.post('/api/submit', async (req, res) => {
+app.post('/api/submit', submitRateLimit, async (req, res) => {
   try {
     const { guests } = req.body;
     if (!Array.isArray(guests) || guests.length === 0) {
@@ -1030,7 +1081,7 @@ app.post('/api/submit', async (req, res) => {
   }
 });
 
-app.post('/api/ocr/passport', async (req, res) => {
+app.post('/api/ocr/passport', ocrRateLimit, async (req, res) => {
   try {
     const { image } = req.body || {};
     if (typeof image !== 'string' || !image.startsWith('data:image')) {
@@ -1066,5 +1117,9 @@ module.exports = {
   parseDataImage,
   runLocalPassportOcr,
   savePassportImage,
-  startServer
+  startServer,
+  purgeExpiredEntries,
+  cleanupInterval,
+  adminSessions,
+  adminChallenges
 };

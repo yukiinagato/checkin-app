@@ -466,3 +466,89 @@ test('server.js：getTemplateRowWithFallback 在 SQL 執行前驗證白名單', 
   assert.ok(rejectPos !== -1, "找不到 reject(new Error('Invalid table or column'))");
   assert.ok(rejectPos < dbGetPos, '白名單驗證應在 db.get() 之前執行');
 });
+
+// ─── 10. submissionId 冪等性 ──────────────────────────────────────────────────
+
+// 複製 server.js 中 submissionId 驗證邏輯
+const UUID_RE_TEST = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const resolveSubmitId = (clientId, fallbackFn) =>
+  (typeof clientId === 'string' && UUID_RE_TEST.test(clientId)) ? clientId : fallbackFn();
+
+test('resolveSubmitId：合法 UUID v4 格式的 clientId 直接採用', () => {
+  const id = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+  assert.equal(resolveSubmitId(id, () => 'fallback'), id);
+});
+
+test('resolveSubmitId：全大寫 UUID 也被接受（大小寫不敏感）', () => {
+  const id = 'A1B2C3D4-E5F6-7890-ABCD-EF1234567890';
+  assert.equal(resolveSubmitId(id, () => 'fallback'), id);
+});
+
+test('resolveSubmitId：clientId 為 undefined 時使用 fallback', () => {
+  assert.equal(resolveSubmitId(undefined, () => 'generated'), 'generated');
+});
+
+test('resolveSubmitId：clientId 為 null 時使用 fallback', () => {
+  assert.equal(resolveSubmitId(null, () => 'generated'), 'generated');
+});
+
+test('resolveSubmitId：clientId 為空字串時使用 fallback', () => {
+  assert.equal(resolveSubmitId('', () => 'generated'), 'generated');
+});
+
+test('resolveSubmitId：clientId 格式不符（非 UUID）時使用 fallback', () => {
+  assert.equal(resolveSubmitId('not-a-uuid', () => 'generated'), 'generated');
+  assert.equal(resolveSubmitId('1234', () => 'generated'), 'generated');
+  assert.equal(resolveSubmitId('../../etc/passwd', () => 'generated'), 'generated');
+});
+
+test('resolveSubmitId：SQL injection 嘗試被拒並使用 fallback', () => {
+  const injection = "'; DROP TABLE checkins; --";
+  assert.equal(resolveSubmitId(injection, () => 'safe'), 'safe');
+});
+
+test('server.js：UUID_RE 正規式已定義', () => {
+  assert.ok(
+    serverSrc.includes('const UUID_RE'),
+    '找不到 UUID_RE 定義'
+  );
+});
+
+test('server.js：/api/submit 從 req.body 讀取 submissionId', () => {
+  const submitMatch = serverSrc.match(
+    /app\.post\(['"]\/api\/submit['"][\s\S]*?stmt\.finalize\(\)/
+  );
+  assert.ok(submitMatch, '無法擷取 /api/submit 路由本體');
+  assert.ok(
+    submitMatch[0].includes('submissionId'),
+    '/api/submit 未讀取 submissionId'
+  );
+});
+
+test('server.js：/api/submit 使用 INSERT OR IGNORE（冪等寫入）', () => {
+  assert.ok(
+    serverSrc.includes('INSERT OR IGNORE INTO checkins'),
+    '未使用 INSERT OR IGNORE INTO checkins'
+  );
+});
+
+test('server.js：/api/submit 當 this.changes === 0 時仍回傳 success: true', () => {
+  const submitMatch = serverSrc.match(
+    /app\.post\(['"]\/api\/submit['"][\s\S]*?stmt\.finalize\(\)/
+  );
+  assert.ok(submitMatch, '無法擷取 /api/submit 路由本體');
+  assert.ok(
+    submitMatch[0].includes('this.changes === 0'),
+    '未處理 this.changes === 0 的重複提交情況'
+  );
+  // 確認重複提交也回傳 success: true
+  const dupBlock = submitMatch[0].match(
+    /this\.changes === 0[\s\S]*?res\.json\(\{([\s\S]*?)\}\)/
+  );
+  assert.ok(dupBlock, '找不到重複提交回傳區塊');
+  assert.ok(
+    dupBlock[1].includes('success: true'),
+    '重複提交時應回傳 success: true'
+  );
+});

@@ -75,6 +75,9 @@ const GUEST_STORAGE_KEY = 'checkin.guests';
 const PET_COUNT_STORAGE_KEY = 'checkin.petCount';
 const CHECKIN_DATE_STORAGE_KEY = 'checkin.checkInDate';
 const CHECKOUT_DATE_STORAGE_KEY = 'checkin.checkOutDate';
+const SUBMISSION_ID_KEY = 'checkin.submissionId';
+const FAILED_SUBMISSIONS_LOG_KEY = 'checkin.failedSubmissions';
+const PENDING_RETRY_KEY = 'checkin.pendingRetry';
 
 const DB = {
   async getAllRecords(adminToken) {
@@ -222,13 +225,10 @@ const DB = {
         body: JSON.stringify(record)
       });
       const payload = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        return { success: false, error: payload.error || 'Server Error' };
-      }
-      return payload;
+      return { ...payload, httpStatus: res.status, ok: res.ok };
     } catch (error) {
       console.error("Submission Error:", error);
-      return { success: false, error: "Connection Failed" };
+      return { success: false, error: "Connection Failed", networkError: true };
     }
   },
 
@@ -330,6 +330,8 @@ const translations = {
     checkIn: "入住日期", checkOut: "退房日期",
     selectCountry: "选择国家/地区", detectedNationHint: "已识别国籍",
     customStepEmpty: "此步骤暂无内容。",
+    retryMsg: "网络不稳，正在自动重新提交，请稍候...",
+    submitRetryMsg: "提交失败，数据已保存。请确认网络连接后点击按钮重试。",
     steps: [
       { id: 'welcome', title: "欢迎入住", subtitle: "Welcome" },
       { id: 'count', title: "入住人数", subtitle: "Guest Count" },
@@ -358,6 +360,8 @@ const translations = {
     checkIn: "入住日期", checkOut: "退房日期",
     selectCountry: "選擇國家/地區", detectedNationHint: "已辨識國籍",
     customStepEmpty: "此步驟目前沒有內容。",
+    retryMsg: "網路不穩，正在自動重新提交，請稍候...",
+    submitRetryMsg: "提交失敗，資料已儲存。請確認網路連線後點擊按鈕重試。",
     steps: [
       { id: 'welcome', title: "歡迎入住", subtitle: "Welcome" },
       { id: 'count', title: "入住人數", subtitle: "Guest Count" },
@@ -386,6 +390,8 @@ const translations = {
     checkIn: "Check-in Date", checkOut: "Check-out Date",
     selectCountry: "Select country/region", detectedNationHint: "Detected nationality",
     customStepEmpty: "No content for this step yet.",
+    retryMsg: "Network unstable — retrying your submission automatically...",
+    submitRetryMsg: "Submission failed. Your data is saved — please check your connection and tap the button to try again.",
     steps: [
       { id: 'welcome', title: "Welcome", subtitle: "Welcome" },
       { id: 'count', title: "Guest Count", subtitle: "Guest Count" },
@@ -414,6 +420,8 @@ const translations = {
     checkIn: "チェックイン日", checkOut: "チェックアウト日",
     selectCountry: "国/地域を選択", detectedNationHint: "OCR検出の国籍",
     customStepEmpty: "このステップにはまだ内容がありません。",
+    retryMsg: "通信が不安定です。自動的に再送信しています...",
+    submitRetryMsg: "送信に失敗しました。データは保存されています。ネットワークを確認してボタンをタップして再試行してください。",
     steps: [
       { id: 'welcome', title: "ようこそ", subtitle: "Welcome" },
       { id: 'count', title: "人数", subtitle: "Guest Count" },
@@ -442,6 +450,8 @@ const translations = {
     checkIn: "체크인 날짜", checkOut: "체크아웃 날짜",
     selectCountry: "국가/지역 선택", detectedNationHint: "OCR 인식 국적",
     customStepEmpty: "이 단계에는 아직 내용이 없습니다.",
+    retryMsg: "네트워크가 불안정합니다. 자동으로 재제출 중입니다...",
+    submitRetryMsg: "제출에 실패했습니다. 데이터는 저장되어 있습니다. 네트워크를 확인하고 버튼을 눌러 다시 시도해 주세요.",
     steps: [
       { id: 'welcome', title: "환영", subtitle: "Welcome" },
       { id: 'count', title: "인원 수", subtitle: "Guest Count" },
@@ -610,6 +620,9 @@ const App = () => {
   const getViewFromPath = () => window.location.pathname.startsWith('/admin') ? 'admin' : 'guest';
   const [view, setView] = useState('home');
   const [loading, setLoading] = useState(false);
+  const [retryMessage, setRetryMessage] = useState('');
+  const [submitError, setSubmitError] = useState('');
+  const [hasPendingRetry, setHasPendingRetry] = useState(() => !!localStorage.getItem(PENDING_RETRY_KEY));
   const [adminToken, setAdminToken] = useState(() => sessionStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) || '');
 
   // ----------------------------------------------------------------
@@ -622,7 +635,8 @@ const App = () => {
   const [petCount, setPetCount] = useState(0);
   const [checkInDate, setCheckInDate] = useState('');
   const [checkOutDate, setCheckOutDate] = useState('');
-  const [hasAgreed, setHasAgreed] = useState(false);
+  // 若有未完成的待重試提交，視為已同意（上次提交前已勾選）
+  const [hasAgreed, setHasAgreed] = useState(() => !!localStorage.getItem(PENDING_RETRY_KEY));
 
   // ----------------------------------------------------------------
   // 歷史記錄狀態管理
@@ -683,18 +697,83 @@ const App = () => {
       return true;
     }
 
+    setSubmitError('');
+
+    // 取得或建立冪等提交 ID，確保重試時不重複寫入後端
+    let submissionId = localStorage.getItem(SUBMISSION_ID_KEY);
+    if (!submissionId) {
+      submissionId = crypto.randomUUID();
+      localStorage.setItem(SUBMISSION_ID_KEY, submissionId);
+    }
+
     setLoading(true);
-    const result = await DB.insertRecord({
-      guests: guestData,
-      petCount,
-      checkIn: checkInDate,
-      checkOut: checkOutDate
-    });
+
+    // 最多嘗試 3 次，僅在網路錯誤時重試（4xx/5xx 不重試，避免無意義打後端）
+    const MAX_ATTEMPTS = 3;
+    const RETRY_DELAYS = [1500, 3000];
+    let result = null;
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      if (attempt > 0) {
+        // 顯示非干擾性重試提示，讓客人知道系統在自動處理
+        const t = translations[lang] || translations[DEFAULT_LANG];
+        setRetryMessage(t.retryMsg || 'Network unstable — retrying...');
+        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS[attempt - 1]));
+      }
+      result = await DB.insertRecord({
+        submissionId,
+        guests: guestData,
+        petCount,
+        checkIn: checkInDate,
+        checkOut: checkOutDate
+      });
+      // 非網路錯誤（含成功或服務器已拒絕）就不繼續重試
+      if (!result.networkError) break;
+    }
+
+    setRetryMessage('');
     setLoading(false);
-    if (!result.success) {
-      alert("提交失敗，請聯繫管理員 (Server Error)");
+
+    const t = translations[lang] || translations[DEFAULT_LANG];
+
+    // ── 失敗處理 ──────────────────────────────────────────────────────────────
+    if (!result.ok) {
+      // 寫入本地失敗日誌，供現場人員手動追蹤
+      try {
+        const failLog = JSON.parse(localStorage.getItem(FAILED_SUBMISSIONS_LOG_KEY) || '[]');
+        failLog.push({
+          submissionId,
+          timestamp: new Date().toISOString(),
+          guests: guestData.map((g) => ({
+            ...g,
+            passportPhoto: typeof g.passportPhoto === 'string' && g.passportPhoto.startsWith('data:image')
+              ? '[base64_omitted]'
+              : g.passportPhoto
+          })),
+          petCount,
+          checkIn: checkInDate,
+          checkOut: checkOutDate
+        });
+        localStorage.setItem(FAILED_SUBMISSIONS_LOG_KEY, JSON.stringify(failLog));
+      } catch (e) {
+        console.error('[Submission] 無法寫入失敗日誌:', e);
+      }
+      console.warn('[Submission] 提交失敗，submissionId:', submissionId, '— 資料已儲存於 localStorage 失敗日誌');
+
+      // 標記待重試，讓客人重開頁面後仍能繼續嘗試
+      localStorage.setItem(PENDING_RETRY_KEY, 'true');
+      setHasPendingRetry(true);
+
+      // 顯示行內錯誤提示（非彈窗），不清除已填寫的資料
+      setSubmitError(t.submitRetryMsg || 'Submission failed — please retry when your network is stable.');
       return false;
     }
+
+    // ── 成功 ─────────────────────────────────────────────────────────────────
+    // 清除待重試標記與錯誤訊息
+    localStorage.removeItem(PENDING_RETRY_KEY);
+    setHasPendingRetry(false);
+    setSubmitError('');
 
     localStorage.setItem(CHECKIN_STORAGE_KEY, 'true');
     localStorage.setItem(PET_COUNT_STORAGE_KEY, petCount.toString());
@@ -708,7 +787,14 @@ const App = () => {
           ? { ...guest, isEditable: false }
           : guest
       ));
-      localStorage.setItem(GUEST_STORAGE_KEY, JSON.stringify(mergedGuests));
+      // 存入 localStorage 前清除 base64 圖片，避免佔用大量空間
+      const guestsForStorage = mergedGuests.map((guest) => ({
+        ...guest,
+        passportPhoto: typeof guest.passportPhoto === 'string' && guest.passportPhoto.startsWith('data:image')
+          ? ''
+          : guest.passportPhoto
+      }));
+      localStorage.setItem(GUEST_STORAGE_KEY, JSON.stringify(guestsForStorage));
       return mergedGuests;
     });
     setHasHistory(true);
@@ -730,6 +816,11 @@ const App = () => {
     localStorage.removeItem(PET_COUNT_STORAGE_KEY);
     localStorage.removeItem(CHECKIN_DATE_STORAGE_KEY);
     localStorage.removeItem(CHECKOUT_DATE_STORAGE_KEY);
+    localStorage.removeItem(SUBMISSION_ID_KEY);
+    localStorage.removeItem(PENDING_RETRY_KEY);
+    localStorage.removeItem(FAILED_SUBMISSIONS_LOG_KEY);
+    setHasPendingRetry(false);
+    setSubmitError('');
     setHasHistory(false);
   };
 
@@ -784,6 +875,9 @@ const App = () => {
     <GuestFlow
       onSubmit={handleGuestSubmit}
       isSubmitting={loading}
+      retryMessage={retryMessage}
+      submitError={submitError}
+      hasPendingRetry={hasPendingRetry}
       lang={lang}
       setLang={setLang}
       currentStep={currentStep}
@@ -813,6 +907,9 @@ const App = () => {
 const GuestFlow = ({
   onSubmit,
   isSubmitting,
+  retryMessage,
+  submitError,
+  hasPendingRetry,
   lang, setLang,
   currentStep, setCurrentStep,
   isCompleted, setIsCompleted,
@@ -1070,10 +1167,18 @@ const GuestFlow = ({
     }
   };
 
+  // 有待重試提交時，載入完成後自動跳至最後一步（規定確認步驟）
+  useEffect(() => {
+    if (hasPendingRetry && !hasHistory && steps.length > 0) {
+      setCurrentStep(steps.length - 1);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasPendingRetry, hasHistory, steps.length]);
+
   const handleStepClick = (index) => {
     const allowedBeforeCompletion = new Set(['welcome', 'count', 'registration']);
     const targetStepId = steps[index]?.id;
-    const canAccess = hasHistory || allowedBeforeCompletion.has(targetStepId);
+    const canAccess = hasHistory || hasPendingRetry || allowedBeforeCompletion.has(targetStepId);
 
     if (canAccess) {
       setCurrentStep(index);
@@ -1091,7 +1196,7 @@ const GuestFlow = ({
           key={step.id}
           onClick={() => handleStepClick(index)}
           className={`w-full flex items-center gap-3 p-3 rounded-lg text-left transition-colors ${currentStep === index ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'}`}
-          disabled={!hasHistory && !['welcome', 'count', 'registration'].includes(step.id)}
+          disabled={!hasHistory && !hasPendingRetry && !['welcome', 'count', 'registration'].includes(step.id)}
         >
           {getStepIcon(step.id)}
           <span className="text-sm font-semibold">{step.title}</span>
@@ -1360,6 +1465,19 @@ const GuestFlow = ({
         </div>
 
         {/* Navigation buttons */}
+        {retryMessage ? (
+          <div className="px-4 py-2 bg-amber-50 border-t border-amber-200 flex items-center gap-2">
+            <Loader2 className="w-3 h-3 text-amber-500 animate-spin flex-shrink-0" />
+            <span className="text-xs text-amber-700">{retryMessage}</span>
+          </div>
+        ) : (submitError || hasPendingRetry) ? (
+          <div className="px-4 py-2 bg-red-50 border-t border-red-200 flex items-center gap-2">
+            <AlertTriangle className="w-3 h-3 text-red-500 flex-shrink-0" />
+            <span className="text-xs text-red-700">
+              {submitError || t.submitRetryMsg || 'Submission failed — please check your connection and retry.'}
+            </span>
+          </div>
+        ) : null}
         <div className="p-4 bg-white/50 backdrop-blur-sm border-t border-slate-200 flex gap-4">
           <button onClick={() => setIsMenuOpen(true)} className="p-4 rounded-2xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors">
             <Menu className="w-6 h-6" />

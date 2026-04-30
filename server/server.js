@@ -1053,9 +1053,11 @@ app.put('/api/admin/app-settings', requireAdminAuth, async (req, res) => {
   }
 });
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 app.post('/api/submit', submitRateLimit, async (req, res) => {
   try {
-    const { guests } = req.body;
+    const { guests, submissionId: clientId } = req.body;
     if (!Array.isArray(guests) || guests.length === 0) {
       res.status(400).json({ success: false, error: 'Invalid guest payload' });
       return;
@@ -1068,25 +1070,31 @@ app.post('/api/submit', submitRateLimit, async (req, res) => {
       return;
     }
 
-    const submitId = uuidv4();
+    // 優先使用客戶端提供的冪等 ID（須符合 UUID 格式），確保重複提交不污染數據
+    const submitId = (typeof clientId === 'string' && UUID_RE.test(clientId)) ? clientId : uuidv4();
     const today = new Date().toISOString().split('T')[0];
     const { checkIn, checkOut } = req.body;
 
     const guestsWithUrls = (await saveImagesLocally(guests)).map((guest) => ({ ...guest, deleted: guest.deleted === true }));
 
-    const stmt = db.prepare("INSERT INTO checkins (id, date, data, check_in, check_out) VALUES (?, ?, ?, ?, ?)");
+    // INSERT OR IGNORE：重複 submissionId 靜默忽略，不返回錯誤
+    const stmt = db.prepare("INSERT OR IGNORE INTO checkins (id, date, data, check_in, check_out) VALUES (?, ?, ?, ?, ?)");
     stmt.run(submitId, today, JSON.stringify(guestsWithUrls), checkIn || null, checkOut || null, function (err) {
       if (err) {
-        console.error(err);
+        console.error('[submit] 資料庫寫入錯誤:', err);
         res.status(500).json({ success: false, error: err.message });
+      } else if (this.changes === 0) {
+        // 重複提交（冪等），直接回傳成功
+        console.log(`[submit] 重複提交已忽略: ${submitId}`);
+        res.json({ success: true, id: submitId, duplicate: true });
       } else {
-        console.log(`新入住登記: ${submitId}, 日期: ${today}`);
+        console.log(`[submit] 新入住登記: ${submitId}, 日期: ${today}`);
         res.json({ success: true, id: submitId });
       }
     });
     stmt.finalize();
   } catch (error) {
-    console.error('服務器錯誤:', error);
+    console.error('[submit] 服務器錯誤:', error);
     res.status(500).json({ success: false, error: 'Internal Server Error' });
   }
 });

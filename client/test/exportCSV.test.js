@@ -150,3 +150,86 @@ test('App.jsx：每個欄位都有套用 escapeCell', () => {
     '每個欄位應透過 escapeCell 處理'
   );
 });
+
+// ─── localStorage base64 清除邏輯 ─────────────────────────────────────────────
+
+// 複製 App.jsx 中的清除邏輯進行單元測試
+const stripBase64Photos = (guests) => guests.map((guest) => ({
+  ...guest,
+  passportPhoto: typeof guest.passportPhoto === 'string' && guest.passportPhoto.startsWith('data:image')
+    ? ''
+    : guest.passportPhoto
+}));
+
+test('stripBase64Photos：base64 圖片替換為空字串', () => {
+  const guests = [{ id: '1', passportPhoto: 'data:image/jpeg;base64,/9j/4AAQ...' }];
+  const result = stripBase64Photos(guests);
+  assert.equal(result[0].passportPhoto, '');
+});
+
+test('stripBase64Photos：一般檔名字串保留不變', () => {
+  const guests = [{ id: '1', passportPhoto: 'abc123_passport.jpg' }];
+  const result = stripBase64Photos(guests);
+  assert.equal(result[0].passportPhoto, 'abc123_passport.jpg');
+});
+
+test('stripBase64Photos：null 保留不變', () => {
+  const guests = [{ id: '1', passportPhoto: null }];
+  const result = stripBase64Photos(guests);
+  assert.equal(result[0].passportPhoto, null);
+});
+
+test('stripBase64Photos：空字串保留不變', () => {
+  const guests = [{ id: '1', passportPhoto: '' }];
+  const result = stripBase64Photos(guests);
+  assert.equal(result[0].passportPhoto, '');
+});
+
+test('stripBase64Photos：data:image/png 同樣被替換', () => {
+  const guests = [{ id: '1', passportPhoto: 'data:image/png;base64,iVBORw0KGgo=' }];
+  const result = stripBase64Photos(guests);
+  assert.equal(result[0].passportPhoto, '');
+});
+
+test('stripBase64Photos：不影響其他欄位', () => {
+  const guests = [{ id: '1', name: '山田太郎', passportPhoto: 'data:image/jpeg;base64,abc' }];
+  const result = stripBase64Photos(guests);
+  assert.equal(result[0].id, '1');
+  assert.equal(result[0].name, '山田太郎');
+});
+
+test('stripBase64Photos：混合多筆 guest，各自正確處理', () => {
+  const guests = [
+    { id: '1', passportPhoto: 'data:image/jpeg;base64,AAA' },
+    { id: '2', passportPhoto: 'uuid_passport.jpg' },
+    { id: '3', passportPhoto: null }
+  ];
+  const result = stripBase64Photos(guests);
+  assert.equal(result[0].passportPhoto, '');
+  assert.equal(result[1].passportPhoto, 'uuid_passport.jpg');
+  assert.equal(result[2].passportPhoto, null);
+});
+
+test('App.jsx：localStorage 存入前有 startsWith("data:image") 清除邏輯', () => {
+  assert.ok(
+    appSrc.includes("startsWith('data:image')"),
+    '找不到 startsWith("data:image") 清除邏輯'
+  );
+});
+
+test('App.jsx：清除後存入 localStorage 的是 guestsForStorage 而非 mergedGuests', () => {
+  assert.ok(
+    appSrc.includes('guestsForStorage'),
+    '找不到 guestsForStorage 變數'
+  );
+  // 確認 setItem 使用 guestsForStorage
+  assert.ok(
+    appSrc.includes('JSON.stringify(guestsForStorage)'),
+    'localStorage.setItem 應使用 guestsForStorage'
+  );
+  // 確認 return 仍使用 mergedGuests（in-memory state 保留原始圖片）
+  assert.ok(
+    appSrc.includes('return mergedGuests'),
+    'setGuests 的 return 應為 mergedGuests，以保留記憶體中的原始圖片'
+  );
+});

@@ -261,6 +261,17 @@ const DB = {
 
   exportCSV(records) {
     if (!records.length) return;
+
+    const CSV_INJECTION_PREFIXES = /^[=+\-@]/;
+
+    const escapeCell = (value) => {
+      let str = value == null ? '' : String(value);
+      // 防止 CSV injection：以危險字元開頭時前置單引號
+      if (CSV_INJECTION_PREFIXES.test(str)) str = `'${str}`;
+      // 內容中的雙引號跳脫為 ""，再用雙引號包住整個欄位
+      return `"${str.replace(/"/g, '""')}"`;
+    };
+
     const rows = [];
     rows.push(['Date', 'Group ID', 'Name', 'Type', 'Resident?', 'Nationality', 'Passport No', 'Address', 'Phone', 'Passport Image URL']);
     records.forEach(group => {
@@ -279,11 +290,14 @@ const DB = {
         ]);
       });
     });
-    const csvContent = rows.map(e => e.join(",")).join("\n");
+
+    // BOM（﻿）確保 Excel 正確識別 UTF-8 編碼
+    const BOM = '﻿';
+    const csvContent = BOM + rows.map(row => row.map(escapeCell).join(',')).join('\n');
     const encodedUri = URL.createObjectURL(new Blob([csvContent], { type: 'text/csv;charset=utf-8;' }));
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `hotel_guests_${new Date().toISOString().split('T')[0]}.csv`);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `hotel_guests_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

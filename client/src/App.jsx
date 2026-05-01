@@ -326,9 +326,8 @@ const LANG_OPTIONS = [
   { value: 'ko', label: '한국어' }
 ];
 
-const CHECKIN_STEP_IDS = ['count', 'stayDuration', 'privacy', 'registration', 'rules'];
-const GUIDE_GROUP_IDS  = ['safety', 'equipment'];
-const GUIDE_SOLO_IDS   = ['trash'];
+const GUIDE_GROUP_IDS   = ['safety', 'equipment'];
+const GUIDE_STEP_IDS_SET = new Set(['safety', 'equipment', 'trash', 'rules']);
 
 const getStepIcon = (id, size = 'w-6 h-6') => {
   const cls = `${size}`;
@@ -529,16 +528,23 @@ const normalizeChild = (c) => ({
 const buildDefaultSteps = (lang) => {
   const base = translations[lang]?.steps || translations[DEFAULT_LANG].steps;
   return base.map(step => {
+    const category = GUIDE_STEP_IDS_SET.has(step.id) ? 'guide' : 'checkin';
     if (GUIDE_GROUP_IDS.includes(step.id)) {
-      return { ...step, enabled: true, type: 'group', content: '', children: [] };
+      return { ...step, enabled: true, type: 'group', category, content: '', children: [] };
     }
-    return { ...step, enabled: true, type: 'builtin', content: '' };
+    return { ...step, enabled: true, type: 'builtin', category, content: '' };
   });
+};
+
+const inferCategory = (step) => {
+  if (step.category === 'checkin' || step.category === 'guide') return step.category;
+  return GUIDE_STEP_IDS_SET.has(step.id) ? 'guide' : 'checkin';
 };
 
 const normalizeSteps = (steps, fallback) => {
   if (!Array.isArray(steps)) return fallback;
   return steps.map((step) => {
+    const category = inferCategory(step);
     if (step.type === 'group') {
       return {
         id: step.id || createStepId(),
@@ -546,6 +552,7 @@ const normalizeSteps = (steps, fallback) => {
         subtitle: step.subtitle || '',
         enabled: step.enabled !== false,
         type: 'group',
+        category,
         content: '',
         children: Array.isArray(step.children) ? step.children.map(normalizeChild) : []
       };
@@ -556,6 +563,7 @@ const normalizeSteps = (steps, fallback) => {
       subtitle: step.subtitle || '',
       enabled: step.enabled !== false,
       type: step.type === 'custom' ? 'custom' : 'builtin',
+      category,
       content: step.content || ''
     };
   });
@@ -995,7 +1003,15 @@ const App = () => {
       hasPendingRetry={hasPendingRetry}
       onStartCheckin={startNewCheckin}
       onViewHistory={() => { setAppView('guide'); setGuideNavStack([]); }}
-      onQuickNav={(groupId) => { setAppView('guide'); setGuideNavStack([{ type: '__home__' }, { type: 'group', groupId }]); }}
+      onQuickNav={(stepId) => {
+        const allSteps = stepsConfig.length ? stepsConfig : buildDefaultSteps(lang);
+        const step = allSteps.find(s => s.id === stepId);
+        const navEntry = step?.type === 'group'
+          ? { type: 'group', groupId: stepId }
+          : { type: 'solo', stepId };
+        setAppView('guide');
+        setGuideNavStack([{ type: '__home__' }, navEntry]);
+      }}
       onAdminRequest={() => navigateTo('/admin')}
     />
   );
@@ -1045,21 +1061,31 @@ const HomeLanding = ({ lang, setLang, hasHistory, stepsConfig, hasPendingRetry, 
             </button>
           )}
         </div>
-        {hasHistory && (
-          <div className="space-y-3">
-            <p className="text-xs font-bold text-slate-400 uppercase px-1">{t.quickGuide}</p>
-            <div className="grid grid-cols-2 gap-3">
-              <button onClick={() => onQuickNav('safety')} className="flex flex-col items-center gap-2 p-4 bg-red-50 text-red-700 rounded-2xl border border-red-100 hover:bg-red-100 transition-all">
-                <Shield className="w-6 h-6" />
-                <span className="text-xs font-bold">{t.safetyGroup}</span>
-              </button>
-              <button onClick={() => onQuickNav('equipment')} className="flex flex-col items-center gap-2 p-4 bg-blue-50 text-blue-700 rounded-2xl border border-blue-100 hover:bg-blue-100 transition-all">
-                <Wrench className="w-6 h-6" />
-                <span className="text-xs font-bold">{t.equipmentGroup}</span>
-              </button>
+        {hasHistory && (() => {
+          const guideSteps = rawSteps.filter(s => s.category === 'guide' && s.enabled !== false);
+          if (!guideSteps.length) return null;
+          return (
+            <div className="space-y-3">
+              <p className="text-xs font-bold text-slate-400 uppercase px-1">{t.quickGuide}</p>
+              <div className="grid grid-cols-2 gap-3">
+                {guideSteps.map(step => {
+                  const colorCls = step.id === 'safety'
+                    ? 'bg-red-50 text-red-700 border-red-100 hover:bg-red-100'
+                    : step.id === 'equipment'
+                      ? 'bg-blue-50 text-blue-700 border-blue-100 hover:bg-blue-100'
+                      : 'bg-white text-slate-700 border-slate-100 hover:bg-slate-50';
+                  return (
+                    <button key={step.id} onClick={() => onQuickNav(step.id)}
+                      className={`flex flex-col items-center gap-2 p-4 rounded-2xl border ${colorCls} transition-all`}>
+                      {getStepIcon(step.id, 'w-6 h-6')}
+                      <span className="text-xs font-bold text-center">{step.title}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
     </div>
   );
@@ -1098,9 +1124,7 @@ const CheckinFlow = ({
   const countryOptions = getCountryOptions(lang, appSettings.taiwanNamingMode);
 
   const rawSteps = stepsConfig.length ? stepsConfig : buildDefaultSteps(lang || DEFAULT_LANG);
-  const steps = CHECKIN_STEP_IDS
-    .map(id => rawSteps.find(s => s.id === id))
-    .filter(s => s && s.enabled !== false);
+  const steps = rawSteps.filter(s => s.category === 'checkin' && s.enabled !== false);
 
   useEffect(() => {
     if (steps.length && currentStep >= steps.length) setCurrentStep(0);
@@ -1664,10 +1688,7 @@ const GuideView = ({ lang, guideNavStack, guidePush, guidePop, stepsConfig, save
   }
 
   // Directory view (stack empty)
-  const safetyStep = getStep('safety');
-  const equipmentStep = getStep('equipment');
-  const trashStep = getStep('trash');
-  const rulesStep = getStep('rules');
+  const guideSteps = rawSteps.filter(s => s.category === 'guide' && s.enabled !== false);
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -1710,52 +1731,40 @@ const GuideView = ({ lang, guideNavStack, guidePush, guidePop, stepsConfig, save
               </div>
             </div>
           )}
-          {safetyStep && (
-            <button onClick={() => guidePush({ type: 'group', groupId: 'safety' })}
-              className="w-full flex items-center justify-between p-5 bg-red-50 text-red-800 rounded-2xl border border-red-100 shadow-sm hover:bg-red-100 transition-all">
-              <div className="flex items-center gap-3">
-                <Shield className="w-6 h-6" />
-                <div className="text-left">
-                  <p className="font-bold">{safetyStep.title}</p>
-                  <p className="text-xs text-red-500">{(safetyStep.children || []).filter(c => c.enabled !== false).length} 項目</p>
+          {guideSteps.map(step => {
+            if (step.type === 'group') {
+              const enabledChildren = (step.children || []).filter(c => c.enabled !== false).length;
+              const colorCls = step.id === 'safety'
+                ? 'bg-red-50 text-red-800 border-red-100 hover:bg-red-100'
+                : step.id === 'equipment'
+                  ? 'bg-blue-50 text-blue-800 border-blue-100 hover:bg-blue-100'
+                  : 'bg-indigo-50 text-indigo-800 border-indigo-100 hover:bg-indigo-100';
+              const subtextCls = step.id === 'safety' ? 'text-red-500' : step.id === 'equipment' ? 'text-blue-500' : 'text-indigo-500';
+              return (
+                <button key={step.id} onClick={() => guidePush({ type: 'group', groupId: step.id })}
+                  className={`w-full flex items-center justify-between p-5 rounded-2xl border shadow-sm transition-all ${colorCls}`}>
+                  <div className="flex items-center gap-3">
+                    {getStepIcon(step.id, 'w-6 h-6')}
+                    <div className="text-left">
+                      <p className="font-bold">{step.title}</p>
+                      <p className={`text-xs ${subtextCls}`}>{enabledChildren} 項目</p>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-5 h-5 opacity-60" />
+                </button>
+              );
+            }
+            return (
+              <button key={step.id} onClick={() => guidePush({ type: 'solo', stepId: step.id })}
+                className="w-full flex items-center justify-between p-5 bg-white rounded-2xl border border-slate-100 shadow-sm hover:bg-slate-50 transition-all">
+                <div className="flex items-center gap-3">
+                  {getStepIcon(step.id, 'w-6 h-6 text-slate-500')}
+                  <span className="font-semibold text-slate-900">{step.title}</span>
                 </div>
-              </div>
-              <ChevronRight className="w-5 h-5 opacity-60" />
-            </button>
-          )}
-          {equipmentStep && (
-            <button onClick={() => guidePush({ type: 'group', groupId: 'equipment' })}
-              className="w-full flex items-center justify-between p-5 bg-blue-50 text-blue-800 rounded-2xl border border-blue-100 shadow-sm hover:bg-blue-100 transition-all">
-              <div className="flex items-center gap-3">
-                <Wrench className="w-6 h-6" />
-                <div className="text-left">
-                  <p className="font-bold">{equipmentStep.title}</p>
-                  <p className="text-xs text-blue-500">{(equipmentStep.children || []).filter(c => c.enabled !== false).length} 項目</p>
-                </div>
-              </div>
-              <ChevronRight className="w-5 h-5 opacity-60" />
-            </button>
-          )}
-          {trashStep && (
-            <button onClick={() => guidePush({ type: 'solo', stepId: 'trash' })}
-              className="w-full flex items-center justify-between p-5 bg-white rounded-2xl border border-slate-100 shadow-sm hover:bg-slate-50 transition-all">
-              <div className="flex items-center gap-3">
-                <Trash2 className="w-6 h-6 text-slate-500" />
-                <span className="font-semibold text-slate-900">{trashStep.title}</span>
-              </div>
-              <ChevronRight className="w-5 h-5 text-slate-300" />
-            </button>
-          )}
-          {rulesStep && (
-            <button onClick={() => guidePush({ type: 'solo', stepId: 'rules' })}
-              className="w-full flex items-center justify-between p-5 bg-white rounded-2xl border border-slate-100 shadow-sm hover:bg-slate-50 transition-all">
-              <div className="flex items-center gap-3">
-                <UserCheck className="w-6 h-6 text-slate-500" />
-                <span className="font-semibold text-slate-900">{rulesStep.title}</span>
-              </div>
-              <ChevronRight className="w-5 h-5 text-slate-300" />
-            </button>
-          )}
+                <ChevronRight className="w-5 h-5 text-slate-300" />
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>

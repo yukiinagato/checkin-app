@@ -249,6 +249,7 @@ const saveImagesLocally = async (guests) => {
         if (!extension) return guest;
 
         const imageBuffer = Buffer.from(matches[2], 'base64');
+        const photoMd5 = crypto.createHash('md5').update(imageBuffer).digest('hex');
         const filename = `${crypto.randomUUID()}_passport.${extension}`;
         const safeUploadDir = path.resolve(UPLOAD_DIR);
         const filePath = path.resolve(safeUploadDir, filename);
@@ -259,10 +260,11 @@ const saveImagesLocally = async (guests) => {
         // 寫入文件
         await fs.outputFile(filePath, imageBuffer, { flag: 'wx' });
 
-        // 更新 guest 對象中的圖片路徑為文件名
+        // 更新 guest 對象中的圖片路徑為文件名，並附帶 MD5 供去重
         return {
           ...guest,
-          passportPhoto: filename
+          passportPhoto: filename,
+          passportPhotoMd5: photoMd5
         };
       } catch (err) {
         console.error('圖片保存失敗:', err);
@@ -1055,6 +1057,31 @@ app.put('/api/admin/app-settings', requireAdminAuth, async (req, res) => {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// 計算 data URI 圖片的 MD5（去重用）
+const computePhotoMd5 = (dataImage) => {
+  if (!dataImage || !dataImage.startsWith('data:image')) return null;
+  const matches = dataImage.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+  if (!matches) return null;
+  try {
+    return crypto.createHash('md5').update(Buffer.from(matches[2], 'base64')).digest('hex');
+  } catch { return null; }
+};
+
+const norm = (s) => (s == null ? '' : String(s).trim().toLowerCase());
+
+// 判斷一個新住客是否與現有住客完全重複（照片 MD5 + 所有身份資訊 + 入住日期相符）
+const isContentDuplicate = (newGuest, newMd5, newCheckIn, existing, existingCheckIn) => {
+  if (newMd5 && existing.passportPhotoMd5 && newMd5 !== existing.passportPhotoMd5) return false;
+  return (
+    norm(newGuest.name) === norm(existing.name) &&
+    norm(newGuest.phone) === norm(existing.phone) &&
+    norm(newGuest.address) === norm(existing.address) &&
+    norm(newGuest.age) === norm(existing.age) &&
+    norm(newGuest.passportNumber) === norm(existing.passportNumber) &&
+    norm(newCheckIn) === norm(existingCheckIn)
+  );
+};
+
 app.post('/api/submit', submitRateLimit, async (req, res) => {
   try {
     const { guests, submissionId: clientId } = req.body;
@@ -1075,6 +1102,28 @@ app.post('/api/submit', submitRateLimit, async (req, res) => {
     const today = new Date().toISOString().split('T')[0];
     const { checkIn, checkOut } = req.body;
 
+    // 內容去重：若所有住客資訊（照片 MD5 + 身份欄位 + 入住日期）均與現有記錄完全一致，則靜默忽略
+    const incomingMd5s = guests.map(g => computePhotoMd5(g.passportPhoto));
+    const isDuplicate = await new Promise((resolve) => {
+      db.all('SELECT data, check_in FROM checkins', [], (err, rows) => {
+        if (err || !rows || rows.length === 0) { resolve(false); return; }
+        const existingGuests = rows.flatMap(row => {
+          try {
+            return JSON.parse(row.data).map(g => ({ ...g, _checkIn: row.check_in }));
+          } catch { return []; }
+        });
+        const allMatch = guests.every((g, i) =>
+          existingGuests.some(ex => isContentDuplicate(g, incomingMd5s[i], checkIn, ex, ex._checkIn))
+        );
+        resolve(allMatch);
+      });
+    });
+
+    if (isDuplicate) {
+      console.log(`[submit] 內容完全重複，已忽略: ${submitId}`);
+      return res.json({ success: true, id: submitId, duplicate: true });
+    }
+
     const guestsWithUrls = (await saveImagesLocally(guests)).map((guest) => ({ ...guest, deleted: guest.deleted === true }));
 
     // INSERT OR IGNORE：重複 submissionId 靜默忽略，不返回錯誤
@@ -1084,8 +1133,8 @@ app.post('/api/submit', submitRateLimit, async (req, res) => {
         console.error('[submit] 資料庫寫入錯誤:', err);
         res.status(500).json({ success: false, error: err.message });
       } else if (this.changes === 0) {
-        // 重複提交（冪等），直接回傳成功
-        console.log(`[submit] 重複提交已忽略: ${submitId}`);
+        // 重複提交（冪等 ID），直接回傳成功
+        console.log(`[submit] 重複 submissionId 已忽略: ${submitId}`);
         res.json({ success: true, id: submitId, duplicate: true });
       } else {
         console.log(`[submit] 新入住登記: ${submitId}, 日期: ${today}`);

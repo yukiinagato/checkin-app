@@ -217,7 +217,7 @@ test('App.jsx：localStorage 存入前有 startsWith("data:image") 清除邏輯'
   );
 });
 
-test('App.jsx：清除後存入 localStorage 的是 guestsForStorage 而非 mergedGuests', () => {
+test('App.jsx：清除後存入 localStorage 的是 guestsForStorage，提交後重置表單', () => {
   assert.ok(
     appSrc.includes('guestsForStorage'),
     '找不到 guestsForStorage 變數'
@@ -227,9 +227,13 @@ test('App.jsx：清除後存入 localStorage 的是 guestsForStorage 而非 merg
     appSrc.includes('JSON.stringify(guestsForStorage)'),
     'localStorage.setItem 應使用 guestsForStorage'
   );
-  // 確認 return 仍使用 mergedGuests（in-memory state 保留原始圖片）
+  // 提交成功後重置表單為空白（新入住流程），歷史資料改存入 savedRegistration
   assert.ok(
-    appSrc.includes('return mergedGuests'),
-    'setGuests 的 return 應為 mergedGuests，以保留記憶體中的原始圖片'
+    appSrc.includes('setSavedRegistration'),
+    '提交成功後應將歷史資料存入 savedRegistration'
+  );
+  assert.ok(
+    appSrc.includes('createGuestTemplate'),
+    '提交成功後應重置 guests 為新的空白表單'
   );
 });

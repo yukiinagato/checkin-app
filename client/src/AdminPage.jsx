@@ -641,6 +641,44 @@ const AdminDashboard = ({
     setStepsSaved(false);
   };
 
+  const addGroupChild = (groupId) => {
+    const newChild = { id: createStepId(), title: '新子項目', enabled: true, content: '' };
+    setEditableSteps((prev) => prev.map((step) =>
+      step.id !== groupId ? step : { ...step, children: [...(step.children || []), newChild] }
+    ));
+    setStepsSaved(false);
+  };
+
+  const updateGroupChild = (groupId, childId, field, value) => {
+    setEditableSteps((prev) => prev.map((step) =>
+      step.id !== groupId ? step : {
+        ...step,
+        children: (step.children || []).map((c) => c.id === childId ? { ...c, [field]: value } : c)
+      }
+    ));
+    setStepsSaved(false);
+  };
+
+  const toggleGroupChildEnabled = (groupId, childId) => {
+    setEditableSteps((prev) => prev.map((step) =>
+      step.id !== groupId ? step : {
+        ...step,
+        children: (step.children || []).map((c) => c.id === childId ? { ...c, enabled: !c.enabled } : c)
+      }
+    ));
+    setStepsSaved(false);
+  };
+
+  const removeGroupChild = (groupId, childId) => {
+    setEditableSteps((prev) => prev.map((step) =>
+      step.id !== groupId ? step : {
+        ...step,
+        children: (step.children || []).filter((c) => c.id !== childId)
+      }
+    ));
+    setStepsSaved(false);
+  };
+
   const handleSaveSteps = async () => {
     try {
       await db.updateSteps(adminToken, stepLang, editableSteps);
@@ -1014,60 +1052,107 @@ const AdminDashboard = ({
             <div className="space-y-4">
               {editableSteps.map((step, index) => (
                 <div key={step.id} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs font-bold text-slate-400 uppercase">Step {index + 1}</span>
-                      <span className={`text-[10px] px-2 py-1 rounded-full ${step.type === 'custom' ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-500'}`}>
-                        {step.type === 'custom' ? 'Custom' : 'Built-in'}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
-                        <input type="checkbox" checked={step.enabled !== false} onChange={() => toggleStepEnabled(step.id)} />
-                        啟用
-                      </label>
-                      {step.type === 'custom' && (
-                        <button onClick={() => removeCustomStep(step.id)} className="text-rose-500 text-xs font-bold">移除</button>
-                      )}
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-400 uppercase">标题</label>
-                      <input
-                        type="text"
-                        value={step.title}
-                        onChange={(e) => updateStepField(step.id, 'title', e.target.value)}
-                        className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-400 uppercase">副标题</label>
-                      <input
-                        type="text"
-                        value={step.subtitle}
-                        onChange={(e) => updateStepField(step.id, 'subtitle', e.target.value)}
-                        className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase">内容编辑</label>
-                      <span className="text-[10px] text-slate-400">支持图片与常见文本样式</span>
-                    </div>
-                    <div className="mt-3">
-                      <RichTextEditor
-                        value={step.content}
-                        onChange={(value) => updateStepField(step.id, 'content', value)}
-                        placeholder="输入该步骤要展示的内容..."
-                      />
-                    </div>
-                  </div>
-                  <div className="step-content-surface">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase mb-3">预览</p>
-                    <StepContent content={step.content} fallback={stepLangText.customStepEmpty} />
-                  </div>
+                  {step.type === 'group' ? (
+                    <>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs font-bold text-slate-400 uppercase">Group {index + 1}</span>
+                          <span className="text-[10px] px-2 py-1 rounded-full bg-purple-50 text-purple-600">Group</span>
+                        </div>
+                        <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                          <input type="checkbox" checked={step.enabled !== false} onChange={() => toggleStepEnabled(step.id)} />
+                          啟用
+                        </label>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase">标题</label>
+                          <input type="text" value={step.title} onChange={(e) => updateStepField(step.id, 'title', e.target.value)} className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm" />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase">副标题</label>
+                          <input type="text" value={step.subtitle} onChange={(e) => updateStepField(step.id, 'subtitle', e.target.value)} className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm" />
+                        </div>
+                      </div>
+                      <div className="border-t border-slate-100 pt-4 space-y-3">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase">子項目 ({(step.children || []).length})</p>
+                        {(step.children || []).map((child, ci) => (
+                          <div key={child.id} className="bg-slate-50 rounded-xl border border-slate-100 p-4 space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-mono text-slate-400">#{ci + 1} · {child.id}</span>
+                              <div className="flex items-center gap-3">
+                                <label className="flex items-center gap-2 text-xs text-slate-600">
+                                  <input type="checkbox" checked={child.enabled !== false} onChange={() => toggleGroupChildEnabled(step.id, child.id)} />
+                                  啟用
+                                </label>
+                                <button onClick={() => removeGroupChild(step.id, child.id)} className="text-rose-500 text-xs font-bold">移除</button>
+                              </div>
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-bold text-slate-400 uppercase">子項標題</label>
+                              <input type="text" value={child.title} onChange={(e) => updateGroupChild(step.id, child.id, 'title', e.target.value)} className="w-full mt-1 p-2.5 rounded-lg border border-slate-200 text-sm bg-white" />
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-bold text-slate-400 uppercase">內容編輯</label>
+                              <div className="mt-2">
+                                <RichTextEditor value={child.content} onChange={(value) => updateGroupChild(step.id, child.id, 'content', value)} placeholder="输入子项目内容..." />
+                              </div>
+                            </div>
+                            <div className="step-content-surface">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">預覽</p>
+                              <StepContent content={child.content} fallback={stepLangText.customStepEmpty} />
+                            </div>
+                          </div>
+                        ))}
+                        <button onClick={() => addGroupChild(step.id)} className="w-full py-2.5 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 hover:text-slate-700 text-sm font-bold transition-all">
+                          + 新增子項目
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs font-bold text-slate-400 uppercase">Step {index + 1}</span>
+                          <span className={`text-[10px] px-2 py-1 rounded-full ${step.type === 'custom' ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-500'}`}>
+                            {step.type === 'custom' ? 'Custom' : 'Built-in'}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                            <input type="checkbox" checked={step.enabled !== false} onChange={() => toggleStepEnabled(step.id)} />
+                            啟用
+                          </label>
+                          {step.type === 'custom' && (
+                            <button onClick={() => removeCustomStep(step.id)} className="text-rose-500 text-xs font-bold">移除</button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase">标题</label>
+                          <input type="text" value={step.title} onChange={(e) => updateStepField(step.id, 'title', e.target.value)} className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm" />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase">副标题</label>
+                          <input type="text" value={step.subtitle} onChange={(e) => updateStepField(step.id, 'subtitle', e.target.value)} className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm" />
+                        </div>
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase">内容编辑</label>
+                          <span className="text-[10px] text-slate-400">支持图片与常见文本样式</span>
+                        </div>
+                        <div className="mt-3">
+                          <RichTextEditor value={step.content} onChange={(value) => updateStepField(step.id, 'content', value)} placeholder="输入该步骤要展示的内容..." />
+                        </div>
+                      </div>
+                      <div className="step-content-surface">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase mb-3">预览</p>
+                        <StepContent content={step.content} fallback={stepLangText.customStepEmpty} />
+                      </div>
+                    </>
+                  )}
                 </div>
               ))}
             </div>

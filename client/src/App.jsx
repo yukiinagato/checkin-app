@@ -5,12 +5,12 @@ import {
   MapPin,
   ChevronRight,
   ChevronLeft,
+  ChevronDown,
   CheckCircle2,
   Info,
   BellRing,
   Languages,
   UserCheck,
-  Dog,
   AlertTriangle,
   Wrench,
   Flame,
@@ -23,7 +23,18 @@ import {
   Search,
   Home,
   Menu,
-  Calendar
+  Calendar,
+  Shield,
+  Baby,
+  Wind,
+  Droplets,
+  Monitor,
+  Refrigerator,
+  Sparkles,
+  LayoutList,
+  ArrowLeft,
+  BookOpen,
+  ClipboardList
 } from 'lucide-react';
 import AdminPage from './AdminPage';
 import { isRegistrationValid, parsePassportBirthDateToAge } from './formValidation';
@@ -315,6 +326,36 @@ const LANG_OPTIONS = [
   { value: 'ko', label: '한국어' }
 ];
 
+const CHECKIN_STEP_IDS = ['count', 'stayDuration', 'privacy', 'registration', 'rules'];
+const GUIDE_GROUP_IDS  = ['safety', 'equipment'];
+const GUIDE_SOLO_IDS   = ['trash'];
+
+const getStepIcon = (id, size = 'w-6 h-6') => {
+  const cls = `${size}`;
+  switch (id) {
+    case 'welcome':      return <BellRing className={cls} />;
+    case 'count':        return <Users className={cls} />;
+    case 'stayDuration': return <Calendar className={cls} />;
+    case 'privacy':      return <Lock className={cls} />;
+    case 'registration': return <UserCheck className={cls} />;
+    case 'safety':       return <Shield className={cls} />;
+    case 'emergency':    return <AlertTriangle className={cls} />;
+    case 'child':        return <Baby className={cls} />;
+    case 'outdoor':      return <MapPin className={cls} />;
+    case 'equipment':    return <Wrench className={cls} />;
+    case 'laundry':      return <Wrench className={cls} />;
+    case 'water':        return <Flame className={cls} />;
+    case 'ac':           return <Wind className={cls} />;
+    case 'fridge':       return <Refrigerator className={cls} />;
+    case 'projector':    return <Monitor className={cls} />;
+    case 'waterPurifier': return <Droplets className={cls} />;
+    case 'bidet':        return <Sparkles className={cls} />;
+    case 'trash':        return <Trash2 className={cls} />;
+    case 'rules':        return <UserCheck className={cls} />;
+    default:             return <Info className={cls} />;
+  }
+};
+
 const translations = {
   'zh-hans': {
     next: "下一条指南", prev: "返回选择菜单", finish: "确认并获取房号", agree: "我已详读并同意遵守上述所有守则",
@@ -332,18 +373,19 @@ const translations = {
     customStepEmpty: "此步骤暂无内容。",
     retryMsg: "网络不稳，正在自动重新提交，请稍候...",
     submitRetryMsg: "提交失败，数据已保存。请确认网络连接后点击按钮重试。",
+    newCheckin: "新入住", viewHistory: "查看已登记的数据", backToHome: "返回首页",
+    quickGuide: "快速指南", safetyGroup: "安全", equipmentGroup: "设备", viewGuide: "查阅指南",
+    noContent: "此项目暂无内容。", registeredData: "已登记资料", backToDir: "返回目录", guestTypeAdult: "成人", guestTypeMinor: "未成年",
+    viewStayGuide: "查看住宿指南",
     steps: [
       { id: 'welcome', title: "欢迎入住", subtitle: "Welcome" },
       { id: 'count', title: "入住人数", subtitle: "Guest Count" },
       { id: 'stayDuration', title: "入住时长", subtitle: "Stay Duration" },
       { id: 'privacy', title: "个人信息保护", subtitle: "Privacy Notice" },
       { id: 'registration', title: "住客信息登记", subtitle: "Osaka Regulation" },
-      { id: 'emergency', title: "安全与紧急应对", subtitle: "Safety First" },
-      { id: 'child', title: "婴儿与儿童安全", subtitle: "Child Protection" },
-      { id: 'outdoor', title: "户外边界警告", subtitle: "Outdoor Safety" },
-      { id: 'water', title: "空气能热水器 (EcoCute)", subtitle: "Hot Water System" },
+      { id: 'safety', title: "安全", subtitle: "Safety" },
+      { id: 'equipment', title: "设备使用", subtitle: "Equipment" },
       { id: 'trash', title: "垃圾分类指南", subtitle: "Waste Management" },
-      { id: 'laundry', title: "洗烘一体机使用", subtitle: "Laundry Guide" },
       { id: 'rules', title: "邻里礼仪与管理", subtitle: "Etiquette" }
     ]
   },
@@ -363,18 +405,19 @@ const translations = {
     customStepEmpty: "此步驟目前沒有內容。",
     retryMsg: "網路不穩，正在自動重新提交，請稍候...",
     submitRetryMsg: "提交失敗，資料已儲存。請確認網路連線後點擊按鈕重試。",
+    newCheckin: "新入住", viewHistory: "查看已登記的數據", backToHome: "返回首頁",
+    quickGuide: "快速指南", safetyGroup: "安全", equipmentGroup: "設備", viewGuide: "查閱指南",
+    noContent: "此項目目前沒有內容。", registeredData: "已登記資料", backToDir: "返回目錄", guestTypeAdult: "成人", guestTypeMinor: "未成年",
+    viewStayGuide: "查看住宿指南",
     steps: [
       { id: 'welcome', title: "歡迎入住", subtitle: "Welcome" },
       { id: 'count', title: "入住人數", subtitle: "Guest Count" },
       { id: 'stayDuration', title: "入住時長", subtitle: "Stay Duration" },
       { id: 'privacy', title: "個人資訊保護", subtitle: "Privacy Notice" },
       { id: 'registration', title: "住客資訊登記", subtitle: "Osaka Regulation" },
-      { id: 'emergency', title: "安全與緊急應對", subtitle: "Safety First" },
-      { id: 'child', title: "嬰兒與兒童安全", subtitle: "Child Protection" },
-      { id: 'outdoor', title: "戶外邊界警告", subtitle: "Outdoor Safety" },
-      { id: 'water', title: "空氣能熱水器 (EcoCute)", subtitle: "Hot Water System" },
+      { id: 'safety', title: "安全", subtitle: "Safety" },
+      { id: 'equipment', title: "設備使用", subtitle: "Equipment" },
       { id: 'trash', title: "垃圾分類指南", subtitle: "Waste Management" },
-      { id: 'laundry', title: "洗烘一體機使用", subtitle: "Laundry Guide" },
       { id: 'rules', title: "鄰里禮儀與管理", subtitle: "Etiquette" }
     ]
   },
@@ -394,18 +437,19 @@ const translations = {
     customStepEmpty: "No content for this step yet.",
     retryMsg: "Network unstable — retrying your submission automatically...",
     submitRetryMsg: "Submission failed. Your data is saved — please check your connection and tap the button to try again.",
+    newCheckin: "New Check-in", viewHistory: "View Registered Data", backToHome: "Back to Home",
+    quickGuide: "Quick Guide", safetyGroup: "Safety", equipmentGroup: "Equipment", viewGuide: "View Guide",
+    noContent: "No content available for this item yet.", registeredData: "Registered Data", backToDir: "Back to Directory", guestTypeAdult: "Adult", guestTypeMinor: "Minor",
+    viewStayGuide: "View Stay Guide",
     steps: [
       { id: 'welcome', title: "Welcome", subtitle: "Welcome" },
       { id: 'count', title: "Guest Count", subtitle: "Guest Count" },
       { id: 'stayDuration', title: "Stay Duration", subtitle: "Stay Duration" },
       { id: 'privacy', title: "Privacy Notice", subtitle: "Personal Data" },
       { id: 'registration', title: "Registration", subtitle: "Osaka Regulation" },
-      { id: 'emergency', title: "Emergency", subtitle: "Safety First" },
-      { id: 'child', title: "Child Safety", subtitle: "Child Protection" },
-      { id: 'outdoor', title: "Outdoor Warning", subtitle: "Outdoor Safety" },
-      { id: 'water', title: "Hot Water System", subtitle: "EcoCute" },
+      { id: 'safety', title: "Safety", subtitle: "Safety" },
+      { id: 'equipment', title: "Equipment Guide", subtitle: "Equipment" },
       { id: 'trash', title: "Waste Guide", subtitle: "Waste Management" },
-      { id: 'laundry', title: "Laundry", subtitle: "Laundry Guide" },
       { id: 'rules', title: "Etiquette", subtitle: "Etiquette" }
     ]
   },
@@ -425,18 +469,19 @@ const translations = {
     customStepEmpty: "このステップにはまだ内容がありません。",
     retryMsg: "通信が不安定です。自動的に再送信しています...",
     submitRetryMsg: "送信に失敗しました。データは保存されています。ネットワークを確認してボタンをタップして再試行してください。",
+    newCheckin: "新しくチェックイン", viewHistory: "登録済みデータを確認", backToHome: "ホームに戻る",
+    quickGuide: "クイックガイド", safetyGroup: "安全", equipmentGroup: "設備", viewGuide: "案内を見る",
+    noContent: "このアイテムにはまだ内容がありません。", registeredData: "登録済みデータ", backToDir: "一覧に戻る", guestTypeAdult: "大人", guestTypeMinor: "未成年",
+    viewStayGuide: "宿泊案内を見る",
     steps: [
       { id: 'welcome', title: "ようこそ", subtitle: "Welcome" },
       { id: 'count', title: "人数", subtitle: "Guest Count" },
       { id: 'stayDuration', title: "宿泊日数", subtitle: "Stay Duration" },
       { id: 'privacy', title: "個人情報について", subtitle: "Privacy Notice" },
       { id: 'registration', title: "登録", subtitle: "Osaka Regulation" },
-      { id: 'emergency', title: "緊急", subtitle: "Safety First" },
-      { id: 'child', title: "子どもの安全", subtitle: "Child Protection" },
-      { id: 'outdoor', title: "屋外注意", subtitle: "Outdoor Safety" },
-      { id: 'water', title: "給湯システム", subtitle: "EcoCute" },
+      { id: 'safety', title: "安全", subtitle: "Safety" },
+      { id: 'equipment', title: "設備の使い方", subtitle: "Equipment" },
       { id: 'trash', title: "ゴミ分別", subtitle: "Waste Management" },
-      { id: 'laundry', title: "洗濯", subtitle: "Laundry Guide" },
       { id: 'rules', title: "マナー", subtitle: "Etiquette" }
     ]
   },
@@ -456,43 +501,64 @@ const translations = {
     customStepEmpty: "이 단계에는 아직 내용이 없습니다.",
     retryMsg: "네트워크가 불안정합니다. 자동으로 재제출 중입니다...",
     submitRetryMsg: "제출에 실패했습니다. 데이터는 저장되어 있습니다. 네트워크를 확인하고 버튼을 눌러 다시 시도해 주세요.",
+    newCheckin: "새로운 체크인", viewHistory: "등록 데이터 확인", backToHome: "홈으로 돌아가기",
+    quickGuide: "빠른 안내", safetyGroup: "안전", equipmentGroup: "설비", viewGuide: "안내 보기",
+    noContent: "이 항목에는 아직 내용이 없습니다.", registeredData: "등록된 데이터", backToDir: "목록으로 돌아가기", guestTypeAdult: "성인", guestTypeMinor: "미성년자",
+    viewStayGuide: "숙박 안내 보기",
     steps: [
       { id: 'welcome', title: "환영", subtitle: "Welcome" },
       { id: 'count', title: "인원 수", subtitle: "Guest Count" },
       { id: 'stayDuration', title: "숙박 기간", subtitle: "Stay Duration" },
       { id: 'privacy', title: "개인정보 안내", subtitle: "Privacy Notice" },
       { id: 'registration', title: "등록", subtitle: "Osaka Regulation" },
-      { id: 'emergency', title: "긴급", subtitle: "Safety First" },
-      { id: 'child', title: "아동 안전", subtitle: "Child Protection" },
-      { id: 'outdoor', title: "야외 경고", subtitle: "Outdoor Safety" },
-      { id: 'water', title: "온수 시스템", subtitle: "EcoCute" },
+      { id: 'safety', title: "안전", subtitle: "Safety" },
+      { id: 'equipment', title: "설비 사용법", subtitle: "Equipment" },
       { id: 'trash', title: "쓰레기 분리", subtitle: "Waste Management" },
-      { id: 'laundry', title: "세탁", subtitle: "Laundry Guide" },
       { id: 'rules', title: "에티켓", subtitle: "Etiquette" }
     ]
   }
 };
 
+const normalizeChild = (c) => ({
+  id: c.id || createStepId(),
+  title: c.title || '',
+  enabled: c.enabled !== false,
+  content: c.content || ''
+});
+
 const buildDefaultSteps = (lang) => {
   const base = translations[lang]?.steps || translations[DEFAULT_LANG].steps;
-  return base.map(step => ({
-    ...step,
-    enabled: true,
-    type: 'builtin',
-    content: ''
-  }));
+  return base.map(step => {
+    if (GUIDE_GROUP_IDS.includes(step.id)) {
+      return { ...step, enabled: true, type: 'group', content: '', children: [] };
+    }
+    return { ...step, enabled: true, type: 'builtin', content: '' };
+  });
 };
 
 const normalizeSteps = (steps, fallback) => {
   if (!Array.isArray(steps)) return fallback;
-  return steps.map((step) => ({
-    id: step.id || createStepId(),
-    title: step.title || '',
-    subtitle: step.subtitle || '',
-    enabled: step.enabled !== false,
-    type: step.type === 'custom' ? 'custom' : 'builtin',
-    content: step.content || ''
-  }));
+  return steps.map((step) => {
+    if (step.type === 'group') {
+      return {
+        id: step.id || createStepId(),
+        title: step.title || '',
+        subtitle: step.subtitle || '',
+        enabled: step.enabled !== false,
+        type: 'group',
+        content: '',
+        children: Array.isArray(step.children) ? step.children.map(normalizeChild) : []
+      };
+    }
+    return {
+      id: step.id || createStepId(),
+      title: step.title || '',
+      subtitle: step.subtitle || '',
+      enabled: step.enabled !== false,
+      type: step.type === 'custom' ? 'custom' : 'builtin',
+      content: step.content || ''
+    };
+  });
 };
 
 const BUILTIN_STEP_FALLBACKS = {
@@ -628,16 +694,13 @@ const StepContent = ({ content, fallback }) => {
 // ----------------------------------------------------------------------
 const App = () => {
   const getViewFromPath = () => window.location.pathname.startsWith('/admin') ? 'admin' : 'guest';
-  const [view, setView] = useState('home');
+  const [view, setView] = useState(getViewFromPath());
   const [loading, setLoading] = useState(false);
   const [retryMessage, setRetryMessage] = useState('');
   const [submitError, setSubmitError] = useState('');
   const [hasPendingRetry, setHasPendingRetry] = useState(() => !!localStorage.getItem(PENDING_RETRY_KEY));
   const [adminToken, setAdminToken] = useState(() => sessionStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) || '');
 
-  // ----------------------------------------------------------------
-  // [狀態提升] 將所有表單狀態提升至 App 以便進行重置和控制
-  // ----------------------------------------------------------------
   const [lang, setLang] = useState(null);
   const [currentStep, setCurrentStep] = useState(0);
   const [isCompleted, setIsCompleted] = useState(false);
@@ -645,32 +708,48 @@ const App = () => {
   const [petCount, setPetCount] = useState(0);
   const [checkInDate, setCheckInDate] = useState('');
   const [checkOutDate, setCheckOutDate] = useState('');
-  // 若有未完成的待重試提交，視為已同意（上次提交前已勾選）
   const [hasAgreed, setHasAgreed] = useState(() => !!localStorage.getItem(PENDING_RETRY_KEY));
-
-  // ----------------------------------------------------------------
-  // 歷史記錄狀態管理
-  // ----------------------------------------------------------------
   const [hasHistory, setHasHistory] = useState(false);
+  // 已完成登記的歷史資料（只讀顯示），與可編輯的表單 guests 分開
+  const [savedRegistration, setSavedRegistration] = useState(null);
+
+  const [appView, setAppView] = useState(() => !!localStorage.getItem(PENDING_RETRY_KEY) ? 'checkin' : 'landing');
+  const [guideNavStack, setGuideNavStack] = useState([]);
+
+  const [stepsConfig, setStepsConfig] = useState([]);
+  const [completionTemplate, setCompletionTemplate] = useState(() => buildDefaultCompletionTemplate(DEFAULT_LANG));
+  const [appSettings, setAppSettings] = useState(DEFAULT_APP_SETTINGS);
+
+  const guidePush = (entry) => setGuideNavStack(s => [...s, entry]);
+  const guidePop = () => setGuideNavStack(s => s.slice(0, -1));
 
   useEffect(() => {
+    const hasPendingRetryFlag = !!localStorage.getItem(PENDING_RETRY_KEY);
     const hasRecord = localStorage.getItem(CHECKIN_STORAGE_KEY);
-    if (hasRecord) {
-      setHasHistory(true);
-      const savedGuestsJSON = localStorage.getItem(GUEST_STORAGE_KEY);
+    const savedGuestsJSON = localStorage.getItem(GUEST_STORAGE_KEY);
+    const savedPetCount = parseInt(localStorage.getItem(PET_COUNT_STORAGE_KEY) || '0', 10);
+    const savedCheckIn = localStorage.getItem(CHECKIN_DATE_STORAGE_KEY) || '';
+    const savedCheckOut = localStorage.getItem(CHECKOUT_DATE_STORAGE_KEY) || '';
+
+    if (hasPendingRetryFlag) {
+      // 待重試：恢復可編輯的表單資料
       if (savedGuestsJSON) {
-        const savedGuests = JSON.parse(savedGuestsJSON);
-        const loadedGuests = savedGuests.map(g => ({ ...g, isEditable: false }));
-        setGuests(loadedGuests);
+        try { setGuests(JSON.parse(savedGuestsJSON).map(g => ({ ...g, isEditable: true }))); }
+        catch (e) { setGuests([createGuestTemplate('adult')]); }
       }
-      const savedPetCount = localStorage.getItem(PET_COUNT_STORAGE_KEY);
-      if (savedPetCount) setPetCount(parseInt(savedPetCount, 10) || 0);
-
-      const savedCheckIn = localStorage.getItem(CHECKIN_DATE_STORAGE_KEY);
-      if (savedCheckIn) setCheckInDate(savedCheckIn);
-
-      const savedCheckOut = localStorage.getItem(CHECKOUT_DATE_STORAGE_KEY);
-      if (savedCheckOut) setCheckOutDate(savedCheckOut);
+      setPetCount(savedPetCount);
+      setCheckInDate(savedCheckIn);
+      setCheckOutDate(savedCheckOut);
+    } else if (hasRecord) {
+      // 已完成登記：保存歷史資料供查看，表單保持空白供新入住
+      setHasHistory(true);
+      if (savedGuestsJSON) {
+        try {
+          const savedGuests = JSON.parse(savedGuestsJSON);
+          setSavedRegistration({ guests: savedGuests, petCount: savedPetCount, checkInDate: savedCheckIn, checkOutDate: savedCheckOut });
+        } catch (e) { /* ignore */ }
+      }
+      setGuests([createGuestTemplate('adult')]);
     } else {
       setGuests([createGuestTemplate('adult')]);
     }
@@ -678,141 +757,113 @@ const App = () => {
 
   const handleAdminTokenChange = (token) => {
     setAdminToken(token);
-    if (token) {
-      sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, token);
-      return;
-    }
+    if (token) { sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, token); return; }
     sessionStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
   };
 
   useEffect(() => {
-    const handleRouteChange = () => {
-      setView(getViewFromPath());
-    };
+    const handleRouteChange = () => setView(getViewFromPath());
     window.addEventListener('popstate', handleRouteChange);
-    return () => {
-      window.removeEventListener('popstate', handleRouteChange);
-    };
+    return () => window.removeEventListener('popstate', handleRouteChange);
   }, []);
 
   const navigateTo = (path) => {
-    if (window.location.pathname !== path) {
-      window.history.pushState({}, '', path);
-    }
+    if (window.location.pathname !== path) window.history.pushState({}, '', path);
     setView(getViewFromPath());
   };
 
+  useEffect(() => {
+    let isActive = true;
+    if (!lang) return () => {};
+    DB.getTemplateBundle(lang).then((bundle) => {
+      if (!isActive) return;
+      const normalizedSteps = normalizeSteps(bundle?.steps?.data, buildDefaultSteps(lang));
+      const normalizedCT = normalizeCompletionTemplate(bundle?.completionTemplate?.data, buildDefaultCompletionTemplate(lang));
+      setAppSettings({ ...DEFAULT_APP_SETTINGS, ...(bundle?.appSettings || {}) });
+      setStepsConfig(normalizedSteps);
+      setCompletionTemplate(normalizedCT);
+      saveSteps(lang, normalizedSteps);
+      saveCompletionTemplate(lang, normalizedCT);
+    }).catch(() => {
+      if (!isActive) return;
+      setAppSettings(DEFAULT_APP_SETTINGS);
+      setStepsConfig(loadSteps(lang) || buildDefaultSteps(lang));
+      setCompletionTemplate(loadCompletionTemplate(lang) || buildDefaultCompletionTemplate(lang));
+    });
+    return () => { isActive = false; };
+  }, [lang]);
+
   const handleGuestSubmit = async (guestData) => {
-    if (!Array.isArray(guestData) || guestData.length === 0) {
-      return true;
-    }
-
+    if (!Array.isArray(guestData) || guestData.length === 0) return true;
     setSubmitError('');
-
-    // 取得或建立冪等提交 ID，確保重試時不重複寫入後端
     let submissionId = localStorage.getItem(SUBMISSION_ID_KEY);
     if (!submissionId) {
       submissionId = crypto.randomUUID();
       localStorage.setItem(SUBMISSION_ID_KEY, submissionId);
     }
-
     setLoading(true);
-
-    // 最多嘗試 3 次，僅在網路錯誤時重試（4xx/5xx 不重試，避免無意義打後端）
     const MAX_ATTEMPTS = 3;
     const RETRY_DELAYS = [1500, 3000];
     let result = null;
-
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       if (attempt > 0) {
-        // 顯示非干擾性重試提示，讓客人知道系統在自動處理
         const t = translations[lang] || translations[DEFAULT_LANG];
         setRetryMessage(t.retryMsg || 'Network unstable — retrying...');
         await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS[attempt - 1]));
       }
-      result = await DB.insertRecord({
-        submissionId,
-        guests: guestData,
-        petCount,
-        checkIn: checkInDate,
-        checkOut: checkOutDate
-      });
-      // 非網路錯誤（含成功或服務器已拒絕）就不繼續重試
+      result = await DB.insertRecord({ submissionId, guests: guestData, petCount, checkIn: checkInDate, checkOut: checkOutDate });
       if (!result.networkError) break;
     }
-
     setRetryMessage('');
     setLoading(false);
-
     const t = translations[lang] || translations[DEFAULT_LANG];
-
-    // ── 失敗處理 ──────────────────────────────────────────────────────────────
     if (!result.ok) {
-      // 寫入本地失敗日誌，供現場人員手動追蹤
       try {
         const failLog = JSON.parse(localStorage.getItem(FAILED_SUBMISSIONS_LOG_KEY) || '[]');
         failLog.push({
-          submissionId,
-          timestamp: new Date().toISOString(),
-          guests: guestData.map((g) => ({
-            ...g,
-            passportPhoto: typeof g.passportPhoto === 'string' && g.passportPhoto.startsWith('data:image')
-              ? '[base64_omitted]'
-              : g.passportPhoto
-          })),
-          petCount,
-          checkIn: checkInDate,
-          checkOut: checkOutDate
+          submissionId, timestamp: new Date().toISOString(),
+          guests: guestData.map((g) => ({ ...g, passportPhoto: typeof g.passportPhoto === 'string' && g.passportPhoto.startsWith('data:image') ? '[base64_omitted]' : g.passportPhoto })),
+          petCount, checkIn: checkInDate, checkOut: checkOutDate
         });
         localStorage.setItem(FAILED_SUBMISSIONS_LOG_KEY, JSON.stringify(failLog));
-      } catch (e) {
-        console.error('[Submission] 無法寫入失敗日誌:', e);
-      }
-      console.warn('[Submission] 提交失敗，submissionId:', submissionId, '— 資料已儲存於 localStorage 失敗日誌');
-
-      // 標記待重試，讓客人重開頁面後仍能繼續嘗試
+      } catch (e) { console.error('[Submission] 無法寫入失敗日誌:', e); }
       localStorage.setItem(PENDING_RETRY_KEY, 'true');
       setHasPendingRetry(true);
-
-      // 顯示行內錯誤提示（非彈窗），不清除已填寫的資料
       setSubmitError(t.submitRetryMsg || 'Submission failed — please retry when your network is stable.');
       return false;
     }
-
-    // ── 成功 ─────────────────────────────────────────────────────────────────
-    // 清除待重試標記與錯誤訊息
     localStorage.removeItem(PENDING_RETRY_KEY);
     setHasPendingRetry(false);
     setSubmitError('');
-
     localStorage.setItem(CHECKIN_STORAGE_KEY, 'true');
     localStorage.setItem(PET_COUNT_STORAGE_KEY, petCount.toString());
     localStorage.setItem(CHECKIN_DATE_STORAGE_KEY, checkInDate);
     localStorage.setItem(CHECKOUT_DATE_STORAGE_KEY, checkOutDate);
-
-    setGuests((prevGuests) => {
-      const submittedIds = new Set(guestData.map((g) => g.id));
-      const mergedGuests = prevGuests.map((guest) => (
-        submittedIds.has(guest.id)
-          ? { ...guest, isEditable: false }
-          : guest
-      ));
-      // 存入 localStorage 前清除 base64 圖片，避免佔用大量空間
-      const guestsForStorage = mergedGuests.map((guest) => ({
-        ...guest,
-        passportPhoto: typeof guest.passportPhoto === 'string' && guest.passportPhoto.startsWith('data:image')
-          ? ''
-          : guest.passportPhoto
-      }));
-      localStorage.setItem(GUEST_STORAGE_KEY, JSON.stringify(guestsForStorage));
-      return mergedGuests;
-    });
+    const guestsForStorage = guestData.map((g) => ({ ...g, passportPhoto: typeof g.passportPhoto === 'string' && g.passportPhoto.startsWith('data:image') ? '' : g.passportPhoto }));
+    localStorage.setItem(GUEST_STORAGE_KEY, JSON.stringify(guestsForStorage));
+    setSavedRegistration({ guests: guestsForStorage, petCount, checkInDate, checkOutDate });
+    setGuests([createGuestTemplate('adult')]);
     setHasHistory(true);
-
     return true;
   };
 
-  // 新增：重置所有登記相關的狀態
+  // 開始新入住：重置表單，保留歷史記錄不清除
+  const startNewCheckin = () => {
+    setGuests([createGuestTemplate('adult')]);
+    setCurrentStep(0);
+    setIsCompleted(false);
+    setPetCount(0);
+    setCheckInDate('');
+    setCheckOutDate('');
+    setHasAgreed(false);
+    setSubmitError('');
+    localStorage.removeItem(SUBMISSION_ID_KEY);
+    localStorage.removeItem(PENDING_RETRY_KEY);
+    localStorage.removeItem(FAILED_SUBMISSIONS_LOG_KEY);
+    setHasPendingRetry(false);
+    setAppView('checkin');
+  };
+
   const resetCheckinProcess = () => {
     setGuests([createGuestTemplate('adult')]);
     setCurrentStep(0);
@@ -832,6 +883,9 @@ const App = () => {
     setHasPendingRetry(false);
     setSubmitError('');
     setHasHistory(false);
+    setSavedRegistration(null);
+    setAppView('landing');
+    setGuideNavStack([]);
   };
 
   if (view === 'admin') {
@@ -839,7 +893,7 @@ const App = () => {
       <AdminPage
         adminToken={adminToken}
         onAdminTokenChange={handleAdminTokenChange}
-        onExitAdmin={() => navigateTo('/')}
+        onExitAdmin={() => { navigateTo('/'); setAppView('landing'); setGuideNavStack([]); }}
         db={DB}
         defaultLang={DEFAULT_LANG}
         translations={translations}
@@ -858,7 +912,6 @@ const App = () => {
     );
   }
 
-  // 如果沒有選擇語言，則顯示語言選擇頁
   if (!lang) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 animate-in fade-in">
@@ -881,45 +934,142 @@ const App = () => {
     );
   }
 
+  if (appView === 'checkin') {
+    return (
+      <CheckinFlow
+        onSubmit={handleGuestSubmit}
+        isSubmitting={loading}
+        retryMessage={retryMessage}
+        submitError={submitError}
+        hasPendingRetry={hasPendingRetry}
+        lang={lang}
+        setLang={setLang}
+        currentStep={currentStep}
+        setCurrentStep={setCurrentStep}
+        isCompleted={isCompleted}
+        setIsCompleted={setIsCompleted}
+        guests={guests}
+        setGuests={setGuests}
+        petCount={petCount}
+        setPetCount={setPetCount}
+        checkInDate={checkInDate}
+        setCheckInDate={setCheckInDate}
+        checkOutDate={checkOutDate}
+        setCheckOutDate={setCheckOutDate}
+        hasAgreed={hasAgreed}
+        setHasAgreed={setHasAgreed}
+        hasHistory={hasHistory}
+        onAdminRequest={() => navigateTo('/admin')}
+        onGoHome={() => { setAppView('landing'); setIsCompleted(false); }}
+        onViewGuide={() => { setAppView('guide'); setGuideNavStack([]); setIsCompleted(false); }}
+        stepsConfig={stepsConfig}
+        completionTemplate={completionTemplate}
+        appSettings={appSettings}
+      />
+    );
+  }
+
+  if (appView === 'guide') {
+    return (
+      <GuideView
+        lang={lang}
+        setLang={setLang}
+        guideNavStack={guideNavStack}
+        guidePush={guidePush}
+        guidePop={guidePop}
+        stepsConfig={stepsConfig}
+        savedRegistration={savedRegistration}
+        hasHistory={hasHistory}
+        onGoHome={() => { setAppView('landing'); setGuideNavStack([]); }}
+        onAdminRequest={() => navigateTo('/admin')}
+      />
+    );
+  }
+
   return (
-    <GuestFlow
-      onSubmit={handleGuestSubmit}
-      isSubmitting={loading}
-      retryMessage={retryMessage}
-      submitError={submitError}
-      hasPendingRetry={hasPendingRetry}
+    <HomeLanding
       lang={lang}
       setLang={setLang}
-      currentStep={currentStep}
-      setCurrentStep={setCurrentStep}
-      isCompleted={isCompleted}
-      setIsCompleted={setIsCompleted}
-      guests={guests}
-      setGuests={setGuests}
-      petCount={petCount}
-      setPetCount={setPetCount}
-      checkInDate={checkInDate}
-      setCheckInDate={setCheckInDate}
-      checkOutDate={checkOutDate}
-      setCheckOutDate={setCheckOutDate}
-      hasAgreed={hasAgreed}
-      setHasAgreed={setHasAgreed}
       hasHistory={hasHistory}
+      stepsConfig={stepsConfig}
+      hasPendingRetry={hasPendingRetry}
+      onStartCheckin={startNewCheckin}
+      onViewHistory={() => { setAppView('guide'); setGuideNavStack([]); }}
+      onQuickNav={(groupId) => { setAppView('guide'); setGuideNavStack([{ type: '__home__' }, { type: 'group', groupId }]); }}
       onAdminRequest={() => navigateTo('/admin')}
-      onStartNewCheckin={resetCheckinProcess}
     />
   );
 };
 
 // ----------------------------------------------------------------------
-// 訪客端流程
+// HomeLanding
 // ----------------------------------------------------------------------
-const GuestFlow = ({
-  onSubmit,
-  isSubmitting,
-  retryMessage,
-  submitError,
-  hasPendingRetry,
+const HomeLanding = ({ lang, setLang, hasHistory, stepsConfig, hasPendingRetry, onStartCheckin, onViewHistory, onQuickNav, onAdminRequest }) => {
+  const t = translations[lang] || translations[DEFAULT_LANG];
+  const rawSteps = stepsConfig.length ? stepsConfig : buildDefaultSteps(lang || DEFAULT_LANG);
+  const welcomeStep = rawSteps.find(s => s.id === 'welcome');
+  const welcomeFallback = getBuiltinStepFallback(lang, 'welcome');
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-start p-6 animate-in fade-in">
+      <div className="w-full max-w-sm space-y-6 pt-8">
+        <div className="flex justify-between items-center">
+          <button onClick={() => setLang(null)} className="flex items-center gap-2 text-slate-400 hover:text-slate-600 text-sm">
+            <Languages className="w-4 h-4" />
+            <span>{t.changeLang}</span>
+          </button>
+          <button onClick={onAdminRequest} className="p-2 text-slate-300 hover:text-slate-500">
+            <Lock className="w-4 h-4" />
+          </button>
+        </div>
+        {(welcomeStep?.content || welcomeFallback) && (
+          <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
+            <StepContent content={welcomeStep?.content || welcomeFallback} fallback="" />
+          </div>
+        )}
+        <div className="space-y-3">
+          <button onClick={onStartCheckin} className="w-full flex items-center justify-between p-5 bg-slate-900 text-white rounded-2xl shadow-lg hover:bg-slate-800 transition-all">
+            <div className="flex items-center gap-3">
+              <UserPlus className="w-6 h-6" />
+              <span className="font-bold">{t.newCheckin}</span>
+            </div>
+            <ChevronRight className="w-5 h-5 opacity-60" />
+          </button>
+          {hasHistory && (
+            <button onClick={onViewHistory} className="w-full flex items-center justify-between p-5 bg-white text-slate-900 rounded-2xl border border-slate-200 shadow-sm hover:bg-slate-50 transition-all">
+              <div className="flex items-center gap-3">
+                <ClipboardList className="w-6 h-6 text-slate-500" />
+                <span className="font-bold">{t.viewHistory}</span>
+              </div>
+              <ChevronRight className="w-5 h-5 text-slate-300" />
+            </button>
+          )}
+        </div>
+        {hasHistory && (
+          <div className="space-y-3">
+            <p className="text-xs font-bold text-slate-400 uppercase px-1">{t.quickGuide}</p>
+            <div className="grid grid-cols-2 gap-3">
+              <button onClick={() => onQuickNav('safety')} className="flex flex-col items-center gap-2 p-4 bg-red-50 text-red-700 rounded-2xl border border-red-100 hover:bg-red-100 transition-all">
+                <Shield className="w-6 h-6" />
+                <span className="text-xs font-bold">{t.safetyGroup}</span>
+              </button>
+              <button onClick={() => onQuickNav('equipment')} className="flex flex-col items-center gap-2 p-4 bg-blue-50 text-blue-700 rounded-2xl border border-blue-100 hover:bg-blue-100 transition-all">
+                <Wrench className="w-6 h-6" />
+                <span className="text-xs font-bold">{t.equipmentGroup}</span>
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ----------------------------------------------------------------------
+// CheckinFlow（登記表單，5 步驟）
+// ----------------------------------------------------------------------
+const CheckinFlow = ({
+  onSubmit, isSubmitting, retryMessage, submitError, hasPendingRetry,
   lang, setLang,
   currentStep, setCurrentStep,
   isCompleted, setIsCompleted,
@@ -930,7 +1080,9 @@ const GuestFlow = ({
   hasAgreed, setHasAgreed,
   hasHistory,
   onAdminRequest,
-  onStartNewCheckin
+  onGoHome,
+  onViewGuide,
+  stepsConfig, completionTemplate, appSettings
 }) => {
   const [isLookingUpZip, setIsLookingUpZip] = useState(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -942,58 +1094,32 @@ const GuestFlow = ({
     }
   }, [guests.length, setGuests]);
 
-  const [stepsConfig, setStepsConfig] = useState([]);
-  const [completionTemplate, setCompletionTemplate] = useState(() => buildDefaultCompletionTemplate(lang || DEFAULT_LANG));
-  const [appSettings, setAppSettings] = useState(DEFAULT_APP_SETTINGS);
+  const t = translations[lang || DEFAULT_LANG];
+  const countryOptions = getCountryOptions(lang, appSettings.taiwanNamingMode);
+
+  const rawSteps = stepsConfig.length ? stepsConfig : buildDefaultSteps(lang || DEFAULT_LANG);
+  const steps = CHECKIN_STEP_IDS
+    .map(id => rawSteps.find(s => s.id === id))
+    .filter(s => s && s.enabled !== false);
 
   useEffect(() => {
-    let isActive = true;
-    if (!lang) return () => { };
-
-    DB.getTemplateBundle(lang)
-      .then((bundle) => {
-        if (!isActive) return;
-        const normalizedSteps = normalizeSteps(bundle?.steps?.data, buildDefaultSteps(lang));
-        const normalizedCompletionTemplate = normalizeCompletionTemplate(
-          bundle?.completionTemplate?.data,
-          buildDefaultCompletionTemplate(lang)
-        );
-        setAppSettings({
-          ...DEFAULT_APP_SETTINGS,
-          ...(bundle?.appSettings || {})
-        });
-        setStepsConfig(normalizedSteps);
-        setCompletionTemplate(normalizedCompletionTemplate);
-        saveSteps(lang, normalizedSteps);
-        saveCompletionTemplate(lang, normalizedCompletionTemplate);
-      })
-      .catch(() => {
-        if (!isActive) return;
-        const storedSteps = loadSteps(lang);
-        const storedCompletionTemplate = loadCompletionTemplate(lang);
-        setAppSettings(DEFAULT_APP_SETTINGS);
-        setStepsConfig(storedSteps || buildDefaultSteps(lang));
-        setCompletionTemplate(storedCompletionTemplate || buildDefaultCompletionTemplate(lang));
-      });
-
-    return () => {
-      isActive = false;
-    };
-  }, [lang]);
+    if (steps.length && currentStep >= steps.length) setCurrentStep(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [steps.length, currentStep, setCurrentStep]);
 
   useEffect(() => {
-    const active = stepsConfig.filter(step => step.enabled !== false);
-    if (active.length && currentStep >= active.length) {
-      setCurrentStep(0);
+    if (hasPendingRetry && !hasHistory && steps.length > 0) {
+      setCurrentStep(steps.length - 1);
     }
-  }, [stepsConfig, currentStep, setCurrentStep]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasPendingRetry, hasHistory, steps.length]);
 
   const addGuest = () => setGuests((prevGuests) => [...prevGuests, createGuestTemplate('adult')]);
   const removeGuest = (id) => setGuests((prevGuests) => prevGuests.filter((guest) => guest.id !== id));
   const updateGuest = (id, field, value) => setGuests((prevGuests) => prevGuests.map((guest) => (guest.id === id ? { ...guest, [field]: value } : guest)));
   const updateCheckInDate = (value) => setCheckInDate(value);
   const updateCheckOutDate = (value) => setCheckOutDate(value);
-  const countryOptions = getCountryOptions(lang, appSettings.taiwanNamingMode);
+  const isRegValid = () => isRegistrationValid(guests);
 
   const uploadAndOcrPassport = async (base64Image, options = { strict: true }) => {
     const ocrResult = await DB.recognizePassport(base64Image);
@@ -1073,71 +1199,23 @@ const GuestFlow = ({
     finally { setIsLookingUpZip(null); }
   };
 
-  const isRegValid = () => isRegistrationValid(guests);
-
-  const handleNext = async () => {
-    const activeSteps = steps.length;
-    const isLastStep = currentStep === activeSteps - 1;
-    const pendingGuests = guests.filter((guest) => guest.isEditable !== false);
-
-    // 在「住客信息登記」步驟點擊下一步時提交“尚未提交”的住客
-    if (stepConfig?.id === 'registration') {
-      const success = await onSubmit(pendingGuests);
-      if (!success) {
-        return;
-      }
-
-      if (isLastStep) {
-        setIsCompleted(true);
-      } else {
-        setCurrentStep(currentStep + 1);
-      }
-      return;
-    }
-
-    if (!isLastStep) {
-      setCurrentStep(currentStep + 1);
-      return;
-    }
-
-    const requiresAgreement = steps.some((step) => step.id === 'rules');
-    if (requiresAgreement && !hasAgreed) {
-      return;
-    }
-
-    setIsCompleted(true);
-  };
-
-  if (!lang) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 animate-in fade-in">
-        <div className="w-full max-w-sm space-y-8 text-center">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-white rounded-2xl shadow-sm mb-4 border border-slate-100">
-            <Languages className="w-8 h-8 text-slate-900" />
-          </div>
-          <h1 className="text-2xl font-bold text-slate-900">Choose Language / 選擇語言</h1>
-          <div className="grid grid-cols-1 gap-3">
-            {LANG_OPTIONS.map((option) => (
-              <button key={option.value} onClick={() => setLang(option.value)} className="group flex items-center justify-between p-4 bg-white hover:bg-slate-900 rounded-2xl border border-slate-100 shadow-sm transition-all duration-300">
-                <p className="font-bold text-slate-900 group-hover:text-white">{option.label}</p>
-                <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-white" />
-              </button>
-            ))}
-          </div>
-          <button onClick={onAdminRequest} className="absolute bottom-6 right-6 p-2 text-slate-300 hover:text-slate-500"><Lock className="w-4 h-4" /></button>
-        </div>
-      </div>
-    );
-  }
-
-  const t = translations[lang || DEFAULT_LANG];
-  const activeSteps = stepsConfig.length
-    ? stepsConfig.filter(step => step.enabled !== false)
-    : buildDefaultSteps(lang || DEFAULT_LANG);
-  const steps = activeSteps.length ? activeSteps : buildDefaultSteps(lang || DEFAULT_LANG);
   const stepConfig = steps[currentStep];
   const hasContent = Boolean(stepConfig?.content?.trim());
   const builtinFallbackContent = stepConfig?.type === 'builtin' ? getBuiltinStepFallback(lang, stepConfig?.id) : '';
+
+  const handleNext = async () => {
+    const isLastStep = currentStep === steps.length - 1;
+    const pendingGuests = guests.filter((guest) => guest.isEditable !== false);
+    if (stepConfig?.id === 'registration') {
+      const success = await onSubmit(pendingGuests);
+      if (!success) return;
+      if (isLastStep) { setIsCompleted(true); } else { setCurrentStep(currentStep + 1); }
+      return;
+    }
+    if (!isLastStep) { setCurrentStep(currentStep + 1); return; }
+    if (stepConfig?.id === 'rules' && !hasAgreed) return;
+    setIsCompleted(true);
+  };
 
   if (isCompleted) {
     return (
@@ -1147,67 +1225,46 @@ const GuestFlow = ({
         <p className="text-slate-500 mb-6">{completionTemplate.subtitle}</p>
         <div className="bg-slate-900 text-white p-8 rounded-[2rem] shadow-xl w-full max-w-sm">
           <div className="flex items-center gap-3">
-            <Wifi className="w-7 h-7 text-white-500" />
+            <Wifi className="w-7 h-7" />
             <div className="text-md text-left step-content text-white" dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(completionTemplate.cardHtml) }} />
           </div>
         </div>
         <div className="mt-8 p-6 bg-white rounded-2xl border border-slate-100 max-w-sm w-full space-y-4 text-left">
-          <div className="flex items-start gap-3"><Home className="w-5 h-5 text-blue-500 mt-1" />
+          <div className="flex items-start gap-3">
+            <Home className="w-5 h-5 text-blue-500 mt-1" />
             <div className="text-sm step-content" dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(completionTemplate.extraHtml) }} />
           </div>
+        </div>
+        <div className="mt-6 w-full max-w-sm space-y-3">
+          <button onClick={onViewGuide} className="w-full flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-200 shadow-sm hover:bg-slate-50 transition-all">
+            <div className="flex items-center gap-3">
+              <BookOpen className="w-5 h-5 text-slate-500" />
+              <span className="font-bold text-slate-900">{t.viewStayGuide}</span>
+            </div>
+            <ChevronRight className="w-5 h-5 text-slate-300" />
+          </button>
+          <button onClick={onGoHome} className="w-full flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-200 shadow-sm hover:bg-slate-50 transition-all">
+            <div className="flex items-center gap-3">
+              <Home className="w-5 h-5 text-slate-500" />
+              <span className="font-bold text-slate-900">{t.backToHome}</span>
+            </div>
+            <ChevronRight className="w-5 h-5 text-slate-300" />
+          </button>
         </div>
       </div>
     );
   }
 
-  const getStepIcon = (id) => {
-    switch (id) {
-      case 'welcome': return <BellRing className="w-6 h-6" />;
-      case 'count': return <Users className="w-6 h-6" />;
-      case 'stayDuration': return <Calendar className="w-6 h-6" />;
-      case 'privacy': return <Lock className="w-6 h-6" />;
-      case 'registration': return <UserCheck className="w-6 h-6" />;
-      case 'emergency': return <AlertTriangle className="w-6 h-6" />;
-      case 'child': return <Dog className="w-6 h-6" />;
-      case 'outdoor': return <MapPin className="w-6 h-6" />;
-      case 'water': return <Flame className="w-6 h-6" />;
-      case 'trash': return <Trash2 className="w-6 h-6" />;
-      case 'laundry': return <Wrench className="w-6 h-6" />;
-      case 'rules': return <UserCheck className="w-6 h-6" />;
-      default: return <Info className="w-6 h-6" />;
-    }
-  };
-
-  // 有待重試提交時，載入完成後自動跳至最後一步（規定確認步驟）
-  useEffect(() => {
-    if (hasPendingRetry && !hasHistory && steps.length > 0) {
-      setCurrentStep(steps.length - 1);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasPendingRetry, hasHistory, steps.length]);
-
-  const handleStepClick = (index) => {
-    const allowedBeforeCompletion = new Set(['welcome', 'count', 'registration']);
-    const targetStepId = steps[index]?.id;
-    const canAccess = hasHistory || hasPendingRetry || allowedBeforeCompletion.has(targetStepId);
-
-    if (canAccess) {
-      setCurrentStep(index);
-      setIsMenuOpen(false);
-    } else {
-      alert('请先完成登记步骤 (Please complete the registration step first)');
-    }
-  };
+  if (!stepConfig) return null;
 
   const menuContent = (
-    <div className="p-4 space-y-2 h-full overflow-y-auto overscroll-contain [webkit-overflow-scrolling:touch]">
+    <div className="p-4 space-y-2 h-full overflow-y-auto overscroll-contain">
       <h3 className="text-sm font-bold px-4 text-slate-500">{t.guideTitle}</h3>
       {steps.map((step, index) => (
         <button
           key={step.id}
-          onClick={() => handleStepClick(index)}
+          onClick={() => { setCurrentStep(index); setIsMenuOpen(false); }}
           className={`w-full flex items-center gap-3 p-3 rounded-lg text-left transition-colors ${currentStep === index ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'}`}
-          disabled={!hasHistory && !hasPendingRetry && !['welcome', 'count', 'registration'].includes(step.id)}
         >
           {getStepIcon(step.id)}
           <span className="text-sm font-semibold">{step.title}</span>
@@ -1218,12 +1275,10 @@ const GuestFlow = ({
         <Languages className="w-6 h-6" />
         <span className="text-sm font-semibold">{t.changeLang}</span>
       </button>
-      {hasHistory && (
-        <button onClick={onStartNewCheckin} className="w-full flex items-center gap-3 p-3 rounded-lg text-rose-600 hover:bg-rose-50">
-          <UserPlus className="w-6 h-6" />
-          <span className="text-sm font-semibold">{t.startNewCheckin}</span>
-        </button>
-      )}
+      <button onClick={onGoHome} className="w-full flex items-center gap-3 p-3 rounded-lg text-slate-700 hover:bg-slate-100">
+        <Home className="w-6 h-6" />
+        <span className="text-sm font-semibold">{t.backToHome}</span>
+      </button>
     </div>
   );
 
@@ -1511,7 +1566,199 @@ const GuestFlow = ({
           labels={t}
         />
       </div>
-    </div >
+    </div>
+  );
+};
+
+// ----------------------------------------------------------------------
+// GuideView（住宿指南，導航棧驅動）
+// ----------------------------------------------------------------------
+const GuideView = ({ lang, guideNavStack, guidePush, guidePop, stepsConfig, savedRegistration, hasHistory, onGoHome, onAdminRequest }) => {
+  const t = translations[lang] || translations[DEFAULT_LANG];
+  const rawSteps = stepsConfig.length ? stepsConfig : buildDefaultSteps(lang || DEFAULT_LANG);
+  const getStep = (id) => rawSteps.find(s => s.id === id);
+  const current = guideNavStack[guideNavStack.length - 1] ?? null;
+  const prevEntry = guideNavStack[guideNavStack.length - 2] ?? null;
+
+  // Back from group sub-list: if previous stack entry is __home__ sentinel, go home instead of directory
+  const handleGroupBack = () => {
+    if (prevEntry?.type === '__home__') { onGoHome(); } else { guidePop(); }
+  };
+
+  if (current?.type === 'child') {
+    const groupStep = getStep(current.groupId);
+    const childStep = groupStep?.children?.find(c => c.id === current.childId);
+    const fallback = getBuiltinStepFallback(lang, current.childId);
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col">
+        <div className="bg-white border-b border-slate-200 p-4 flex items-center gap-3">
+          <button onClick={guidePop} className="p-2 text-slate-500 hover:text-slate-900"><ArrowLeft className="w-5 h-5" /></button>
+          <div className="flex items-center gap-2">
+            {getStepIcon(current.childId)}
+            <h2 className="font-bold text-slate-900">{childStep?.title || current.childId}</h2>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 md:p-8">
+          <div className="max-w-3xl mx-auto bg-white p-6 md:p-10 rounded-2xl border border-slate-100 shadow-sm">
+            {(childStep?.content || fallback)
+              ? <StepContent content={childStep?.content || fallback} fallback="" />
+              : <p className="text-sm text-slate-400">{t.noContent}</p>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (current?.type === 'solo') {
+    const soloStep = getStep(current.stepId);
+    const fallback = getBuiltinStepFallback(lang, current.stepId);
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col">
+        <div className="bg-white border-b border-slate-200 p-4 flex items-center gap-3">
+          <button onClick={guidePop} className="p-2 text-slate-500 hover:text-slate-900"><ArrowLeft className="w-5 h-5" /></button>
+          <div className="flex items-center gap-2">
+            {getStepIcon(current.stepId)}
+            <h2 className="font-bold text-slate-900">{soloStep?.title || current.stepId}</h2>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 md:p-8">
+          <div className="max-w-3xl mx-auto bg-white p-6 md:p-10 rounded-2xl border border-slate-100 shadow-sm">
+            {(soloStep?.content || fallback)
+              ? <StepContent content={soloStep?.content || fallback} fallback="" />
+              : <p className="text-sm text-slate-400">{t.noContent}</p>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (current?.type === 'group') {
+    const groupStep = getStep(current.groupId);
+    const children = (groupStep?.children || []).filter(c => c.enabled !== false);
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col">
+        <div className="bg-white border-b border-slate-200 p-4 flex items-center gap-3">
+          <button onClick={handleGroupBack} className="p-2 text-slate-500 hover:text-slate-900"><ArrowLeft className="w-5 h-5" /></button>
+          <div className="flex items-center gap-2 flex-1">
+            {getStepIcon(current.groupId)}
+            <h2 className="font-bold text-slate-900">{groupStep?.title || current.groupId}</h2>
+          </div>
+          <button onClick={onAdminRequest} className="p-2 text-slate-300 hover:text-slate-500"><Lock className="w-4 h-4" /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 md:p-8">
+          <div className="max-w-2xl mx-auto space-y-3">
+            {children.length > 0 ? children.map(child => (
+              <button key={child.id} onClick={() => guidePush({ type: 'child', groupId: current.groupId, childId: child.id })}
+                className="w-full flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm hover:bg-slate-50 transition-all">
+                <div className="flex items-center gap-3">
+                  {getStepIcon(child.id)}
+                  <span className="font-semibold text-slate-900">{child.title}</span>
+                </div>
+                <ChevronRight className="w-5 h-5 text-slate-300" />
+              </button>
+            )) : <p className="text-sm text-slate-400 text-center py-8">{t.noContent}</p>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Directory view (stack empty)
+  const safetyStep = getStep('safety');
+  const equipmentStep = getStep('equipment');
+  const trashStep = getStep('trash');
+  const rulesStep = getStep('rules');
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col">
+      <div className="bg-white border-b border-slate-200 p-4 flex items-center justify-between">
+        <button onClick={onGoHome} className="flex items-center gap-2 text-slate-500 hover:text-slate-900">
+          <ArrowLeft className="w-5 h-5" />
+          <span className="text-sm font-semibold">{t.backToHome}</span>
+        </button>
+        <h1 className="font-bold text-slate-900">{t.viewGuide}</h1>
+        <button onClick={onAdminRequest} className="p-2 text-slate-300 hover:text-slate-500"><Lock className="w-4 h-4" /></button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-4 md:p-8">
+        <div className="max-w-2xl mx-auto space-y-4">
+          {hasHistory && savedRegistration && (
+            <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-5 space-y-3">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                <h2 className="font-bold text-emerald-800">{t.registeredData}</h2>
+              </div>
+              {(savedRegistration.checkInDate || savedRegistration.checkOutDate) && (
+                <p className="text-xs text-emerald-600 font-mono">
+                  {savedRegistration.checkInDate && `${t.checkIn}: ${savedRegistration.checkInDate}`}
+                  {savedRegistration.checkInDate && savedRegistration.checkOutDate && '  →  '}
+                  {savedRegistration.checkOutDate && `${t.checkOut}: ${savedRegistration.checkOutDate}`}
+                </p>
+              )}
+              <div className="space-y-2">
+                {(savedRegistration.guests || []).map((g, i) => (
+                  <div key={g.id || i} className="bg-white rounded-xl p-3 border border-emerald-100 text-xs text-slate-700 space-y-1">
+                    <p className="font-bold text-slate-900">{g.name || '—'} <span className="font-normal text-slate-400">· {g.type === 'child' ? (t.guestTypeMinor || '未成年') : (t.guestTypeAdult || '成人')}</span></p>
+                    {g.nationality && <p className="text-slate-500">{t.regFormNation}: {g.nationality}</p>}
+                    {g.passportNumber && <p className="font-mono text-slate-500">{t.regFormPass}: {g.passportNumber}</p>}
+                    {g.phone && <p className="text-slate-500">{t.regFormPhone}: {g.phone}</p>}
+                    {g.address && <p className="text-slate-500 truncate">{t.regFormAddr}: {g.address}</p>}
+                  </div>
+                ))}
+                {savedRegistration.petCount > 0 && (
+                  <p className="text-xs text-emerald-600">{t.petLabel}: {savedRegistration.petCount}</p>
+                )}
+              </div>
+            </div>
+          )}
+          {safetyStep && (
+            <button onClick={() => guidePush({ type: 'group', groupId: 'safety' })}
+              className="w-full flex items-center justify-between p-5 bg-red-50 text-red-800 rounded-2xl border border-red-100 shadow-sm hover:bg-red-100 transition-all">
+              <div className="flex items-center gap-3">
+                <Shield className="w-6 h-6" />
+                <div className="text-left">
+                  <p className="font-bold">{safetyStep.title}</p>
+                  <p className="text-xs text-red-500">{(safetyStep.children || []).filter(c => c.enabled !== false).length} 項目</p>
+                </div>
+              </div>
+              <ChevronRight className="w-5 h-5 opacity-60" />
+            </button>
+          )}
+          {equipmentStep && (
+            <button onClick={() => guidePush({ type: 'group', groupId: 'equipment' })}
+              className="w-full flex items-center justify-between p-5 bg-blue-50 text-blue-800 rounded-2xl border border-blue-100 shadow-sm hover:bg-blue-100 transition-all">
+              <div className="flex items-center gap-3">
+                <Wrench className="w-6 h-6" />
+                <div className="text-left">
+                  <p className="font-bold">{equipmentStep.title}</p>
+                  <p className="text-xs text-blue-500">{(equipmentStep.children || []).filter(c => c.enabled !== false).length} 項目</p>
+                </div>
+              </div>
+              <ChevronRight className="w-5 h-5 opacity-60" />
+            </button>
+          )}
+          {trashStep && (
+            <button onClick={() => guidePush({ type: 'solo', stepId: 'trash' })}
+              className="w-full flex items-center justify-between p-5 bg-white rounded-2xl border border-slate-100 shadow-sm hover:bg-slate-50 transition-all">
+              <div className="flex items-center gap-3">
+                <Trash2 className="w-6 h-6 text-slate-500" />
+                <span className="font-semibold text-slate-900">{trashStep.title}</span>
+              </div>
+              <ChevronRight className="w-5 h-5 text-slate-300" />
+            </button>
+          )}
+          {rulesStep && (
+            <button onClick={() => guidePush({ type: 'solo', stepId: 'rules' })}
+              className="w-full flex items-center justify-between p-5 bg-white rounded-2xl border border-slate-100 shadow-sm hover:bg-slate-50 transition-all">
+              <div className="flex items-center gap-3">
+                <UserCheck className="w-6 h-6 text-slate-500" />
+                <span className="font-semibold text-slate-900">{rulesStep.title}</span>
+              </div>
+              <ChevronRight className="w-5 h-5 text-slate-300" />
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
   );
 };
 

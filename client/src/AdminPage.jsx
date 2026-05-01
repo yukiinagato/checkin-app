@@ -21,7 +21,9 @@ import {
   Globe,
   Trash2,
   RotateCcw,
-  ExternalLink
+  ExternalLink,
+  GripVertical,
+  LogIn
 } from 'lucide-react';
 import { DEFAULT_APP_SETTINGS, TAIWAN_NAMING_MODE_OPTIONS, getCountryName } from './countryOptions';
 
@@ -455,6 +457,13 @@ const AdminDashboard = ({
   const [appSettings, setAppSettings] = useState(DEFAULT_APP_SETTINGS);
   const [settingsSaved, setSettingsSaved] = useState(false);
 
+  // 拖曳狀態
+  const [dragItem, setDragItem] = useState(null);
+  // { kind: 'step', id, index } | { kind: 'child', id, parentId, index }
+  const [dropTarget, setDropTarget] = useState(null);
+  // { kind: 'between', index } | { kind: 'intoGroup', groupId } | { kind: 'childBetween', groupId, index }
+  const dragCounter = useRef(0);
+
   const missingBuiltinSteps = useMemo(() => {
     const defaults = buildDefaultSteps(stepLang);
     const existingIds = new Set(editableSteps.map(s => s.id));
@@ -638,6 +647,66 @@ const AdminDashboard = ({
 
   const removeCustomStep = (id) => {
     setEditableSteps((prev) => prev.filter((step) => step.id !== id));
+    setStepsSaved(false);
+  };
+
+  // 刪除任何步驟（不限 custom）
+  const removeStep = (id) => {
+    setEditableSteps((prev) => prev.filter((step) => step.id !== id));
+    setStepsSaved(false);
+  };
+
+  // 拖曳排序頂層步驟
+  const reorderSteps = (fromIdx, toIdx) => {
+    if (fromIdx === toIdx) return;
+    setEditableSteps((prev) => {
+      const arr = [...prev];
+      const [item] = arr.splice(fromIdx, 1);
+      arr.splice(toIdx, 0, item);
+      return arr;
+    });
+    setStepsSaved(false);
+  };
+
+  // 將頂層步驟移入群組成為子項目
+  const moveStepToGroup = (stepId, groupId) => {
+    setEditableSteps((prev) => {
+      const step = prev.find((s) => s.id === stepId);
+      if (!step || step.id === groupId || step.type === 'group') return prev;
+      const child = { id: step.id, title: step.title || '', content: step.content || '', enabled: step.enabled !== false };
+      return prev
+        .filter((s) => s.id !== stepId)
+        .map((s) => s.id !== groupId ? s : { ...s, children: [...(s.children || []), child] });
+    });
+    setStepsSaved(false);
+  };
+
+  // 將群組子項目提升回頂層
+  const promoteChildToTop = (groupId, childId) => {
+    setEditableSteps((prev) => {
+      const group = prev.find((s) => s.id === groupId);
+      const child = group?.children?.find((c) => c.id === childId);
+      if (!child) return prev;
+      const newStep = { ...child, type: 'custom', subtitle: '' };
+      const withoutChild = prev.map((s) => s.id !== groupId ? s : { ...s, children: (s.children || []).filter((c) => c.id !== childId) });
+      const groupIdx = withoutChild.findIndex((s) => s.id === groupId);
+      const result = [...withoutChild];
+      result.splice(groupIdx + 1, 0, newStep);
+      return result;
+    });
+    setStepsSaved(false);
+  };
+
+  // 拖曳排序群組子項目
+  const reorderGroupChildren = (groupId, fromIdx, toIdx) => {
+    if (fromIdx === toIdx) return;
+    setEditableSteps((prev) => prev.map((s) => {
+      if (s.id !== groupId) return s;
+      const children = [...(s.children || [])];
+      const [item] = children.splice(fromIdx, 1);
+      children.splice(toIdx, 0, item);
+      return { ...s, children };
+    }));
     setStepsSaved(false);
   };
 
@@ -1049,110 +1118,190 @@ const AdminDashboard = ({
               </div>
             </div>
 
-            <div className="space-y-4">
+            <div className="space-y-0">
+              {/* 頂部 drop zone（插入到最前面） */}
+              <DropZone
+                active={dropTarget?.kind === 'between' && dropTarget.index === 0}
+                onDragOver={() => setDropTarget({ kind: 'between', index: 0 })}
+                onDragLeave={() => setDropTarget(null)}
+                onDrop={() => {
+                  if (dragItem?.kind === 'step') reorderSteps(dragItem.index, 0);
+                  setDragItem(null); setDropTarget(null);
+                }}
+              />
               {editableSteps.map((step, index) => (
-                <div key={step.id} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
-                  {step.type === 'group' ? (
-                    <>
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs font-bold text-slate-400 uppercase">Group {index + 1}</span>
-                          <span className="text-[10px] px-2 py-1 rounded-full bg-purple-50 text-purple-600">Group</span>
-                        </div>
-                        <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
-                          <input type="checkbox" checked={step.enabled !== false} onChange={() => toggleStepEnabled(step.id)} />
-                          啟用
-                        </label>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase">标题</label>
-                          <input type="text" value={step.title} onChange={(e) => updateStepField(step.id, 'title', e.target.value)} className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm" />
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase">副标题</label>
-                          <input type="text" value={step.subtitle} onChange={(e) => updateStepField(step.id, 'subtitle', e.target.value)} className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm" />
-                        </div>
-                      </div>
-                      <div className="border-t border-slate-100 pt-4 space-y-3">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase">子項目 ({(step.children || []).length})</p>
-                        {(step.children || []).map((child, ci) => (
-                          <div key={child.id} className="bg-slate-50 rounded-xl border border-slate-100 p-4 space-y-3">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] font-mono text-slate-400">#{ci + 1} · {child.id}</span>
-                              <div className="flex items-center gap-3">
-                                <label className="flex items-center gap-2 text-xs text-slate-600">
-                                  <input type="checkbox" checked={child.enabled !== false} onChange={() => toggleGroupChildEnabled(step.id, child.id)} />
-                                  啟用
-                                </label>
-                                <button onClick={() => removeGroupChild(step.id, child.id)} className="text-rose-500 text-xs font-bold">移除</button>
-                              </div>
-                            </div>
-                            <div>
-                              <label className="text-[10px] font-bold text-slate-400 uppercase">子項標題</label>
-                              <input type="text" value={child.title} onChange={(e) => updateGroupChild(step.id, child.id, 'title', e.target.value)} className="w-full mt-1 p-2.5 rounded-lg border border-slate-200 text-sm bg-white" />
-                            </div>
-                            <div>
-                              <label className="text-[10px] font-bold text-slate-400 uppercase">內容編輯</label>
-                              <div className="mt-2">
-                                <RichTextEditor value={child.content} onChange={(value) => updateGroupChild(step.id, child.id, 'content', value)} placeholder="输入子项目内容..." />
-                              </div>
-                            </div>
-                            <div className="step-content-surface">
-                              <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">預覽</p>
-                              <StepContent content={child.content} fallback={stepLangText.customStepEmpty} />
-                            </div>
+                <div key={step.id}>
+                  {/* 每個步驟卡片 */}
+                  <div
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.effectAllowed = 'move';
+                      dragCounter.current = 0;
+                      setDragItem({ kind: 'step', id: step.id, index });
+                    }}
+                    onDragEnd={() => { setDragItem(null); setDropTarget(null); dragCounter.current = 0; }}
+                    className={`bg-white border rounded-2xl p-5 shadow-sm space-y-4 transition-opacity ${dragItem?.kind === 'step' && dragItem.id === step.id ? 'opacity-40' : 'opacity-100'} ${dropTarget?.kind === 'intoGroup' && dropTarget.groupId === step.id ? 'border-emerald-400 ring-2 ring-emerald-200' : 'border-slate-200'}`}
+                  >
+                    {step.type === 'group' ? (
+                      <>
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <span className="cursor-grab text-slate-300 hover:text-slate-500 active:cursor-grabbing touch-none"><GripVertical className="w-4 h-4" /></span>
+                            <span className="text-xs font-bold text-slate-400 uppercase">Group {index + 1}</span>
+                            <span className="text-[10px] px-2 py-1 rounded-full bg-purple-50 text-purple-600">Group</span>
                           </div>
-                        ))}
-                        <button onClick={() => addGroupChild(step.id)} className="w-full py-2.5 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 hover:text-slate-700 text-sm font-bold transition-all">
-                          + 新增子項目
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs font-bold text-slate-400 uppercase">Step {index + 1}</span>
-                          <span className={`text-[10px] px-2 py-1 rounded-full ${step.type === 'custom' ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-500'}`}>
-                            {step.type === 'custom' ? 'Custom' : 'Built-in'}
-                          </span>
+                          <div className="flex items-center gap-3">
+                            <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                              <input type="checkbox" checked={step.enabled !== false} onChange={() => toggleStepEnabled(step.id)} />
+                              啟用
+                            </label>
+                            <button onClick={() => { if (window.confirm(`確認刪除步驟「${step.title || step.id}」？`)) removeStep(step.id); }} className="p-1 text-rose-400 hover:text-rose-600" title="刪除此步驟"><Trash2 className="w-4 h-4" /></button>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-3">
-                          <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
-                            <input type="checkbox" checked={step.enabled !== false} onChange={() => toggleStepEnabled(step.id)} />
-                            啟用
-                          </label>
-                          {step.type === 'custom' && (
-                            <button onClick={() => removeCustomStep(step.id)} className="text-rose-500 text-xs font-bold">移除</button>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase">标题</label>
+                            <input type="text" value={step.title} onChange={(e) => updateStepField(step.id, 'title', e.target.value)} className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm" />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase">副标题</label>
+                            <input type="text" value={step.subtitle} onChange={(e) => updateStepField(step.id, 'subtitle', e.target.value)} className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm" />
+                          </div>
+                        </div>
+                        <div className="border-t border-slate-100 pt-4 space-y-3">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase">子項目 ({(step.children || []).length})</p>
+                          {/* 群組子項目可拖曳排序 */}
+                          {(step.children || []).map((child, ci) => (
+                            <div key={child.id}>
+                              <ChildDropZone
+                                active={dropTarget?.kind === 'childBetween' && dropTarget.groupId === step.id && dropTarget.index === ci}
+                                onDragOver={() => setDropTarget({ kind: 'childBetween', groupId: step.id, index: ci })}
+                                onDragLeave={() => setDropTarget(null)}
+                                onDrop={() => {
+                                  if (dragItem?.kind === 'child' && dragItem.parentId === step.id) reorderGroupChildren(step.id, dragItem.index, ci);
+                                  setDragItem(null); setDropTarget(null);
+                                }}
+                              />
+                              <div
+                                draggable
+                                onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; e.stopPropagation(); setDragItem({ kind: 'child', id: child.id, parentId: step.id, index: ci }); }}
+                                onDragEnd={() => { setDragItem(null); setDropTarget(null); }}
+                                className={`bg-slate-50 rounded-xl border border-slate-100 p-4 space-y-3 transition-opacity ${dragItem?.kind === 'child' && dragItem.id === child.id ? 'opacity-40' : 'opacity-100'}`}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <span className="cursor-grab text-slate-300 hover:text-slate-400 touch-none"><GripVertical className="w-3.5 h-3.5" /></span>
+                                    <span className="text-[10px] font-mono text-slate-400">#{ci + 1} · {child.id}</span>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    <label className="flex items-center gap-2 text-xs text-slate-600">
+                                      <input type="checkbox" checked={child.enabled !== false} onChange={() => toggleGroupChildEnabled(step.id, child.id)} />
+                                      啟用
+                                    </label>
+                                    <button onClick={() => promoteChildToTop(step.id, child.id)} className="p-1 text-slate-400 hover:text-slate-700" title="提升為獨立步驟"><LogIn className="w-3.5 h-3.5 rotate-180" /></button>
+                                    <button onClick={() => removeGroupChild(step.id, child.id)} className="p-1 text-rose-400 hover:text-rose-600" title="移除子項目"><Trash2 className="w-3.5 h-3.5" /></button>
+                                  </div>
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase">子項標題</label>
+                                  <input type="text" value={child.title} onChange={(e) => updateGroupChild(step.id, child.id, 'title', e.target.value)} className="w-full mt-1 p-2.5 rounded-lg border border-slate-200 text-sm bg-white" />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase">內容編輯</label>
+                                  <div className="mt-2">
+                                    <RichTextEditor value={child.content} onChange={(value) => updateGroupChild(step.id, child.id, 'content', value)} placeholder="输入子项目内容..." />
+                                  </div>
+                                </div>
+                                <div className="step-content-surface">
+                                  <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">預覽</p>
+                                  <StepContent content={child.content} fallback={stepLangText.customStepEmpty} />
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                          {/* 群組末尾 child drop zone */}
+                          <ChildDropZone
+                            active={dropTarget?.kind === 'childBetween' && dropTarget.groupId === step.id && dropTarget.index === (step.children || []).length}
+                            onDragOver={() => setDropTarget({ kind: 'childBetween', groupId: step.id, index: (step.children || []).length })}
+                            onDragLeave={() => setDropTarget(null)}
+                            onDrop={() => {
+                              if (dragItem?.kind === 'child' && dragItem.parentId === step.id) reorderGroupChildren(step.id, dragItem.index, (step.children || []).length - 1);
+                              setDragItem(null); setDropTarget(null);
+                            }}
+                          />
+                          {/* 拖入群組 drop zone（接受外部步驟） */}
+                          {dragItem?.kind === 'step' && dragItem.id !== step.id && (
+                            <div
+                              onDragOver={(e) => { e.preventDefault(); setDropTarget({ kind: 'intoGroup', groupId: step.id }); }}
+                              onDragLeave={() => setDropTarget(null)}
+                              onDrop={(e) => { e.stopPropagation(); moveStepToGroup(dragItem.id, step.id); setDragItem(null); setDropTarget(null); }}
+                              className={`flex items-center justify-center gap-2 py-3 rounded-xl border-2 border-dashed text-sm font-bold transition-all ${dropTarget?.kind === 'intoGroup' && dropTarget.groupId === step.id ? 'border-emerald-400 bg-emerald-50 text-emerald-700' : 'border-slate-200 text-slate-400'}`}
+                            >
+                              ↓ 拖放至此以加入此群組
+                            </div>
                           )}
+                          <button onClick={() => addGroupChild(step.id)} className="w-full py-2.5 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 hover:text-slate-700 text-sm font-bold transition-all">
+                            + 新增子項目
+                          </button>
                         </div>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <span className="cursor-grab text-slate-300 hover:text-slate-500 active:cursor-grabbing touch-none"><GripVertical className="w-4 h-4" /></span>
+                            <span className="text-xs font-bold text-slate-400 uppercase">Step {index + 1}</span>
+                            <span className={`text-[10px] px-2 py-1 rounded-full ${step.type === 'custom' ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-500'}`}>
+                              {step.type === 'custom' ? 'Custom' : 'Built-in'}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                              <input type="checkbox" checked={step.enabled !== false} onChange={() => toggleStepEnabled(step.id)} />
+                              啟用
+                            </label>
+                            <button onClick={() => { if (window.confirm(`確認刪除步驟「${step.title || step.id}」？`)) removeStep(step.id); }} className="p-1 text-rose-400 hover:text-rose-600" title="刪除此步驟"><Trash2 className="w-4 h-4" /></button>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase">标题</label>
+                            <input type="text" value={step.title} onChange={(e) => updateStepField(step.id, 'title', e.target.value)} className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm" />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase">副标题</label>
+                            <input type="text" value={step.subtitle} onChange={(e) => updateStepField(step.id, 'subtitle', e.target.value)} className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm" />
+                          </div>
+                        </div>
                         <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase">标题</label>
-                          <input type="text" value={step.title} onChange={(e) => updateStepField(step.id, 'title', e.target.value)} className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm" />
+                          <div className="flex items-center justify-between">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase">内容编辑</label>
+                            <span className="text-[10px] text-slate-400">支持图片与常见文本样式</span>
+                          </div>
+                          <div className="mt-3">
+                            <RichTextEditor value={step.content} onChange={(value) => updateStepField(step.id, 'content', value)} placeholder="输入该步骤要展示的内容..." />
+                          </div>
                         </div>
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase">副标题</label>
-                          <input type="text" value={step.subtitle} onChange={(e) => updateStepField(step.id, 'subtitle', e.target.value)} className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm" />
+                        <div className="step-content-surface">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase mb-3">预览</p>
+                          <StepContent content={step.content} fallback={stepLangText.customStepEmpty} />
                         </div>
-                      </div>
-                      <div>
-                        <div className="flex items-center justify-between">
-                          <label className="text-[10px] font-bold text-slate-400 uppercase">内容编辑</label>
-                          <span className="text-[10px] text-slate-400">支持图片与常见文本样式</span>
-                        </div>
-                        <div className="mt-3">
-                          <RichTextEditor value={step.content} onChange={(value) => updateStepField(step.id, 'content', value)} placeholder="输入该步骤要展示的内容..." />
-                        </div>
-                      </div>
-                      <div className="step-content-surface">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase mb-3">预览</p>
-                        <StepContent content={step.content} fallback={stepLangText.customStepEmpty} />
-                      </div>
-                    </>
-                  )}
+                      </>
+                    )}
+                  </div>
+                  {/* 每個步驟下方的 drop zone（插入到 index+1） */}
+                  <DropZone
+                    active={dropTarget?.kind === 'between' && dropTarget.index === index + 1}
+                    onDragOver={() => setDropTarget({ kind: 'between', index: index + 1 })}
+                    onDragLeave={() => setDropTarget(null)}
+                    onDrop={() => {
+                      if (dragItem?.kind === 'step') {
+                        const toIdx = dragItem.index < index + 1 ? index : index + 1;
+                        reorderSteps(dragItem.index, toIdx);
+                      }
+                      setDragItem(null); setDropTarget(null);
+                    }}
+                  />
                 </div>
               ))}
             </div>
@@ -1248,6 +1397,30 @@ const AdminDashboard = ({
     </div>
   );
 };
+
+// 頂層步驟之間的 drop 指示線
+const DropZone = ({ active, onDragOver, onDragLeave, onDrop }) => (
+  <div
+    onDragOver={(e) => { e.preventDefault(); onDragOver(); }}
+    onDragLeave={onDragLeave}
+    onDrop={onDrop}
+    className="relative h-4 -my-0.5 flex items-center z-10"
+  >
+    <div className={`absolute inset-x-0 h-0.5 rounded-full transition-all ${active ? 'bg-emerald-400 scale-x-100' : 'bg-transparent'}`} />
+  </div>
+);
+
+// 群組子項目之間的 drop 指示線
+const ChildDropZone = ({ active, onDragOver, onDragLeave, onDrop }) => (
+  <div
+    onDragOver={(e) => { e.preventDefault(); onDragOver(); }}
+    onDragLeave={onDragLeave}
+    onDrop={onDrop}
+    className="relative h-3 flex items-center"
+  >
+    <div className={`absolute inset-x-0 h-0.5 rounded-full transition-all ${active ? 'bg-indigo-400 scale-x-100' : 'bg-transparent'}`} />
+  </div>
+);
 
 const AdminPage = ({
   adminToken,

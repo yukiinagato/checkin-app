@@ -555,6 +555,27 @@ const buildClient = async () => {
   await runPnpm(['--filter', 'client', 'build']);
 };
 
+// Resolve a path read from .env.production (often "./data/hotel.db") against the
+// PM2 cwd so we mkdir the same directory the running server will try to open.
+const resolveProductionPath = (value) => {
+  if (!value) return null;
+  return path.isAbsolute(value) ? value : path.resolve(serverDir, value);
+};
+
+const ensureProductionRuntimeDirs = async (envValues) => {
+  const dbPathValue = envValues.get('DB_PATH');
+  const uploadDirValue = envValues.get('UPLOAD_DIR');
+  const targets = new Set();
+  const dbResolved = resolveProductionPath(dbPathValue);
+  if (dbResolved) targets.add(path.dirname(dbResolved));
+  const uploadResolved = resolveProductionPath(uploadDirValue);
+  if (uploadResolved) targets.add(uploadResolved);
+  for (const target of targets) {
+    await fs.mkdir(target, { recursive: true });
+    console.log(`[deploy] 已确保运行时目录存在：${target}`);
+  }
+};
+
 const writePm2Config = async ({ appName, port }) => {
   const content = `module.exports = {
   apps: [
@@ -1159,6 +1180,7 @@ const configureProduction = async () => {
     }
 
     const envValues = await writeEnvProduction(prompter);
+    await ensureProductionRuntimeDirs(envValues);
     const port = envValues.get('PORT') || '3001';
     const domain = envValues.get('WEBAUTHN_RP_ID');
     const useHttps = (envValues.get('WEBAUTHN_ORIGIN') || '').startsWith('https://');

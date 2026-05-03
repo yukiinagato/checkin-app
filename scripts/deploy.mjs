@@ -608,6 +608,28 @@ const runPm2 = async ({ appName, confirm }) => {
   console.log('[deploy] 提示：首次部署可执行 `pm2 startup` 并按提示运行其输出，让 PM2 开机自启。');
 };
 
+const sudoListDir = async (dir) => {
+  try {
+    const result = await run('sudo', ['-n', 'ls', '-1', dir], { capture: true });
+    return result.stdout.split(/\r?\n/).filter(Boolean);
+  } catch {
+    return [];
+  }
+};
+
+const sudoReadFile = async (p) => {
+  try {
+    const result = await run('sudo', ['-n', 'cat', p], { capture: true });
+    return result.stdout;
+  } catch {
+    try {
+      return await fs.readFile(p, 'utf8');
+    } catch {
+      return null;
+    }
+  }
+};
+
 const detectAcmeTools = async () => {
   const tools = [];
   for (const candidate of ['certbot', '/usr/bin/certbot', '/usr/local/bin/certbot', '/snap/bin/certbot']) {
@@ -617,12 +639,28 @@ const detectAcmeTools = async () => {
       break;
     } catch {}
   }
+
+  const acmeCandidates = new Set();
   const home = process.env.HOME || '/root';
-  for (const candidate of [path.join(home, '.acme.sh', 'acme.sh'), '/root/.acme.sh/acme.sh']) {
-    if (await fileExists(candidate)) {
+  acmeCandidates.add(path.join(home, '.acme.sh', 'acme.sh'));
+  acmeCandidates.add('/root/.acme.sh/acme.sh');
+  acmeCandidates.add('/usr/local/share/acme.sh/acme.sh');
+  acmeCandidates.add('/etc/acme.sh/acme.sh');
+  for (const userHome of await sudoListDir('/home')) {
+    acmeCandidates.add(path.join('/home', userHome, '.acme.sh', 'acme.sh'));
+  }
+  for (const candidate of acmeCandidates) {
+    if (await pathExistsMaybeSudo(candidate)) {
       tools.push({ name: 'acme.sh', bin: candidate });
       break;
     }
+  }
+
+  for (const lego of ['/usr/local/bin/lego', '/usr/bin/lego', path.join(home, '.lego')]) {
+    if (await pathExistsMaybeSudo(lego)) { tools.push({ name: 'lego', bin: lego }); break; }
+  }
+  for (const deh of ['/usr/bin/dehydrated', '/usr/local/bin/dehydrated', '/var/lib/dehydrated']) {
+    if (await pathExistsMaybeSudo(deh)) { tools.push({ name: 'dehydrated', bin: deh }); break; }
   }
   return tools;
 };
@@ -638,33 +676,133 @@ const pathExistsMaybeSudo = async (p) => {
   }
 };
 
-const findExistingCertForDomain = async (domain) => {
-  const home = process.env.HOME || '/root';
-  const candidates = [
-    {
-      source: 'certbot (Let\'s Encrypt)',
-      certificate: `/etc/letsencrypt/live/${domain}/fullchain.pem`,
-      certificateKey: `/etc/letsencrypt/live/${domain}/privkey.pem`
-    },
-    {
-      source: 'acme.sh (ECC)',
-      certificate: path.join(home, '.acme.sh', `${domain}_ecc`, 'fullchain.cer'),
-      certificateKey: path.join(home, '.acme.sh', `${domain}_ecc`, `${domain}.key`)
-    },
-    {
-      source: 'acme.sh (RSA)',
-      certificate: path.join(home, '.acme.sh', domain, 'fullchain.cer'),
-      certificateKey: path.join(home, '.acme.sh', domain, `${domain}.key`)
-    }
-  ];
+const collectAcmeShRoots = async () => {
+  const roots = new Set([
+    process.env.HOME ? path.join(process.env.HOME, '.acme.sh') : null,
+    '/root/.acme.sh',
+    '/usr/local/share/acme.sh',
+    '/etc/acme.sh'
+  ].filter(Boolean));
+  for (const userHome of await sudoListDir('/home')) {
+    roots.add(path.join('/home', userHome, '.acme.sh'));
+  }
+  return [...roots];
+};
 
-  const found = [];
-  for (const c of candidates) {
-    if ((await pathExistsMaybeSudo(c.certificate)) && (await pathExistsMaybeSudo(c.certificateKey))) {
-      found.push(c);
+const collectLetsEncryptDomains = async () => {
+  const dir = '/etc/letsencrypt/live';
+  return (await sudoListDir(dir)).filter((name) => name && name !== 'README');
+};
+
+const collectAcmeShDomains = async (roots) => {
+  const out = [];
+  for (const root of roots) {
+    for (const entry of await sudoListDir(root)) {
+      if (entry.startsWith('.') || entry === 'ca' || entry === 'deploy' || entry === 'dnsapi' || entry === 'notify') continue;
+      out.push({ root, entry });
     }
   }
-  return found;
+  return out;
+};
+
+const wildcardMatches = (pattern, host) => {
+  if (pattern === host) return true;
+  if (pattern.startsWith('*.')) {
+    const suffix = pattern.slice(1);
+    return host.endsWith(suffix) && host.length > suffix.length;
+  }
+  return false;
+};
+
+const findCertsFromNginx = async (domain) => {
+  const found = [];
+  const dirs = ['/etc/nginx/sites-enabled', '/etc/nginx/conf.d', '/etc/nginx/sites-available'];
+  for (const dir of dirs) {
+    for (const name of await sudoListDir(dir)) {
+      const full = `${dir}/${name}`;
+      const content = await sudoReadFile(full);
+      if (!content) continue;
+      const blocks = content.split(/(?=\bserver\s*\{)/g);
+      for (const block of blocks) {
+        const serverNames = [...block.matchAll(/server_name\s+([^;]+);/g)]
+          .flatMap((m) => m[1].trim().split(/\s+/));
+        if (serverNames.length === 0) continue;
+        const matchedHost = serverNames.find((n) => wildcardMatches(n, domain));
+        if (!matchedHost) continue;
+        const certMatch = block.match(/(?<![#\s])\bssl_certificate\s+([^;]+);/);
+        const keyMatch = block.match(/\bssl_certificate_key\s+([^;]+);/);
+        if (certMatch && keyMatch) {
+          found.push({
+            source: `nginx (${full}, server_name ${matchedHost})`,
+            certificate: certMatch[1].trim(),
+            certificateKey: keyMatch[1].trim()
+          });
+        }
+      }
+    }
+  }
+  // Dedupe by cert path
+  const seen = new Set();
+  return found.filter((c) => {
+    const key = `${c.certificate}::${c.certificateKey}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const findExistingCertForDomain = async (domain) => {
+  const candidates = [];
+
+  // 1. Let's Encrypt (certbot) — exact + wildcard parent
+  for (const cbDomain of await collectLetsEncryptDomains()) {
+    if (!wildcardMatches(cbDomain.replace(/^\*\./, '*.'), domain) && cbDomain !== domain) {
+      // Also try common wildcard variant: parent domain dir is sometimes literally the apex
+      const apex = domain.split('.').slice(1).join('.');
+      if (cbDomain !== apex) continue;
+    }
+    candidates.push({
+      source: `certbot (${cbDomain})`,
+      certificate: `/etc/letsencrypt/live/${cbDomain}/fullchain.pem`,
+      certificateKey: `/etc/letsencrypt/live/${cbDomain}/privkey.pem`
+    });
+  }
+
+  // 2. acme.sh — across all user roots, both ECC and RSA, exact + wildcard
+  const acmeRoots = await collectAcmeShRoots();
+  for (const { root, entry } of await collectAcmeShDomains(acmeRoots)) {
+    const baseName = entry.replace(/_ecc$/, '');
+    const isWildcardDir = baseName.startsWith('*.');
+    const matches = baseName === domain || (isWildcardDir && wildcardMatches(baseName, domain));
+    // Also accept apex-level wildcard stored as "domain.tld" but covering subdomain — we can't tell from dir name alone, so include if user's domain is a sub of baseName
+    const apex = domain.split('.').slice(1).join('.');
+    const isParent = baseName === apex;
+    if (!matches && !isParent) continue;
+    const fullchain = path.join(root, entry, 'fullchain.cer');
+    const keyName = `${baseName.replace(/^\*\./, '')}.key`;
+    const keyFile = path.join(root, entry, keyName);
+    candidates.push({
+      source: `acme.sh (${root}/${entry})`,
+      certificate: fullchain,
+      certificateKey: keyFile
+    });
+  }
+
+  const reachable = [];
+  for (const c of candidates) {
+    if ((await pathExistsMaybeSudo(c.certificate)) && (await pathExistsMaybeSudo(c.certificateKey))) {
+      reachable.push(c);
+    }
+  }
+
+  // 3. Fall back: read existing nginx vhosts (covers any auto-renew tool we don't recognize)
+  const fromNginx = await findCertsFromNginx(domain);
+  for (const c of fromNginx) {
+    if (!reachable.some((r) => r.certificate === c.certificate && r.certificateKey === c.certificateKey)) {
+      reachable.push(c);
+    }
+  }
+  return reachable;
 };
 
 const resolveTlsCertificate = async ({ domain, ask, confirm }) => {
@@ -758,7 +896,9 @@ const writeNginxConfig = async ({ domain, port, useHttps, tlsCert }) => {
     }
   }
 
-  const listenLine = useHttps ? 'listen 443 ssl http2;\n  listen [::]:443 ssl http2;' : 'listen 80;\n  listen [::]:80;';
+  const listenLine = useHttps
+    ? 'listen 443 ssl;\n  listen [::]:443 ssl;\n  http2 on;'
+    : 'listen 80;\n  listen [::]:80;';
 
   const config = `${httpRedirectBlock}server {
   ${listenLine}
@@ -787,6 +927,29 @@ ${sslHints}
   return confPath;
 };
 
+const findConflictingNginxVhosts = async ({ domain, ownTargetBasename }) => {
+  const dirs = ['/etc/nginx/sites-enabled', '/etc/nginx/conf.d'];
+  const matches = [];
+  for (const dir of dirs) {
+    let entries;
+    try {
+      const result = await run('sudo', ['-n', 'ls', '-1', dir], { capture: true });
+      entries = result.stdout.split(/\r?\n/).filter(Boolean);
+    } catch {
+      continue;
+    }
+    for (const name of entries) {
+      if (dir.endsWith('sites-enabled') && name === ownTargetBasename) continue;
+      const full = `${dir}/${name}`;
+      try {
+        const grep = await run('sudo', ['-n', 'grep', '-l', '-E', `server_name[[:space:]]+([^;]*[[:space:]])?${domain.replace(/\./g, '\\.')}([[:space:]]|;)`, full], { capture: true });
+        if (grep.stdout.trim()) matches.push(full);
+      } catch {}
+    }
+  }
+  return matches;
+};
+
 const installNginxConfig = async ({ confPath, domain, confirm }) => {
   if (process.platform !== 'linux') {
     console.log('[deploy] 当前非 Linux 系统，跳过把 Nginx 配置安装到 /etc/nginx 的步骤。');
@@ -796,6 +959,25 @@ const installNginxConfig = async ({ confPath, domain, confirm }) => {
 
   const target = `/etc/nginx/sites-available/${domain}.conf`;
   const link = `/etc/nginx/sites-enabled/${domain}.conf`;
+
+  const conflicts = await findConflictingNginxVhosts({ domain, ownTargetBasename: `${domain}.conf` });
+  if (conflicts.length > 0) {
+    console.log(`[deploy] 检测到已有 vhost 也声明了 server_name ${domain}：`);
+    for (const c of conflicts) console.log(`  - ${c}`);
+    console.log('[deploy] 如果不处理，nginx 会保留先加载的那个并报 "conflicting server name"，新配置不会生效。');
+    if (await confirm('是否禁用上述冲突文件（仅 sites-enabled 下的软链/文件会被移到 .disabled）？', false)) {
+      for (const c of conflicts) {
+        if (!c.startsWith('/etc/nginx/sites-enabled/')) {
+          console.log(`[deploy] 跳过 ${c}（不在 sites-enabled，请手动处理）`);
+          continue;
+        }
+        await run('sudo', ['mv', c, `${c}.disabled`]);
+        console.log(`[deploy] 已禁用 ${c} → ${c}.disabled`);
+      }
+    } else {
+      console.log('[deploy] 继续安装，但请稍后手动消除 server_name 冲突，否则反代不会生效。');
+    }
+  }
   console.log(`[deploy] 将执行：sudo cp ${confPath} ${target}`);
   await run('sudo', ['cp', confPath, target]);
   console.log(`[deploy] 将执行：sudo ln -sf ${target} ${link}`);

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import DOMPurify from 'dompurify';
+import { Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom';
 import {
   Wifi,
   MapPin,
@@ -302,7 +303,7 @@ const DB = {
       });
     });
 
-    // BOM（﻿）確保 Excel 正確識別 UTF-8 編碼
+    // BOM (U+FEFF) 確保 Excel 正確識別 UTF-8 編碼
     const BOM = '﻿';
     const csvContent = BOM + rows.map(row => row.map(escapeCell).join(',')).join('\n');
     const encodedUri = URL.createObjectURL(new Blob([csvContent], { type: 'text/csv;charset=utf-8;' }));
@@ -376,6 +377,7 @@ const translations = {
     quickGuide: "快速指南", safetyGroup: "安全", equipmentGroup: "设备", viewGuide: "查阅指南",
     noContent: "此项目暂无内容。", registeredData: "已登记资料", backToDir: "返回目录", guestTypeAdult: "成人", guestTypeMinor: "未成年",
     viewStayGuide: "查看住宿指南",
+    completionReadGuidePrompt: "登记已完成。请务必查看住宿指南，了解安全提示与设备使用方法后再开始入住。",
     steps: [
       { id: 'welcome', title: "欢迎入住", subtitle: "Welcome" },
       { id: 'count', title: "入住人数", subtitle: "Guest Count" },
@@ -408,6 +410,7 @@ const translations = {
     quickGuide: "快速指南", safetyGroup: "安全", equipmentGroup: "設備", viewGuide: "查閱指南",
     noContent: "此項目目前沒有內容。", registeredData: "已登記資料", backToDir: "返回目錄", guestTypeAdult: "成人", guestTypeMinor: "未成年",
     viewStayGuide: "查看住宿指南",
+    completionReadGuidePrompt: "登記已完成。請務必查看住宿指南，了解安全提示與設備使用方法後再開始入住。",
     steps: [
       { id: 'welcome', title: "歡迎入住", subtitle: "Welcome" },
       { id: 'count', title: "入住人數", subtitle: "Guest Count" },
@@ -440,6 +443,7 @@ const translations = {
     quickGuide: "Quick Guide", safetyGroup: "Safety", equipmentGroup: "Equipment", viewGuide: "View Guide",
     noContent: "No content available for this item yet.", registeredData: "Registered Data", backToDir: "Back to Directory", guestTypeAdult: "Adult", guestTypeMinor: "Minor",
     viewStayGuide: "View Stay Guide",
+    completionReadGuidePrompt: "Registration complete. Please review the stay guide for safety notes and equipment instructions before settling in.",
     steps: [
       { id: 'welcome', title: "Welcome", subtitle: "Welcome" },
       { id: 'count', title: "Guest Count", subtitle: "Guest Count" },
@@ -472,6 +476,7 @@ const translations = {
     quickGuide: "クイックガイド", safetyGroup: "安全", equipmentGroup: "設備", viewGuide: "案内を見る",
     noContent: "このアイテムにはまだ内容がありません。", registeredData: "登録済みデータ", backToDir: "一覧に戻る", guestTypeAdult: "大人", guestTypeMinor: "未成年",
     viewStayGuide: "宿泊案内を見る",
+    completionReadGuidePrompt: "登録が完了しました。安全のご案内や設備の使い方を必ずご確認のうえ、ご滞在をお始めください。",
     steps: [
       { id: 'welcome', title: "ようこそ", subtitle: "Welcome" },
       { id: 'count', title: "人数", subtitle: "Guest Count" },
@@ -504,6 +509,7 @@ const translations = {
     quickGuide: "빠른 안내", safetyGroup: "안전", equipmentGroup: "설비", viewGuide: "안내 보기",
     noContent: "이 항목에는 아직 내용이 없습니다.", registeredData: "등록된 데이터", backToDir: "목록으로 돌아가기", guestTypeAdult: "성인", guestTypeMinor: "미성년자",
     viewStayGuide: "숙박 안내 보기",
+    completionReadGuidePrompt: "등록이 완료되었습니다. 숙박 안내(안전·설비 사용법)를 반드시 확인한 뒤 이용을 시작해 주세요.",
     steps: [
       { id: 'welcome', title: "환영", subtitle: "Welcome" },
       { id: 'count', title: "인원 수", subtitle: "Guest Count" },
@@ -701,8 +707,9 @@ const StepContent = ({ content, fallback }) => {
 // 主程序入口
 // ----------------------------------------------------------------------
 const App = () => {
-  const getViewFromPath = () => window.location.pathname.startsWith('/admin') ? 'admin' : 'guest';
-  const [view, setView] = useState(getViewFromPath());
+  const navigate = useNavigate();
+  const location = useLocation();
+
   const [loading, setLoading] = useState(false);
   const [retryMessage, setRetryMessage] = useState('');
   const [submitError, setSubmitError] = useState('');
@@ -711,7 +718,6 @@ const App = () => {
 
   const [lang, setLang] = useState(null);
   const [currentStep, setCurrentStep] = useState(0);
-  const [isCompleted, setIsCompleted] = useState(false);
   const [guests, setGuests] = useState([]);
   const [petCount, setPetCount] = useState(0);
   const [checkInDate, setCheckInDate] = useState('');
@@ -721,15 +727,9 @@ const App = () => {
   // 已完成登記的歷史資料（只讀顯示），與可編輯的表單 guests 分開
   const [savedRegistration, setSavedRegistration] = useState(null);
 
-  const [appView, setAppView] = useState(() => !!localStorage.getItem(PENDING_RETRY_KEY) ? 'checkin' : 'landing');
-  const [guideNavStack, setGuideNavStack] = useState([]);
-
   const [stepsConfig, setStepsConfig] = useState([]);
   const [completionTemplate, setCompletionTemplate] = useState(() => buildDefaultCompletionTemplate(DEFAULT_LANG));
   const [appSettings, setAppSettings] = useState(DEFAULT_APP_SETTINGS);
-
-  const guidePush = (entry) => setGuideNavStack(s => [...s, entry]);
-  const guidePop = () => setGuideNavStack(s => s.slice(0, -1));
 
   useEffect(() => {
     const hasPendingRetryFlag = !!localStorage.getItem(PENDING_RETRY_KEY);
@@ -740,7 +740,7 @@ const App = () => {
     const savedCheckOut = localStorage.getItem(CHECKOUT_DATE_STORAGE_KEY) || '';
 
     if (hasPendingRetryFlag) {
-      // 待重試：恢復可編輯的表單資料
+      // 待重試：恢復可編輯的表單資料 + 把用戶導去 /checkin
       if (savedGuestsJSON) {
         try { setGuests(JSON.parse(savedGuestsJSON).map(g => ({ ...g, isEditable: true }))); }
         catch (e) { setGuests([createGuestTemplate('adult')]); }
@@ -748,6 +748,7 @@ const App = () => {
       setPetCount(savedPetCount);
       setCheckInDate(savedCheckIn);
       setCheckOutDate(savedCheckOut);
+      if (location.pathname === '/') navigate('/checkin', { replace: true });
     } else if (hasRecord) {
       // 已完成登記：保存歷史資料供查看，表單保持空白供新入住
       setHasHistory(true);
@@ -761,23 +762,13 @@ const App = () => {
     } else {
       setGuests([createGuestTemplate('adult')]);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleAdminTokenChange = (token) => {
     setAdminToken(token);
     if (token) { sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, token); return; }
     sessionStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
-  };
-
-  useEffect(() => {
-    const handleRouteChange = () => setView(getViewFromPath());
-    window.addEventListener('popstate', handleRouteChange);
-    return () => window.removeEventListener('popstate', handleRouteChange);
-  }, []);
-
-  const navigateTo = (path) => {
-    if (window.location.pathname !== path) window.history.pushState({}, '', path);
-    setView(getViewFromPath());
   };
 
   useEffect(() => {
@@ -859,7 +850,6 @@ const App = () => {
   const startNewCheckin = () => {
     setGuests([createGuestTemplate('adult')]);
     setCurrentStep(0);
-    setIsCompleted(false);
     setPetCount(0);
     setCheckInDate('');
     setCheckOutDate('');
@@ -869,39 +859,17 @@ const App = () => {
     localStorage.removeItem(PENDING_RETRY_KEY);
     localStorage.removeItem(FAILED_SUBMISSIONS_LOG_KEY);
     setHasPendingRetry(false);
-    setAppView('checkin');
+    navigate('/checkin');
   };
 
-  const resetCheckinProcess = () => {
-    setGuests([createGuestTemplate('adult')]);
-    setCurrentStep(0);
-    setIsCompleted(false);
-    setPetCount(0);
-    setCheckInDate('');
-    setCheckOutDate('');
-    setHasAgreed(false);
-    localStorage.removeItem(CHECKIN_STORAGE_KEY);
-    localStorage.removeItem(GUEST_STORAGE_KEY);
-    localStorage.removeItem(PET_COUNT_STORAGE_KEY);
-    localStorage.removeItem(CHECKIN_DATE_STORAGE_KEY);
-    localStorage.removeItem(CHECKOUT_DATE_STORAGE_KEY);
-    localStorage.removeItem(SUBMISSION_ID_KEY);
-    localStorage.removeItem(PENDING_RETRY_KEY);
-    localStorage.removeItem(FAILED_SUBMISSIONS_LOG_KEY);
-    setHasPendingRetry(false);
-    setSubmitError('');
-    setHasHistory(false);
-    setSavedRegistration(null);
-    setAppView('landing');
-    setGuideNavStack([]);
-  };
+  const isAdminRoute = location.pathname.startsWith('/admin');
 
-  if (view === 'admin') {
+  if (isAdminRoute) {
     return (
       <AdminPage
         adminToken={adminToken}
         onAdminTokenChange={handleAdminTokenChange}
-        onExitAdmin={() => { navigateTo('/'); setAppView('landing'); setGuideNavStack([]); }}
+        onExitAdmin={() => navigate('/')}
         db={DB}
         defaultLang={DEFAULT_LANG}
         translations={translations}
@@ -936,95 +904,84 @@ const App = () => {
               </button>
             ))}
           </div>
-          <button onClick={() => navigateTo('/admin')} className="absolute bottom-6 right-6 p-2 text-slate-300 hover:text-slate-500"><Lock className="w-4 h-4" /></button>
+          <button onClick={() => navigate('/admin')} className="absolute bottom-6 right-6 p-2 text-slate-300 hover:text-slate-500"><Lock className="w-4 h-4" /></button>
         </div>
       </div>
     );
   }
 
-  if (appView === 'checkin') {
-    return (
-      <CheckinFlow
-        onSubmit={handleGuestSubmit}
-        isSubmitting={loading}
-        retryMessage={retryMessage}
-        submitError={submitError}
-        hasPendingRetry={hasPendingRetry}
-        lang={lang}
-        setLang={setLang}
-        currentStep={currentStep}
-        setCurrentStep={setCurrentStep}
-        isCompleted={isCompleted}
-        setIsCompleted={setIsCompleted}
-        guests={guests}
-        setGuests={setGuests}
-        petCount={petCount}
-        setPetCount={setPetCount}
-        checkInDate={checkInDate}
-        setCheckInDate={setCheckInDate}
-        checkOutDate={checkOutDate}
-        setCheckOutDate={setCheckOutDate}
-        hasAgreed={hasAgreed}
-        setHasAgreed={setHasAgreed}
-        hasHistory={hasHistory}
-        onAdminRequest={() => navigateTo('/admin')}
-        onGoHome={() => { setAppView('landing'); setIsCompleted(false); }}
-        onViewGuide={() => { setAppView('guide'); setGuideNavStack([]); setIsCompleted(false); }}
-        stepsConfig={stepsConfig}
-        completionTemplate={completionTemplate}
-        appSettings={appSettings}
-      />
-    );
-  }
-
-  if (appView === 'guide') {
-    return (
-      <GuideView
-        lang={lang}
-        setLang={setLang}
-        guideNavStack={guideNavStack}
-        guidePush={guidePush}
-        guidePop={guidePop}
-        stepsConfig={stepsConfig}
-        savedRegistration={savedRegistration}
-        hasHistory={hasHistory}
-        onGoHome={() => { setAppView('landing'); setGuideNavStack([]); }}
-        onAdminRequest={() => navigateTo('/admin')}
-      />
-    );
-  }
-
-  return (
-    <HomeLanding
+  const checkinFlowElement = (
+    <CheckinFlow
+      onSubmit={handleGuestSubmit}
+      isSubmitting={loading}
+      retryMessage={retryMessage}
+      submitError={submitError}
+      hasPendingRetry={hasPendingRetry}
       lang={lang}
       setLang={setLang}
+      currentStep={currentStep}
+      setCurrentStep={setCurrentStep}
+      onCompleteCheckin={() => navigate('/checkin/done')}
+      guests={guests}
+      setGuests={setGuests}
+      petCount={petCount}
+      setPetCount={setPetCount}
+      checkInDate={checkInDate}
+      setCheckInDate={setCheckInDate}
+      checkOutDate={checkOutDate}
+      setCheckOutDate={setCheckOutDate}
+      hasAgreed={hasAgreed}
+      setHasAgreed={setHasAgreed}
       hasHistory={hasHistory}
       stepsConfig={stepsConfig}
-      hasPendingRetry={hasPendingRetry}
-      onStartCheckin={startNewCheckin}
-      onViewHistory={() => { setAppView('guide'); setGuideNavStack([]); }}
-      onQuickNav={(stepId) => {
-        const allSteps = stepsConfig.length ? stepsConfig : buildDefaultSteps(lang);
-        const step = allSteps.find(s => s.id === stepId);
-        const navEntry = step?.type === 'group'
-          ? { type: 'group', groupId: stepId }
-          : { type: 'solo', stepId };
-        setAppView('guide');
-        setGuideNavStack([{ type: '__home__' }, navEntry]);
-      }}
-      onAdminRequest={() => navigateTo('/admin')}
+      appSettings={appSettings}
     />
+  );
+
+  const guideViewElement = (
+    <GuideView
+      lang={lang}
+      stepsConfig={stepsConfig}
+      savedRegistration={savedRegistration}
+      hasHistory={hasHistory}
+    />
+  );
+
+  return (
+    <Routes>
+      <Route path="/" element={
+        <HomeLanding
+          lang={lang}
+          setLang={setLang}
+          hasHistory={hasHistory}
+          stepsConfig={stepsConfig}
+          onStartCheckin={startNewCheckin}
+        />
+      } />
+      <Route path="/checkin" element={checkinFlowElement} />
+      <Route path="/checkin/done" element={
+        <CompletionScreen lang={lang} completionTemplate={completionTemplate} />
+      } />
+      <Route path="/guide" element={guideViewElement} />
+      <Route path="/guide/:stepId" element={guideViewElement} />
+      <Route path="/guide/:stepId/:childId" element={guideViewElement} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 };
 
 // ----------------------------------------------------------------------
 // HomeLanding
 // ----------------------------------------------------------------------
-const HomeLanding = ({ lang, setLang, hasHistory, stepsConfig, hasPendingRetry, onStartCheckin, onViewHistory, onQuickNav, onAdminRequest }) => {
+const HomeLanding = ({ lang, setLang, hasHistory, stepsConfig, onStartCheckin }) => {
+  const navigate = useNavigate();
   const t = translations[lang] || translations[DEFAULT_LANG];
   const rawSteps = stepsConfig.length ? stepsConfig : buildDefaultSteps(lang || DEFAULT_LANG);
   const welcomeStep = rawSteps.find(s => s.id === 'welcome');
   const welcomeFallback = getBuiltinStepFallback(lang, 'welcome');
+  const onAdminRequest = () => navigate('/admin');
+  const onViewHistory = () => navigate('/guide');
+  const onQuickNav = (stepId) => navigate(`/guide/${encodeURIComponent(stepId)}`);
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-start p-6 animate-in fade-in">
@@ -1098,18 +1055,17 @@ const CheckinFlow = ({
   onSubmit, isSubmitting, retryMessage, submitError, hasPendingRetry,
   lang, setLang,
   currentStep, setCurrentStep,
-  isCompleted, setIsCompleted,
+  onCompleteCheckin,
   guests, setGuests,
   petCount, setPetCount,
   checkInDate, setCheckInDate,
   checkOutDate, setCheckOutDate,
   hasAgreed, setHasAgreed,
   hasHistory,
-  onAdminRequest,
-  onGoHome,
-  onViewGuide,
-  stepsConfig, completionTemplate, appSettings
+  stepsConfig, appSettings
 }) => {
+  const navigate = useNavigate();
+  const onAdminRequest = () => navigate('/admin');
   const [isLookingUpZip, setIsLookingUpZip] = useState(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [scannerGuestId, setScannerGuestId] = useState(null);
@@ -1128,7 +1084,6 @@ const CheckinFlow = ({
 
   useEffect(() => {
     if (steps.length && currentStep >= steps.length) setCurrentStep(0);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [steps.length, currentStep, setCurrentStep]);
 
   useEffect(() => {
@@ -1233,51 +1188,13 @@ const CheckinFlow = ({
     if (stepConfig?.id === 'registration') {
       const success = await onSubmit(pendingGuests);
       if (!success) return;
-      if (isLastStep) { setIsCompleted(true); } else { setCurrentStep(currentStep + 1); }
+      if (isLastStep) { onCompleteCheckin?.(); } else { setCurrentStep(currentStep + 1); }
       return;
     }
     if (!isLastStep) { setCurrentStep(currentStep + 1); return; }
     if (stepConfig?.id === 'rules' && !hasAgreed) return;
-    setIsCompleted(true);
+    onCompleteCheckin?.();
   };
-
-  if (isCompleted) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center animate-in fade-in">
-        <CheckCircle2 className="w-16 h-16 text-emerald-500 mb-6 mx-auto" />
-        <h1 className="text-3xl font-bold mb-2">{completionTemplate.title}</h1>
-        <p className="text-slate-500 mb-6">{completionTemplate.subtitle}</p>
-        <div className="bg-slate-900 text-white p-8 rounded-[2rem] shadow-xl w-full max-w-sm">
-          <div className="flex items-center gap-3">
-            <Wifi className="w-7 h-7" />
-            <div className="text-md text-left step-content text-white" dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(completionTemplate.cardHtml) }} />
-          </div>
-        </div>
-        <div className="mt-8 p-6 bg-white rounded-2xl border border-slate-100 max-w-sm w-full space-y-4 text-left">
-          <div className="flex items-start gap-3">
-            <Home className="w-5 h-5 text-blue-500 mt-1" />
-            <div className="text-sm step-content" dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(completionTemplate.extraHtml) }} />
-          </div>
-        </div>
-        <div className="mt-6 w-full max-w-sm space-y-3">
-          <button onClick={onViewGuide} className="w-full flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-200 shadow-sm hover:bg-slate-50 transition-all">
-            <div className="flex items-center gap-3">
-              <BookOpen className="w-5 h-5 text-slate-500" />
-              <span className="font-bold text-slate-900">{t.viewStayGuide}</span>
-            </div>
-            <ChevronRight className="w-5 h-5 text-slate-300" />
-          </button>
-          <button onClick={onGoHome} className="w-full flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-200 shadow-sm hover:bg-slate-50 transition-all">
-            <div className="flex items-center gap-3">
-              <Home className="w-5 h-5 text-slate-500" />
-              <span className="font-bold text-slate-900">{t.backToHome}</span>
-            </div>
-            <ChevronRight className="w-5 h-5 text-slate-300" />
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   if (!stepConfig) return null;
 
@@ -1299,7 +1216,7 @@ const CheckinFlow = ({
         <Languages className="w-6 h-6" />
         <span className="text-sm font-semibold">{t.changeLang}</span>
       </button>
-      <button onClick={onGoHome} className="w-full flex items-center gap-3 p-3 rounded-lg text-slate-700 hover:bg-slate-100">
+      <button onClick={() => navigate('/')} className="w-full flex items-center gap-3 p-3 rounded-lg text-slate-700 hover:bg-slate-100">
         <Home className="w-6 h-6" />
         <span className="text-sm font-semibold">{t.backToHome}</span>
       </button>
@@ -1353,17 +1270,17 @@ const CheckinFlow = ({
                   <div className="p-4 bg-slate-50 rounded-2xl flex items-center justify-between">
                     <div><p className="font-bold text-slate-800 text-sm">{t.countAdults}</p></div>
                     <div className="flex items-center gap-4">
-                      <button onClick={() => guests.length > 1 && removeGuest(guests[guests.length - 1].id)} disabled={hasHistory} className={`w-8 h-8 rounded-full border border-slate-300 ${hasHistory ? 'opacity-30 cursor-not-allowed' : ''}`}>-</button>
+                      <button onClick={() => guests.length > 1 && removeGuest(guests[guests.length - 1].id)} className="w-8 h-8 rounded-full border border-slate-300">-</button>
                       <span className="font-bold">{guests.length}</span>
-                      <button onClick={addGuest} disabled={hasHistory} className={`w-8 h-8 rounded-full border border-slate-300 ${hasHistory ? 'opacity-30 cursor-not-allowed' : ''}`}>+</button>
+                      <button onClick={addGuest} className="w-8 h-8 rounded-full border border-slate-300">+</button>
                     </div>
                   </div>
                   <div className="p-4 bg-slate-50 rounded-2xl flex items-center justify-between">
                     <div><p className="font-bold text-slate-800 text-sm">{t.petLabel}</p></div>
                     <div className="flex items-center gap-4">
-                      <button onClick={() => petCount > 0 && setPetCount(petCount - 1)} disabled={hasHistory} className={`w-8 h-8 rounded-full border border-slate-300 ${hasHistory ? 'opacity-30 cursor-not-allowed' : ''}`}>-</button>
+                      <button onClick={() => petCount > 0 && setPetCount(petCount - 1)} className="w-8 h-8 rounded-full border border-slate-300">-</button>
                       <span className="font-bold">{petCount}</span>
-                      <button onClick={() => setPetCount(petCount + 1)} disabled={hasHistory} className={`w-8 h-8 rounded-full border border-slate-300 ${hasHistory ? 'opacity-30 cursor-not-allowed' : ''}`}>+</button>
+                      <button onClick={() => setPetCount(petCount + 1)} className="w-8 h-8 rounded-full border border-slate-300">+</button>
                     </div>
                   </div>
                 </div>
@@ -1379,8 +1296,7 @@ const CheckinFlow = ({
                         value={checkInDate}
                         onChange={(e) => updateCheckInDate(e.target.value)}
                         onInput={(e) => updateCheckInDate(e.currentTarget.value)}
-                        readOnly={hasHistory}
-                        className={`w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none focus:ring-2 focus:ring-slate-900 transition-all appearance-none ${hasHistory ? 'text-slate-400 cursor-default' : ''}`}
+                        className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none focus:ring-2 focus:ring-slate-900 transition-all appearance-none"
                       />
                     </div>
                     <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100 space-y-2 box-border">
@@ -1390,8 +1306,7 @@ const CheckinFlow = ({
                         value={checkOutDate}
                         onChange={(e) => updateCheckOutDate(e.target.value)}
                         onInput={(e) => updateCheckOutDate(e.currentTarget.value)}
-                        readOnly={hasHistory}
-                        className={`w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none focus:ring-2 focus:ring-slate-900 transition-all appearance-none ${hasHistory ? 'text-slate-400 cursor-default' : ''}`}
+                        className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none focus:ring-2 focus:ring-slate-900 transition-all appearance-none"
                       />
                     </div>
                   </div>
@@ -1595,37 +1510,81 @@ const CheckinFlow = ({
 };
 
 // ----------------------------------------------------------------------
-// GuideView（住宿指南，導航棧驅動）
+// CompletionScreen（提交成功，强引导阅读指南）
 // ----------------------------------------------------------------------
-const GuideView = ({ lang, guideNavStack, guidePush, guidePop, stepsConfig, savedRegistration, hasHistory, onGoHome, onAdminRequest }) => {
+const CompletionScreen = ({ lang, completionTemplate }) => {
+  const navigate = useNavigate();
+  const t = translations[lang || DEFAULT_LANG] || translations[DEFAULT_LANG];
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center animate-in fade-in">
+      <CheckCircle2 className="w-16 h-16 text-emerald-500 mb-6 mx-auto" />
+      <h1 className="text-3xl font-bold mb-2">{completionTemplate.title}</h1>
+      <p className="text-slate-500 mb-6">{completionTemplate.subtitle}</p>
+      <div className="bg-slate-900 text-white p-8 rounded-[2rem] shadow-xl w-full max-w-sm">
+        <div className="flex items-center gap-3">
+          <Wifi className="w-7 h-7" />
+          <div className="text-md text-left step-content text-white" dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(completionTemplate.cardHtml) }} />
+        </div>
+      </div>
+      <div className="mt-8 p-6 bg-white rounded-2xl border border-slate-100 max-w-sm w-full space-y-4 text-left">
+        <div className="flex items-start gap-3">
+          <Home className="w-5 h-5 text-blue-500 mt-1" />
+          <div className="text-sm step-content" dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(completionTemplate.extraHtml) }} />
+        </div>
+      </div>
+      <div className="mt-6 w-full max-w-sm space-y-3">
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-left flex items-start gap-3">
+          <BookOpen className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+          <p className="text-sm text-amber-900 font-bold leading-relaxed">{t.completionReadGuidePrompt}</p>
+        </div>
+        <button onClick={() => navigate('/guide')} className="w-full flex items-center justify-between p-5 bg-slate-900 text-white rounded-2xl shadow-lg hover:bg-slate-800 transition-all">
+          <div className="flex items-center gap-3">
+            <BookOpen className="w-6 h-6" />
+            <span className="font-bold">{t.viewStayGuide}</span>
+          </div>
+          <ChevronRight className="w-5 h-5 opacity-70" />
+        </button>
+        <button onClick={() => navigate('/')} className="w-full flex items-center justify-center gap-2 py-3 text-slate-500 hover:text-slate-800 text-sm font-bold transition-colors">
+          <Home className="w-4 h-4" />
+          {t.backToHome}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// ----------------------------------------------------------------------
+// GuideView（住宿指南，URL 驱动）
+// ----------------------------------------------------------------------
+const GuideView = ({ lang, stepsConfig, savedRegistration, hasHistory }) => {
+  const navigate = useNavigate();
+  const { stepId, childId } = useParams();
   const t = translations[lang] || translations[DEFAULT_LANG];
   const rawSteps = stepsConfig.length ? stepsConfig : buildDefaultSteps(lang || DEFAULT_LANG);
   const getStep = (id) => rawSteps.find(s => s.id === id);
-  const current = guideNavStack[guideNavStack.length - 1] ?? null;
-  const prevEntry = guideNavStack[guideNavStack.length - 2] ?? null;
 
-  // Back from group sub-list: if previous stack entry is __home__ sentinel, go home instead of directory
-  const handleGroupBack = () => {
-    if (prevEntry?.type === '__home__') { onGoHome(); } else { guidePop(); }
-  };
+  const onAdminRequest = () => navigate('/admin');
 
-  if (current?.type === 'child') {
-    const groupStep = getStep(current.groupId);
-    const childStep = groupStep?.children?.find(c => c.id === current.childId);
-    const fallback = getBuiltinStepFallback(lang, current.childId);
+  // /guide/:stepId/:childId — child step within a group
+  if (stepId && childId) {
+    const groupStep = getStep(stepId);
+    if (!groupStep || groupStep.type !== 'group') return <Navigate to="/guide" replace />;
+    const childStep = groupStep.children?.find(c => c.id === childId);
+    if (!childStep) return <Navigate to={`/guide/${encodeURIComponent(stepId)}`} replace />;
+    const fallback = getBuiltinStepFallback(lang, childId);
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col">
         <div className="bg-white border-b border-slate-200 p-4 flex items-center gap-3">
-          <button onClick={guidePop} className="p-2 text-slate-500 hover:text-slate-900"><ArrowLeft className="w-5 h-5" /></button>
+          <button onClick={() => navigate(`/guide/${encodeURIComponent(stepId)}`)} className="p-2 text-slate-500 hover:text-slate-900"><ArrowLeft className="w-5 h-5" /></button>
           <div className="flex items-center gap-2">
-            {getStepIcon(current.childId)}
-            <h2 className="font-bold text-slate-900">{childStep?.title || current.childId}</h2>
+            {getStepIcon(childId)}
+            <h2 className="font-bold text-slate-900">{childStep.title || childId}</h2>
           </div>
         </div>
         <div className="flex-1 overflow-y-auto p-4 md:p-8">
           <div className="max-w-3xl mx-auto bg-white p-6 md:p-10 rounded-2xl border border-slate-100 shadow-sm">
-            {(childStep?.content || fallback)
-              ? <StepContent content={childStep?.content || fallback} fallback="" />
+            {(childStep.content || fallback)
+              ? <StepContent content={childStep.content || fallback} fallback="" />
               : <p className="text-sm text-slate-400">{t.noContent}</p>}
           </div>
         </div>
@@ -1633,22 +1592,56 @@ const GuideView = ({ lang, guideNavStack, guidePush, guidePop, stepsConfig, save
     );
   }
 
-  if (current?.type === 'solo') {
-    const soloStep = getStep(current.stepId);
-    const fallback = getBuiltinStepFallback(lang, current.stepId);
+  // /guide/:stepId — solo step OR group sub-directory
+  if (stepId) {
+    const step = getStep(stepId);
+    if (!step) return <Navigate to="/guide" replace />;
+
+    if (step.type === 'group') {
+      const children = (step.children || []).filter(c => c.enabled !== false);
+      return (
+        <div className="min-h-screen bg-slate-50 flex flex-col">
+          <div className="bg-white border-b border-slate-200 p-4 flex items-center gap-3">
+            <button onClick={() => navigate('/guide')} className="p-2 text-slate-500 hover:text-slate-900"><ArrowLeft className="w-5 h-5" /></button>
+            <div className="flex items-center gap-2 flex-1">
+              {getStepIcon(stepId)}
+              <h2 className="font-bold text-slate-900">{step.title || stepId}</h2>
+            </div>
+            <button onClick={onAdminRequest} className="p-2 text-slate-300 hover:text-slate-500"><Lock className="w-4 h-4" /></button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4 md:p-8">
+            <div className="max-w-2xl mx-auto space-y-3">
+              {children.length > 0 ? children.map(child => (
+                <button key={child.id} onClick={() => navigate(`/guide/${encodeURIComponent(stepId)}/${encodeURIComponent(child.id)}`)}
+                  className="w-full flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm hover:bg-slate-50 transition-all">
+                  <div className="flex items-center gap-3">
+                    {getStepIcon(child.id)}
+                    <span className="font-semibold text-slate-900">{child.title}</span>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-slate-300" />
+                </button>
+              )) : <p className="text-sm text-slate-400 text-center py-8">{t.noContent}</p>}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Solo step
+    const fallback = getBuiltinStepFallback(lang, stepId);
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col">
         <div className="bg-white border-b border-slate-200 p-4 flex items-center gap-3">
-          <button onClick={guidePop} className="p-2 text-slate-500 hover:text-slate-900"><ArrowLeft className="w-5 h-5" /></button>
+          <button onClick={() => navigate('/guide')} className="p-2 text-slate-500 hover:text-slate-900"><ArrowLeft className="w-5 h-5" /></button>
           <div className="flex items-center gap-2">
-            {getStepIcon(current.stepId)}
-            <h2 className="font-bold text-slate-900">{soloStep?.title || current.stepId}</h2>
+            {getStepIcon(stepId)}
+            <h2 className="font-bold text-slate-900">{step.title || stepId}</h2>
           </div>
         </div>
         <div className="flex-1 overflow-y-auto p-4 md:p-8">
           <div className="max-w-3xl mx-auto bg-white p-6 md:p-10 rounded-2xl border border-slate-100 shadow-sm">
-            {(soloStep?.content || fallback)
-              ? <StepContent content={soloStep?.content || fallback} fallback="" />
+            {(step.content || fallback)
+              ? <StepContent content={step.content || fallback} fallback="" />
               : <p className="text-sm text-slate-400">{t.noContent}</p>}
           </div>
         </div>
@@ -1656,44 +1649,13 @@ const GuideView = ({ lang, guideNavStack, guidePush, guidePop, stepsConfig, save
     );
   }
 
-  if (current?.type === 'group') {
-    const groupStep = getStep(current.groupId);
-    const children = (groupStep?.children || []).filter(c => c.enabled !== false);
-    return (
-      <div className="min-h-screen bg-slate-50 flex flex-col">
-        <div className="bg-white border-b border-slate-200 p-4 flex items-center gap-3">
-          <button onClick={handleGroupBack} className="p-2 text-slate-500 hover:text-slate-900"><ArrowLeft className="w-5 h-5" /></button>
-          <div className="flex items-center gap-2 flex-1">
-            {getStepIcon(current.groupId)}
-            <h2 className="font-bold text-slate-900">{groupStep?.title || current.groupId}</h2>
-          </div>
-          <button onClick={onAdminRequest} className="p-2 text-slate-300 hover:text-slate-500"><Lock className="w-4 h-4" /></button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-4 md:p-8">
-          <div className="max-w-2xl mx-auto space-y-3">
-            {children.length > 0 ? children.map(child => (
-              <button key={child.id} onClick={() => guidePush({ type: 'child', groupId: current.groupId, childId: child.id })}
-                className="w-full flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm hover:bg-slate-50 transition-all">
-                <div className="flex items-center gap-3">
-                  {getStepIcon(child.id)}
-                  <span className="font-semibold text-slate-900">{child.title}</span>
-                </div>
-                <ChevronRight className="w-5 h-5 text-slate-300" />
-              </button>
-            )) : <p className="text-sm text-slate-400 text-center py-8">{t.noContent}</p>}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Directory view (stack empty)
+  // /guide — directory
   const guideSteps = rawSteps.filter(s => s.category === 'guide' && s.enabled !== false);
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
       <div className="bg-white border-b border-slate-200 p-4 flex items-center justify-between">
-        <button onClick={onGoHome} className="flex items-center gap-2 text-slate-500 hover:text-slate-900">
+        <button onClick={() => navigate('/')} className="flex items-center gap-2 text-slate-500 hover:text-slate-900">
           <ArrowLeft className="w-5 h-5" />
           <span className="text-sm font-semibold">{t.backToHome}</span>
         </button>
@@ -1741,7 +1703,7 @@ const GuideView = ({ lang, guideNavStack, guidePush, guidePop, stepsConfig, save
                   : 'bg-indigo-50 text-indigo-800 border-indigo-100 hover:bg-indigo-100';
               const subtextCls = step.id === 'safety' ? 'text-red-500' : step.id === 'equipment' ? 'text-blue-500' : 'text-indigo-500';
               return (
-                <button key={step.id} onClick={() => guidePush({ type: 'group', groupId: step.id })}
+                <button key={step.id} onClick={() => navigate(`/guide/${encodeURIComponent(step.id)}`)}
                   className={`w-full flex items-center justify-between p-5 rounded-2xl border shadow-sm transition-all ${colorCls}`}>
                   <div className="flex items-center gap-3">
                     {getStepIcon(step.id, 'w-6 h-6')}
@@ -1755,7 +1717,7 @@ const GuideView = ({ lang, guideNavStack, guidePush, guidePop, stepsConfig, save
               );
             }
             return (
-              <button key={step.id} onClick={() => guidePush({ type: 'solo', stepId: step.id })}
+              <button key={step.id} onClick={() => navigate(`/guide/${encodeURIComponent(step.id)}`)}
                 className="w-full flex items-center justify-between p-5 bg-white rounded-2xl border border-slate-100 shadow-sm hover:bg-slate-50 transition-all">
                 <div className="flex items-center gap-3">
                   {getStepIcon(step.id, 'w-6 h-6 text-slate-500')}

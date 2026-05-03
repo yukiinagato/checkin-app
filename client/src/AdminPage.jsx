@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import DOMPurify from 'dompurify';
+import { useEditor, EditorContent } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
+import UnderlineExtension from '@tiptap/extension-underline';
+import LinkExtension from '@tiptap/extension-link';
+import ImageExtension from '@tiptap/extension-image';
+import Placeholder from '@tiptap/extension-placeholder';
 import {
   AlertTriangle,
   Lock,
@@ -49,39 +56,60 @@ const sanitizeRichHtml = (html) => DOMPurify.sanitize(html || '', {
 
 
 const RichTextEditor = ({ value, onChange, placeholder }) => {
-  const editorRef = useRef(null);
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({
+        heading: false,
+        blockquote: false,
+        codeBlock: false,
+        horizontalRule: false,
+        strike: false,
+        code: false,
+      }),
+      UnderlineExtension,
+      LinkExtension.configure({
+        openOnClick: false,
+        autolink: true,
+        linkOnPaste: true,
+        HTMLAttributes: { target: '_blank', rel: 'noopener noreferrer' },
+      }),
+      ImageExtension.configure({ inline: false, allowBase64: true }),
+      Placeholder.configure({ placeholder: placeholder || '' }),
+    ],
+    content: value || '',
+    editorProps: {
+      attributes: {
+        class:
+          'rich-text-editor min-h-[140px] w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10',
+      },
+    },
+    onUpdate: ({ editor }) => {
+      onChange(sanitizeRichHtml(editor.getHTML()));
+    },
+  });
 
   useEffect(() => {
-    if (!editorRef.current) return;
-    if (editorRef.current.innerHTML !== (value || '')) {
-      editorRef.current.innerHTML = value || '';
-    }
-  }, [value]);
+    if (!editor) return;
+    const incoming = value || '';
+    if (editor.getHTML() === incoming) return;
+    editor.commands.setContent(incoming, false);
+  }, [editor, value]);
 
-  const updateValue = () => {
-    if (!editorRef.current) return;
-    onChange(sanitizeRichHtml(editorRef.current.innerHTML));
-  };
-
-  const runCommand = (command, commandValue) => {
-    if (!editorRef.current) return;
-    editorRef.current.focus();
-    document.execCommand(command, false, commandValue);
-    updateValue();
-  };
+  if (!editor) return null;
 
   const handleAddLink = () => {
     const url = window.prompt('请输入链接地址');
     if (!url) return;
-
-    // 获取当前选中的文本
-    const selectedText = window.getSelection().toString();
-
-    // 构建带 target="_blank" 的 HTML 字符串
-    // 如果没选中文本，就把 URL 当做文本显示
-    const linkHtml = `<a href="${url}" target="_blank" rel="noopener noreferrer">${selectedText || url}</a>`;
-
-    runCommand('insertHTML', linkHtml);
+    if (editor.state.selection.empty) {
+      editor.chain().focus().insertContent({
+        type: 'text',
+        text: url,
+        marks: [{ type: 'link', attrs: { href: url, target: '_blank', rel: 'noopener noreferrer' } }],
+      }).run();
+    } else {
+      editor.chain().focus().extendMarkRange('link')
+        .setLink({ href: url, target: '_blank', rel: 'noopener noreferrer' }).run();
+    }
   };
 
   const handleImageUpload = (event) => {
@@ -89,48 +117,53 @@ const RichTextEditor = ({ value, onChange, placeholder }) => {
     if (!file) return;
     fileToBase64(file).then((base64) => {
       if (!base64) return;
-      runCommand('insertHTML', `<img src="${base64}" alt="Uploaded" />`);
+      editor.chain().focus().setImage({ src: base64, alt: 'Uploaded' }).run();
     });
     event.target.value = '';
   };
 
-  const toolbarButtonClass =
-    'inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50';
+  const baseBtn = 'inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50';
+  const activeBtn = 'border-slate-900 bg-slate-900 text-white hover:bg-slate-800';
+  const btn = (active) => `${baseBtn} ${active ? activeBtn : ''}`;
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => runCommand('bold')} className={toolbarButtonClass}>
+        <button type="button" onMouseDown={(e) => e.preventDefault()}
+          onClick={() => editor.chain().focus().toggleBold().run()}
+          className={btn(editor.isActive('bold'))}>
           <Bold className="w-4 h-4" /> 粗体
         </button>
-        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => runCommand('italic')} className={toolbarButtonClass}>
+        <button type="button" onMouseDown={(e) => e.preventDefault()}
+          onClick={() => editor.chain().focus().toggleItalic().run()}
+          className={btn(editor.isActive('italic'))}>
           <Italic className="w-4 h-4" /> 斜体
         </button>
-        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => runCommand('underline')} className={toolbarButtonClass}>
+        <button type="button" onMouseDown={(e) => e.preventDefault()}
+          onClick={() => editor.chain().focus().toggleUnderline().run()}
+          className={btn(editor.isActive('underline'))}>
           <Underline className="w-4 h-4" /> 下划线
         </button>
-        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={handleAddLink} className={toolbarButtonClass}>
+        <button type="button" onMouseDown={(e) => e.preventDefault()}
+          onClick={handleAddLink} className={btn(editor.isActive('link'))}>
           <Link2 className="w-4 h-4" /> 超链接
         </button>
-        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => runCommand('insertUnorderedList')} className={toolbarButtonClass}>
+        <button type="button" onMouseDown={(e) => e.preventDefault()}
+          onClick={() => editor.chain().focus().toggleBulletList().run()}
+          className={btn(editor.isActive('bulletList'))}>
           <List className="w-4 h-4" /> 无序列表
         </button>
-        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => runCommand('insertOrderedList')} className={toolbarButtonClass}>
+        <button type="button" onMouseDown={(e) => e.preventDefault()}
+          onClick={() => editor.chain().focus().toggleOrderedList().run()}
+          className={btn(editor.isActive('orderedList'))}>
           <ListOrdered className="w-4 h-4" /> 有序列表
         </button>
-        <label className={`${toolbarButtonClass} cursor-pointer`}>
+        <label className={`${baseBtn} cursor-pointer`}>
           <ImagePlus className="w-4 h-4" /> 上传图片
           <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
         </label>
       </div>
-      <div
-        ref={editorRef}
-        className="rich-text-editor min-h-[140px] w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-        contentEditable
-        suppressContentEditableWarning
-        data-placeholder={placeholder}
-        onInput={updateValue}
-      />
+      <EditorContent editor={editor} />
     </div>
   );
 };
@@ -443,7 +476,22 @@ const AdminDashboard = ({
   saveCompletionTemplate,
   normalizeCompletionTemplate
 }) => {
-  const [tab, setTab] = useState('data');
+  const adminNavigate = useNavigate();
+  const adminLocation = useLocation();
+  const VALID_ADMIN_TABS = ['data', 'files', 'settings', 'steps'];
+  const pathTab = adminLocation.pathname.replace(/^\/admin\/?/, '').split('/')[0];
+  const tab = VALID_ADMIN_TABS.includes(pathTab) ? pathTab : 'data';
+  const setTab = (next) => adminNavigate(`/admin/${next}`);
+
+  useEffect(() => {
+    if (adminLocation.pathname === '/admin' || adminLocation.pathname === '/admin/') {
+      adminNavigate('/admin/data', { replace: true });
+    } else if (pathTab && !VALID_ADMIN_TABS.includes(pathTab)) {
+      adminNavigate('/admin/data', { replace: true });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminLocation.pathname]);
+
   const [records, setRecords] = useState([]);
   const [serverStatus, setServerStatus] = useState('checking');
   const [stepLang, setStepLang] = useState(defaultLang);
@@ -464,11 +512,42 @@ const AdminDashboard = ({
   // { kind: 'between', index } | { kind: 'intoGroup', groupId } | { kind: 'childBetween', groupId, index }
   const dragCounter = useRef(0);
 
+  const dismissedKey = `checkin.dismissedBuiltinSteps.${stepLang}`;
+  const [dismissedBuiltinIds, setDismissedBuiltinIds] = useState(() => {
+    try {
+      const raw = localStorage.getItem(dismissedKey);
+      return new Set(raw ? JSON.parse(raw) : []);
+    } catch { return new Set(); }
+  });
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`checkin.dismissedBuiltinSteps.${stepLang}`);
+      setDismissedBuiltinIds(new Set(raw ? JSON.parse(raw) : []));
+    } catch { setDismissedBuiltinIds(new Set()); }
+  }, [stepLang]);
+
+  const persistDismissed = (next) => {
+    setDismissedBuiltinIds(next);
+    try { localStorage.setItem(`checkin.dismissedBuiltinSteps.${stepLang}`, JSON.stringify([...next])); }
+    catch { /* localStorage unavailable */ }
+  };
+
+  // Walk top-level + group children so a built-in moved into a group is not flagged as missing.
+  const collectExistingIds = (steps) => {
+    const ids = new Set();
+    steps.forEach((s) => {
+      ids.add(s.id);
+      if (Array.isArray(s.children)) s.children.forEach((c) => ids.add(c.id));
+    });
+    return ids;
+  };
+
   const missingBuiltinSteps = useMemo(() => {
     const defaults = buildDefaultSteps(stepLang);
-    const existingIds = new Set(editableSteps.map(s => s.id));
-    return defaults.filter(d => !existingIds.has(d.id));
-  }, [editableSteps, stepLang, buildDefaultSteps]);
+    const existingIds = collectExistingIds(editableSteps);
+    return defaults.filter((d) => !existingIds.has(d.id) && !dismissedBuiltinIds.has(d.id));
+  }, [editableSteps, stepLang, buildDefaultSteps, dismissedBuiltinIds]);
 
   const mergeNewSteps = () => {
     const defaults = buildDefaultSteps(stepLang);
@@ -509,6 +588,23 @@ const AdminDashboard = ({
     setStepsSaved(false);
   };
 
+  const dismissAllMissing = () => {
+    if (missingBuiltinSteps.length === 0) return;
+    const next = new Set(dismissedBuiltinIds);
+    missingBuiltinSteps.forEach((s) => next.add(s.id));
+    persistDismissed(next);
+  };
+
+  const dismissOneMissing = (id) => {
+    const next = new Set(dismissedBuiltinIds);
+    next.add(id);
+    persistDismissed(next);
+  };
+
+  const restoreAllDismissed = () => {
+    persistDismissed(new Set());
+  };
+
   useEffect(() => {
     db.getAllRecords(adminToken)
       .then(data => {
@@ -519,7 +615,7 @@ const AdminDashboard = ({
         setRecords([]);
         setServerStatus('offline');
       });
-  }, [adminToken]);
+  }, [adminToken, db]);
 
   useEffect(() => {
     let active = true;
@@ -564,7 +660,7 @@ const AdminDashboard = ({
     return () => {
       isActive = false;
     };
-  }, [stepLang]);
+  }, [stepLang, db, buildDefaultSteps, loadSteps, normalizeSteps, saveSteps]);
 
   useEffect(() => {
     let isActive = true;
@@ -590,10 +686,8 @@ const AdminDashboard = ({
     return () => {
       isActive = false;
     };
-  }, [stepLang]);
+  }, [stepLang, db, buildDefaultCompletionTemplate, loadCompletionTemplate, normalizeCompletionTemplate, saveCompletionTemplate]);
 
-  const totalGuests = records.reduce((acc, r) => acc + (r.guests?.length || 0), 0);
-  const todayCount = records.filter(r => r.submittedAt.startsWith(new Date().toISOString().split('T')[0])).reduce((acc, r) => acc + (r.guests?.length || 0), 0);
   const stepLangText = translations[stepLang] || translations[defaultLang];
   const flatRows = records.flatMap((group) => (group.guests || []).map((guest, idx) => ({
     key: `${group.id}-${guest.id || idx}`,
@@ -650,11 +744,6 @@ const AdminDashboard = ({
       ...prev,
       { id: createStepId(), title: '新群组', subtitle: '', type: 'group', category: 'guide', content: '', enabled: true, children: [] }
     ]);
-    setStepsSaved(false);
-  };
-
-  const removeCustomStep = (id) => {
-    setEditableSteps((prev) => prev.filter((step) => step.id !== id));
     setStepsSaved(false);
   };
 
@@ -955,7 +1044,7 @@ const AdminDashboard = ({
             </div>
           </div>
         );
-      case 'files':
+      case 'files': {
         const dates = [...new Set(records.map(r => r.submittedAt.split('T')[0]))];
         return (
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4">
@@ -1017,6 +1106,7 @@ const AdminDashboard = ({
             </div>
           </div>
         );
+      }
       case 'settings':
         return (
           <div className="max-w-3xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4">
@@ -1085,16 +1175,30 @@ const AdminDashboard = ({
                 <p className="text-sm text-slate-500">编辑步骤标题与内容，可新增或移除自定义步骤。</p>
               </div>
               {missingBuiltinSteps.length > 0 && (
-                <div className="flex-1 bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2">
-                  <div className="flex items-center gap-3 text-amber-800">
-                    <Settings className="w-5 h-5 text-amber-500" />
+                <div className="flex-1 bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-3 animate-in fade-in slide-in-from-top-2">
+                  <div className="flex items-start gap-3 text-amber-800">
+                    <Settings className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
                     <div className="text-sm">
-                      <p className="font-bold">發現新步驟</p>
-                      <p className="opacity-80">系統檢測到 {missingBuiltinSteps.length} 個新的內置步驟（如：{missingBuiltinSteps.map(s => s.title).join(', ')}）。是否將其合併到當前配置中？</p>
+                      <p className="font-bold">发现 {missingBuiltinSteps.length} 个未启用的内置步骤</p>
+                      <p className="opacity-80">下列步骤是默认模板提供但当前配置中不存在的。可逐个忽略或一键合并。</p>
                     </div>
                   </div>
-                  <button onClick={mergeNewSteps} className="whitespace-nowrap px-4 py-2 bg-amber-600 text-white text-xs font-bold rounded-xl hover:bg-amber-700 transition-colors">立即合併</button>
+                  <ul className="space-y-1.5">
+                    {missingBuiltinSteps.map((s) => (
+                      <li key={s.id} className="flex items-center justify-between gap-3 bg-white/60 rounded-lg px-3 py-1.5">
+                        <span className="text-xs font-bold text-amber-900 truncate">{s.title}</span>
+                        <button onClick={() => dismissOneMissing(s.id)} className="text-[11px] font-bold text-slate-500 hover:text-slate-800 underline whitespace-nowrap">忽略</button>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <button onClick={dismissAllMissing} className="px-3 py-1.5 bg-white border border-amber-200 text-amber-800 text-xs font-bold rounded-xl hover:bg-amber-100 transition-colors">全部忽略</button>
+                    <button onClick={mergeNewSteps} className="px-4 py-1.5 bg-amber-600 text-white text-xs font-bold rounded-xl hover:bg-amber-700 transition-colors">立即合并</button>
+                  </div>
                 </div>
+              )}
+              {dismissedBuiltinIds.size > 0 && missingBuiltinSteps.length === 0 && (
+                <button onClick={restoreAllDismissed} className="text-xs font-bold text-slate-500 hover:text-slate-800 underline whitespace-nowrap">还原已忽略的内置步骤提醒（{dismissedBuiltinIds.size}）</button>
               )}
               <div className="flex flex-wrap items-center gap-3">
                 <select

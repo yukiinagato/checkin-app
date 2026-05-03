@@ -227,6 +227,32 @@ pnpm start
   - `GET /api/health`：进程存活检查
   - `GET /api/ready`：数据库可用性检查
 
+### 已部署实例迁移步骤
+
+已有实例升级到当前版本时，建议按下面顺序执行：
+
+```bash
+# 1) 先备份当前生产实例数据
+pnpm backup:instance
+
+# 2) 更新代码并安装依赖
+git pull
+pnpm install
+
+# 3) 构建前端静态资源
+pnpm build
+
+# 4) 重启生产服务
+pnpm start
+```
+
+说明：
+
+- `pnpm backup:instance` 会读取 `server/.env.production`，备份当前 `DB_PATH`、`UPLOAD_DIR` 以及 `.env.production` 到项目根目录 `backups/`。
+- 当前版本对既有 SQLite 数据库是**非破坏性兼容**的，不会重置 `checkins`、`admin_passkeys`、模板数据或上传图片。
+- 远端新增的步骤 `category` 字段对旧模板数据做了兼容推断；旧实例不需要手工改库即可启动。
+- 如果生产实例仍使用旧的 `server/.env.production`，请至少核对 `CORS_ORIGIN`、`WEBAUTHN_ORIGIN`、`DB_PATH`、`UPLOAD_DIR` 是否仍指向正确的持久化位置。
+
 ### 本地部署 OCR（服务端）
 
 当前项目已支持通过后端本地调用 RapidOCR ONNX Runtime 进行护照识别，并在 OCR 请求时保存护照照片，接口为：

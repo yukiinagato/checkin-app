@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "install:all": "pnpm install",
+    "backup:instance": "node scripts/backup-instance.mjs",
     "deploy": "node scripts/deploy.mjs",
     "dev": "concurrently \"pnpm --filter server dev\" \"pnpm --filter client dev\"",
     "start": "pnpm --filter server start",

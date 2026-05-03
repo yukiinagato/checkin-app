@@ -21,7 +21,7 @@ const waitForServer = async (baseUrl, timeoutMs = 15000) => {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      const res = await fetch(`${baseUrl}/api/steps`);
+      const res = await fetch(`${baseUrl}/api/health`);
       if (res.ok) return;
     } catch (error) {
       // ignore while booting
@@ -47,7 +47,8 @@ const startServer = async () => {
     CORS_ORIGIN: 'http://localhost:5173',
     WEBAUTHN_ORIGIN: 'http://localhost:5173',
     WEBAUTHN_RP_ID: 'localhost',
-    WEBAUTHN_RP_NAME: 'Checkin Test'
+    WEBAUTHN_RP_NAME: 'Checkin Test',
+    MAX_IMAGE_BYTES: '1024'
   };
 
   const child = spawn(process.execPath, ['server.js'], {
@@ -105,6 +106,19 @@ test('GET /api/completion-template returns seeded default template', async () =>
   assert.ok(Object.keys(payload).length > 0);
 });
 
+test('GET /api/health and /api/ready expose runtime status', async () => {
+  const healthRes = await fetch(`${ctx.baseUrl}/api/health`);
+  assert.equal(healthRes.status, 200);
+  const healthPayload = await healthRes.json();
+  assert.equal(healthPayload.ok, true);
+  assert.equal(healthPayload.service, 'checkin-app-server');
+
+  const readyRes = await fetch(`${ctx.baseUrl}/api/ready`);
+  assert.equal(readyRes.status, 200);
+  const readyPayload = await readyRes.json();
+  assert.equal(readyPayload.ok, true);
+});
+
 test('POST /api/submit rejects invalid guest payload', async () => {
   const res = await fetch(`${ctx.baseUrl}/api/submit`, {
     method: 'POST',
@@ -139,6 +153,48 @@ test('POST /api/submit accepts valid visitor guest and returns id', async () => 
   assert.equal(payload.success, true);
   assert.equal(typeof payload.id, 'string');
   assert.ok(payload.id.length > 0);
+});
+
+test('POST /api/submit rejects invalid stay dates', async () => {
+  const validGuest = {
+    id: 'g-1',
+    name: 'Resident Guest',
+    age: 28,
+    isResident: true,
+    address: 'Tokyo',
+    phone: '09012345678'
+  };
+
+  const res = await fetch(`${ctx.baseUrl}/api/submit`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      guests: [validGuest],
+      checkIn: '2026-05-10',
+      checkOut: '2026-05-09'
+    })
+  });
+
+  assert.equal(res.status, 400);
+  const payload = await res.json();
+  assert.equal(payload.success, false);
+  assert.match(payload.error, /checkOut must be on or after checkIn/);
+});
+
+test('POST /api/ocr/passport rejects oversized image payload', async () => {
+  const base64 = Buffer.alloc(1500, 1).toString('base64');
+  const res = await fetch(`${ctx.baseUrl}/api/ocr/passport`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      image: `data:image/png;base64,${base64}`
+    })
+  });
+
+  assert.equal(res.status, 400);
+  const payload = await res.json();
+  assert.equal(payload.success, false);
+  assert.equal(payload.error, 'Invalid image payload');
 });
 
 test('admin endpoints require authorization when no valid session', async () => {

@@ -6,7 +6,7 @@
     "install:all": "pnpm install",
     "deploy": "node scripts/deploy.mjs",
     "dev": "concurrently \"pnpm --filter server dev\" \"pnpm --filter client dev\"",
-    "start": "concurrently \"pnpm --filter server start\" \"pnpm --filter client dev\"",
+    "start": "pnpm --filter server start",
     "build": "pnpm --filter client build",
     "test": "pnpm --filter server test && pnpm --filter client test"
   },

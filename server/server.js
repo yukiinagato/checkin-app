@@ -27,6 +27,14 @@ const execFileAsync = promisify(execFile);
 const app = express();
 const PORT = process.env.PORT || 3001;
 const HOST = process.env.HOST || '0.0.0.0';
+const TRUST_PROXY = process.env.TRUST_PROXY || 'loopback';
+const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || '10mb';
+const MAX_IMAGE_BYTES = Number.parseInt(process.env.MAX_IMAGE_BYTES || `${10 * 1024 * 1024}`, 10);
+const MAX_GUESTS_PER_SUBMISSION = Number.parseInt(process.env.MAX_GUESTS_PER_SUBMISSION || '12', 10);
+const REQUEST_TIMEOUT_MS = Number.parseInt(process.env.REQUEST_TIMEOUT_MS || '30000', 10);
+const MAX_TEXT_FIELD_LENGTH = Number.parseInt(process.env.MAX_TEXT_FIELD_LENGTH || '200', 10);
+const MAX_PASSPORT_NUMBER_LENGTH = Number.parseInt(process.env.MAX_PASSPORT_NUMBER_LENGTH || '32', 10);
+const SESSION_BACKEND = 'memory';
 
 // ----------------------------------------------------------------------
 // 1. 環境變數檢查
@@ -50,9 +58,23 @@ if (!CORS_ORIGINS.length) {
   throw new Error('CORS_ORIGIN is required (comma-separated origins)');
 }
 
+if (!Number.isFinite(MAX_IMAGE_BYTES) || MAX_IMAGE_BYTES <= 0) {
+  throw new Error('MAX_IMAGE_BYTES must be a positive integer');
+}
+
+if (!Number.isFinite(MAX_GUESTS_PER_SUBMISSION) || MAX_GUESTS_PER_SUBMISSION <= 0) {
+  throw new Error('MAX_GUESTS_PER_SUBMISSION must be a positive integer');
+}
+
+if (!Number.isFinite(REQUEST_TIMEOUT_MS) || REQUEST_TIMEOUT_MS <= 0) {
+  throw new Error('REQUEST_TIMEOUT_MS must be a positive integer');
+}
+
 // ----------------------------------------------------------------------
 // 2. 中間件配置
 // ----------------------------------------------------------------------
+app.disable('x-powered-by');
+app.set('trust proxy', TRUST_PROXY);
 app.use(cors({ origin: CORS_ORIGINS }));
 app.use(helmet({
   contentSecurityPolicy: {
@@ -63,13 +85,28 @@ app.use(helmet({
     }
   }
 }));
-app.use(express.json({ limit: '50mb' })); // 允許大文件上傳(圖片)
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
+app.use((req, res, next) => {
+  req.requestId = crypto.randomUUID();
+  res.setHeader('x-request-id', req.requestId);
+  res.setTimeout(REQUEST_TIMEOUT_MS);
+  next();
+});
+app.use((req, res, next) => {
+  const startedAt = Date.now();
+  res.on('finish', () => {
+    const durationMs = Date.now() - startedAt;
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} ${res.statusCode} ${durationMs}ms reqId=${req.requestId}`);
+  });
+  next();
+});
 
 // ----------------------------------------------------------------------
 // 3. 初始化存儲路徑
 // ----------------------------------------------------------------------
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'hotel.db');
+const CLIENT_DIST_DIR = path.resolve(__dirname, process.env.CLIENT_DIST_DIR || path.join('..', 'client', 'dist'));
 const PADDLE_OCR_PYTHON_PATH = process.env.PADDLE_OCR_PYTHON_PATH || process.env.PADDLE_OCR_PYTHON || 'python3';
 const PADDLE_OCR_RUNNER = process.env.PADDLE_OCR_RUNNER || path.join(__dirname, 'tools', 'paddle_ocr_runner.py');
 const OCR_CACHE_HOME = path.resolve(__dirname, process.env.CHECKIN_OCR_HOME || path.join('.cache', 'home'));
@@ -299,10 +336,12 @@ const parseDataImage = (dataImage) => {
   if (!matches || matches.length !== 3) return null;
   const extension = ALLOWED_IMAGE_TYPES.get(matches[1]);
   if (!extension) return null;
+  const buffer = Buffer.from(matches[2], 'base64');
+  if (!buffer.length || buffer.length > MAX_IMAGE_BYTES) return null;
   return {
     extension,
     mime: matches[1],
-    buffer: Buffer.from(matches[2], 'base64')
+    buffer
   };
 };
 
@@ -423,6 +462,21 @@ const saveAppSettings = (settings) => new Promise((resolve, reject) => {
 });
 
 const parseAge = (value) => Number.parseInt(String(value ?? '').trim(), 10);
+const parseDateOnly = (value) => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return null;
+  const parsed = new Date(`${trimmed}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  if (parsed.toISOString().slice(0, 10) !== trimmed) return null;
+  return trimmed;
+};
+const isNonEmptyString = (value) => typeof value === 'string' && value.trim().length > 0;
+const isSafeTextField = (value, maxLength = MAX_TEXT_FIELD_LENGTH) => {
+  if (!isNonEmptyString(value)) return false;
+  return value.trim().length <= maxLength;
+};
+const normalizeBoolean = (value) => value === true;
 
 const ALLOWED_TABLES = {
   step_templates:       { steps:    true },
@@ -465,22 +519,22 @@ const validateGuestPayload = (guest) => {
   const name = typeof guest.name === 'string' ? guest.name.trim() : '';
   const age = parseAge(guest.age);
   const hasValidAge = Number.isInteger(age) && age >= 0 && age <= 120;
-  if (!name || !hasValidAge) {
+  if (!isSafeTextField(name) || !hasValidAge) {
     return { valid: false, error: 'Guest name/age is invalid' };
   }
 
   const isMinor = age < 18;
   const guardianName = typeof guest.guardianName === 'string' ? guest.guardianName.trim() : '';
   const guardianPhone = typeof guest.guardianPhone === 'string' ? guest.guardianPhone.trim() : '';
-  if (isMinor && (!guardianName || !guardianPhone)) {
+  if (isMinor && (!isSafeTextField(guardianName) || !isSafeTextField(guardianPhone))) {
     return { valid: false, error: 'Minor guest must include guardian info' };
   }
 
-  if (guest.isResident === true) {
+  if (normalizeBoolean(guest.isResident)) {
     const address = typeof guest.address === 'string' ? guest.address.trim() : '';
     const phone = typeof guest.phone === 'string' ? guest.phone.trim() : '';
     const needsPhone = age >= 16;
-    if (!address || (needsPhone && !phone)) {
+    if (!isSafeTextField(address) || (needsPhone && !isSafeTextField(phone))) {
       return { valid: false, error: 'Resident guest info is incomplete' };
     }
     return { valid: true };
@@ -488,11 +542,54 @@ const validateGuestPayload = (guest) => {
 
   const nationality = typeof guest.nationality === 'string' ? guest.nationality.trim() : '';
   const passportNumber = typeof guest.passportNumber === 'string' ? guest.passportNumber.trim() : '';
-  if (!nationality || !passportNumber || !guest.passportPhoto) {
+  const hasPhoto = typeof guest.passportPhoto === 'string' && guest.passportPhoto.length > 0;
+  if (!isSafeTextField(nationality) || !isSafeTextField(passportNumber, MAX_PASSPORT_NUMBER_LENGTH) || !hasPhoto) {
     return { valid: false, error: 'Visitor guest info is incomplete' };
+  }
+  if (!parseDataImage(guest.passportPhoto) && !/^[0-9a-f-]+_passport\.[a-z0-9]+$/i.test(guest.passportPhoto)) {
+    return { valid: false, error: 'Visitor passport photo is invalid' };
   }
 
   return { valid: true };
+};
+
+const validateSubmissionPayload = (payload) => {
+  if (!payload || typeof payload !== 'object') {
+    return { valid: false, error: 'Invalid request body' };
+  }
+
+  const { guests, checkIn, checkOut } = payload;
+  if (!Array.isArray(guests) || guests.length === 0) {
+    return { valid: false, error: 'Invalid guest payload' };
+  }
+
+  if (guests.length > MAX_GUESTS_PER_SUBMISSION) {
+    return { valid: false, error: `Guest count exceeds limit (${MAX_GUESTS_PER_SUBMISSION})` };
+  }
+
+  const normalizedCheckIn = checkIn == null || checkIn === '' ? null : parseDateOnly(checkIn);
+  const normalizedCheckOut = checkOut == null || checkOut === '' ? null : parseDateOnly(checkOut);
+  if ((checkIn != null && checkIn !== '' && !normalizedCheckIn) || (checkOut != null && checkOut !== '' && !normalizedCheckOut)) {
+    return { valid: false, error: 'Invalid check-in/check-out date' };
+  }
+  if (normalizedCheckIn && normalizedCheckOut && normalizedCheckOut < normalizedCheckIn) {
+    return { valid: false, error: 'checkOut must be on or after checkIn' };
+  }
+
+  for (const guest of guests) {
+    const validation = validateGuestPayload(guest);
+    if (!validation.valid) return validation;
+  }
+
+  return {
+    valid: true,
+    normalized: {
+      guests,
+      checkIn: normalizedCheckIn,
+      checkOut: normalizedCheckOut,
+      submissionId: payload.submissionId
+    }
+  };
 };
 
 const adminChallenges = new Map();
@@ -651,9 +748,56 @@ const authVerifyRateLimit = rateLimit({
   message: { error: '驗證嘗試次數過多，每 15 分鐘最多 10 次，請稍後再試。' }
 });
 
+const shouldServeClientBuild = () => process.env.NODE_ENV === 'production';
+const canServeClientBuild = async () => fs.pathExists(path.join(CLIENT_DIST_DIR, 'index.html'));
+
+const mountClientBuild = () => {
+  app.use(express.static(CLIENT_DIST_DIR, {
+    index: false,
+    maxAge: '1h'
+  }));
+
+  app.get('*', async (req, res, next) => {
+    if (req.path.startsWith('/api/')) {
+      next();
+      return;
+    }
+    try {
+      const hasClientBuild = await canServeClientBuild();
+      if (!hasClientBuild) {
+        res.status(503).send('Client build is not available. Run `pnpm build` before starting production server.');
+        return;
+      }
+      res.sendFile(path.join(CLIENT_DIST_DIR, 'index.html'));
+    } catch (error) {
+      next(error);
+    }
+  });
+};
+
 // ----------------------------------------------------------------------
 // 7. API 路由
 // ----------------------------------------------------------------------
+
+app.get('/api/health', (req, res) => {
+  res.json({
+    ok: true,
+    service: 'checkin-app-server',
+    now: new Date().toISOString(),
+    uptimeSeconds: Math.round(process.uptime()),
+    sessionBackend: SESSION_BACKEND
+  });
+});
+
+app.get('/api/ready', (req, res) => {
+  db.get('SELECT 1 AS ok', [], (err) => {
+    if (err) {
+      res.status(503).json({ ok: false, error: 'Database unavailable' });
+      return;
+    }
+    res.json({ ok: true });
+  });
+});
 
 app.get('/api/records', requireAdminAuth, (req, res) => {
   db.all("SELECT * FROM checkins ORDER BY created_at DESC", [], (err, rows) => {
@@ -1084,12 +1228,18 @@ const isContentDuplicate = (newGuest, newMd5, newCheckIn, existing, existingChec
 
 app.post('/api/submit', submitRateLimit, async (req, res) => {
   try {
-    const { guests, submissionId: clientId } = req.body;
-    if (!Array.isArray(guests) || guests.length === 0) {
-      res.status(400).json({ success: false, error: 'Invalid guest payload' });
+    const validation = validateSubmissionPayload(req.body);
+    if (!validation.valid) {
+      res.status(400).json({ success: false, error: validation.error || 'Invalid submission payload' });
       return;
     }
 
+    const {
+      guests,
+      submissionId: clientId,
+      checkIn,
+      checkOut
+    } = validation.normalized;
     const invalidGuest = guests.find((guest) => !validateGuestPayload(guest).valid);
     if (invalidGuest) {
       const { error } = validateGuestPayload(invalidGuest);
@@ -1100,7 +1250,6 @@ app.post('/api/submit', submitRateLimit, async (req, res) => {
     // 優先使用客戶端提供的冪等 ID（須符合 UUID 格式），確保重複提交不污染數據
     const submitId = (typeof clientId === 'string' && UUID_RE.test(clientId)) ? clientId : uuidv4();
     const today = new Date().toISOString().split('T')[0];
-    const { checkIn, checkOut } = req.body;
 
     // 內容去重：若所有住客資訊（照片 MD5 + 身份欄位 + 入住日期）均與現有記錄完全一致，則靜默忽略
     const incomingMd5s = guests.map(g => computePhotoMd5(g.passportPhoto));
@@ -1151,7 +1300,7 @@ app.post('/api/submit', submitRateLimit, async (req, res) => {
 app.post('/api/ocr/passport', ocrRateLimit, async (req, res) => {
   try {
     const { image } = req.body || {};
-    if (typeof image !== 'string' || !image.startsWith('data:image')) {
+    if (!parseDataImage(image)) {
       res.status(400).json({ success: false, error: 'Invalid image payload' });
       return;
     }
@@ -1165,26 +1314,99 @@ app.post('/api/ocr/passport', ocrRateLimit, async (req, res) => {
   }
 });
 
-const startServer = () => app.listen(PORT, HOST, () => {
-  console.log(`--------------------------------------------------`);
-  console.log(`🏨 飯店管理後台服務已啟動`);
-  console.log(`📡 API 地址: http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
-  console.log(`📂 圖片存儲: ${UPLOAD_DIR}`);
-  console.log(`💾 數據庫: ${DB_PATH}`);
-  console.log(`🌐 WebAuthn Origin: ${EXPECTED_ORIGIN}`);
-  console.log(`--------------------------------------------------`);
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: 'API route not found' });
 });
+
+app.use((error, req, res, next) => {
+  if (error?.type === 'entity.too.large') {
+    res.status(413).json({ error: 'Request entity too large' });
+    return;
+  }
+  if (error instanceof SyntaxError && 'body' in error) {
+    res.status(400).json({ error: 'Invalid JSON payload' });
+    return;
+  }
+  console.error(`Unhandled server error reqId=${req?.requestId || 'n/a'}:`, error);
+  res.status(500).json({ error: 'Internal Server Error' });
+});
+
+let activeServer = null;
+let shuttingDown = false;
+
+const shutdown = (signal = 'unknown') => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[shutdown] received ${signal}, closing server...`);
+  clearInterval(cleanupInterval);
+
+  const finalizeExit = (code) => {
+    db.close((dbErr) => {
+      if (dbErr) {
+        console.error('[shutdown] failed to close database:', dbErr.message);
+        process.exit(1);
+        return;
+      }
+      process.exit(code);
+    });
+  };
+
+  if (!activeServer) {
+    finalizeExit(0);
+    return;
+  }
+
+  activeServer.close((closeErr) => {
+    if (closeErr) {
+      console.error('[shutdown] failed to close HTTP server:', closeErr.message);
+      finalizeExit(1);
+      return;
+    }
+    finalizeExit(0);
+  });
+
+  setTimeout(() => {
+    console.error('[shutdown] force exiting after timeout');
+    process.exit(1);
+  }, 10000).unref();
+};
+
+const startServer = () => {
+  if (shouldServeClientBuild()) {
+    mountClientBuild();
+  }
+  activeServer = app.listen(PORT, HOST, () => {
+    console.log(`--------------------------------------------------`);
+    console.log(`🏨 飯店管理後台服務已啟動`);
+    console.log(`📡 API 地址: http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
+    console.log(`📂 圖片存儲: ${UPLOAD_DIR}`);
+    console.log(`💾 數據庫: ${DB_PATH}`);
+    console.log(`🖥️ Client dist: ${CLIENT_DIST_DIR}`);
+    console.log(`🌐 WebAuthn Origin: ${EXPECTED_ORIGIN}`);
+    console.log(`🩺 Health: /api/health | Ready: /api/ready`);
+    console.log(`🛡️ trust proxy: ${TRUST_PROXY} | session backend: ${SESSION_BACKEND}`);
+    console.warn(`⚠️ 管理員 session 目前仍為記憶體存儲，正式多實例部署前請改為共享存儲。`);
+    console.log(`--------------------------------------------------`);
+  });
+  return activeServer;
+};
 
 if (require.main === module) {
   startServer();
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
 module.exports = {
   app,
   parseDataImage,
+  parseDateOnly,
+  validateGuestPayload,
+  validateSubmissionPayload,
   runLocalPassportOcr,
   savePassportImage,
   startServer,
+  shutdown,
   purgeExpiredEntries,
   cleanupInterval,
   adminSessions,

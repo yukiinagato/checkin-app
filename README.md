@@ -159,9 +159,9 @@ CHECKIN_PYTHON_STANDALONE_VERSION=3.11.15 CHECKIN_PYTHON_STANDALONE_TAG=20260414
 # 根目录
 pnpm deploy
 pnpm dev
+pnpm build
 pnpm start
 pnpm test
-pnpm build
 
 # 单独运行后端
 pnpm --filter server dev
@@ -175,6 +175,15 @@ pnpm --filter client build
 pnpm --filter client preview
 ```
 
+生产启动顺序：
+
+```bash
+pnpm build
+pnpm start
+```
+
+`pnpm start` 现在只启动后端生产服务；当 `NODE_ENV=production` 时，后端会直接托管 `client/dist` 静态文件，不再依赖 Vite 开发服务器。
+
 ---
 
 ## ⚙️ 配置说明（后端环境变量）
@@ -184,20 +193,39 @@ pnpm --filter client preview
 - `development` -> `server/.env.development`
 - `production` -> `server/.env.production`
 
+生产环境建议从 [server/.env.production.example](/Users/ox/Documents/project/checkin-app/server/.env.production.example) 复制生成 `server/.env.production`，再按真实域名、数据库目录与管理员令牌调整。
+
 关键变量如下：
 
 - `PORT`：后端监听端口。
+- `HOST`：后端绑定地址，默认 `0.0.0.0`。
 - `DB_PATH`：SQLite 数据库路径。
 - `UPLOAD_DIR`：上传文件目录。
+- `CLIENT_DIST_DIR`：生产环境前端构建目录，默认 `../client/dist`。
 - `ADMIN_API_TOKEN`：首次注册 Passkey 时的初始化令牌（必填）。
 - `CORS_ORIGIN`：允许跨域来源，支持逗号分隔多值（必填）。
 - `WEBAUTHN_RP_ID`：WebAuthn Relying Party ID（默认 `localhost`）。
 - `WEBAUTHN_RP_NAME`：WebAuthn RP 展示名称（默认 `Checkin Admin`）。
 - `WEBAUTHN_ORIGIN`：WebAuthn 验证 Origin（会移除末尾 `/`）。
+- `TRUST_PROXY`：反向代理场景下的 `Express trust proxy` 设置，默认 `loopback`。
+- `JSON_BODY_LIMIT`：JSON 请求体大小上限，默认 `10mb`。
+- `MAX_IMAGE_BYTES`：单张证件图片最大字节数，默认 `10485760`（10MB）。
+- `MAX_GUESTS_PER_SUBMISSION`：单次提交最多住客数，默认 `12`。
+- `REQUEST_TIMEOUT_MS`：单请求超时，默认 `30000`。
 - `PADDLE_OCR_PYTHON`：本地护照 OCR 运行的 Python 命令（默认 `python3`，变量名保留用于兼容旧配置）。
 - `PADDLE_OCR_RUNNER`：本地护照 OCR 识别脚本路径（默认 `server/tools/paddle_ocr_runner.py`，变量名保留用于兼容旧配置）。
 
 如果缺少 `ADMIN_API_TOKEN` 或 `CORS_ORIGIN`，服务将直接抛错退出。
+
+### 生产运行建议
+
+- 用反向代理（Nginx / Caddy / ALB）终止 HTTPS，再把流量转发到本服务。
+- 将 `DB_PATH`、`UPLOAD_DIR` 指向持久化磁盘，不要落在临时目录。
+- `ADMIN_API_TOKEN` 必须替换为长随机串，并只用于首次绑定 Passkey。
+- 目前管理员 session 仍是**进程内存存储**；单机部署可用，多实例或无状态扩缩容前应改为共享存储。
+- 建议用探针接入：
+  - `GET /api/health`：进程存活检查
+  - `GET /api/ready`：数据库可用性检查
 
 ### 本地部署 OCR（服务端）
 

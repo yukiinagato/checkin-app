@@ -640,7 +640,15 @@ const AdminDashboard = ({
   const addCustomStep = () => {
     setEditableSteps((prev) => [
       ...prev,
-      { id: createStepId(), title: '新步骤', subtitle: 'Custom Step', type: 'custom', content: '', enabled: true }
+      { id: createStepId(), title: '新步骤', subtitle: 'Custom Step', type: 'custom', category: 'checkin', content: '', enabled: true }
+    ]);
+    setStepsSaved(false);
+  };
+
+  const addGroupStep = () => {
+    setEditableSteps((prev) => [
+      ...prev,
+      { id: createStepId(), title: '新群组', subtitle: '', type: 'group', category: 'guide', content: '', enabled: true, children: [] }
     ]);
     setStepsSaved(false);
   };
@@ -1115,6 +1123,7 @@ const AdminDashboard = ({
                   复制来源步骤
                 </button>
                 <button onClick={addCustomStep} className="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-bold">新增步骤</button>
+                <button onClick={addGroupStep} className="px-4 py-2 rounded-xl bg-purple-600 text-white text-sm font-bold">新增群组</button>
               </div>
             </div>
 
@@ -1157,6 +1166,17 @@ const AdminDashboard = ({
                             </label>
                             <button onClick={() => { if (window.confirm(`確認刪除步驟「${step.title || step.id}」？`)) removeStep(step.id); }} className="p-1 text-rose-400 hover:text-rose-600" title="刪除此步驟"><Trash2 className="w-4 h-4" /></button>
                           </div>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase">分类</span>
+                          <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+                            <input type="radio" checked={step.category !== 'guide'} onChange={() => updateStepField(step.id, 'category', 'checkin')} />
+                            入住流程
+                          </label>
+                          <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+                            <input type="radio" checked={step.category === 'guide'} onChange={() => updateStepField(step.id, 'category', 'guide')} />
+                            房屋指南
+                          </label>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>
@@ -1262,6 +1282,17 @@ const AdminDashboard = ({
                             </label>
                             <button onClick={() => { if (window.confirm(`確認刪除步驟「${step.title || step.id}」？`)) removeStep(step.id); }} className="p-1 text-rose-400 hover:text-rose-600" title="刪除此步驟"><Trash2 className="w-4 h-4" /></button>
                           </div>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase">分类</span>
+                          <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+                            <input type="radio" checked={step.category !== 'guide'} onChange={() => updateStepField(step.id, 'category', 'checkin')} />
+                            入住流程
+                          </label>
+                          <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+                            <input type="radio" checked={step.category === 'guide'} onChange={() => updateStepField(step.id, 'category', 'guide')} />
+                            房屋指南
+                          </label>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>

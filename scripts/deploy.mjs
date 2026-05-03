@@ -805,17 +805,164 @@ const findExistingCertForDomain = async (domain) => {
   return reachable;
 };
 
+const opensslAvailable = async () => {
+  try {
+    await run('openssl', ['version'], { capture: true });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+// Read a file as text, falling back to `sudo -n cat` for root-only paths (e.g. /etc/letsencrypt/live/*).
+const readFileMaybeSudo = async (p) => {
+  try {
+    return await fs.readFile(p, 'utf8');
+  } catch (error) {
+    if (error.code !== 'EACCES' && error.code !== 'EPERM') {
+      if (error.code === 'ENOENT') return null;
+    }
+  }
+  if (process.platform !== 'linux') return null;
+  try {
+    const result = await run('sudo', ['-n', 'cat', p], { capture: true });
+    return result.stdout;
+  } catch {
+    return null;
+  }
+};
+
+// Pipe text into an openssl invocation so we can validate root-owned PEMs that we read via sudo.
+const opensslPipe = (args, stdinText) => new Promise((resolve, reject) => {
+  const child = spawn('openssl', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+  child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+  child.on('error', reject);
+  child.on('close', (code) => {
+    if (code === 0) resolve({ stdout, stderr });
+    else reject(new Error(stderr.trim() || `openssl ${args.join(' ')} exited with ${code}`));
+  });
+  child.stdin.end(stdinText);
+});
+
+const extractCertNames = (subjectAndExt) => {
+  const names = new Set();
+  const subjectMatch = subjectAndExt.match(/subject=.*?CN\s*=\s*([^,\n/]+)/i);
+  if (subjectMatch) names.add(subjectMatch[1].trim());
+  const sanMatch = subjectAndExt.match(/X509v3 Subject Alternative Name:\s*\n\s*([^\n]+)/);
+  if (sanMatch) {
+    sanMatch[1].split(',').forEach((entry) => {
+      const dns = entry.trim().match(/^DNS:(.+)$/i);
+      if (dns) names.add(dns[1].trim());
+    });
+  }
+  return [...names];
+};
+
+const certNameMatchesDomain = (names, domain) => names.some((n) => wildcardMatches(n, domain));
+
+// Validate that {certificate, certificateKey} are real, in date, match each other, and cover `domain`.
+// Returns { ok, errors[], warnings[], names[] }. If openssl isn't installed we degrade gracefully and warn.
+const validateCertificateFiles = async ({ certificate, certificateKey, domain }) => {
+  const errors = [];
+  const warnings = [];
+  let names = [];
+
+  const certText = await readFileMaybeSudo(certificate);
+  if (certText === null) {
+    errors.push(`证书文件不可读：${certificate}（路径不存在或无权限）`);
+  } else if (!/-----BEGIN CERTIFICATE-----/.test(certText)) {
+    errors.push(`证书不是合法的 PEM 格式：${certificate}`);
+  }
+
+  const keyText = await readFileMaybeSudo(certificateKey);
+  if (keyText === null) {
+    errors.push(`私钥文件不可读：${certificateKey}（路径不存在或无权限）`);
+  } else if (!/-----BEGIN (?:RSA |EC |ENCRYPTED )?PRIVATE KEY-----/.test(keyText)) {
+    errors.push(`私钥不是合法的 PEM 格式：${certificateKey}`);
+  }
+
+  if (errors.length > 0) return { ok: false, errors, warnings, names };
+
+  if (!(await opensslAvailable())) {
+    warnings.push('未检测到 openssl，跳过证书内容校验（仅校验了文件可读 + PEM 头）。');
+    return { ok: true, errors, warnings, names };
+  }
+
+  try {
+    const subj = await opensslPipe(['x509', '-noout', '-subject', '-ext', 'subjectAltName'], certText);
+    names = extractCertNames(subj.stdout);
+    if (names.length === 0) {
+      warnings.push('证书未声明 CN/SAN，无法核对域名。');
+    } else if (!certNameMatchesDomain(names, domain)) {
+      errors.push(`证书未覆盖域名 ${domain}（证书声明：${names.join(', ')}）`);
+    }
+  } catch (error) {
+    errors.push(`openssl 解析证书失败：${error.message}`);
+  }
+
+  try {
+    await opensslPipe(['x509', '-noout', '-checkend', '0'], certText);
+  } catch {
+    errors.push('证书已过期。');
+  }
+
+  try {
+    const certPub = await opensslPipe(['x509', '-noout', '-pubkey'], certText);
+    const keyPub = await opensslPipe(['pkey', '-pubout'], keyText);
+    if (certPub.stdout.trim() !== keyPub.stdout.trim()) {
+      errors.push('证书与私钥不匹配（公钥不一致）。');
+    }
+  } catch (error) {
+    errors.push(`openssl 校验证书/私钥配对失败：${error.message}`);
+  }
+
+  return { ok: errors.length === 0, errors, warnings, names };
+};
+
+// Prompt the user for cert + key paths, validate, and let them retry / skip / force.
+const promptManualCertificate = async ({ domain, ask, confirm }) => {
+  while (true) {
+    const certificate = (await ask('fullchain 证书绝对路径（留空跳过）', '')).trim();
+    if (!certificate) return null;
+    const certificateKey = (await ask('私钥绝对路径', '')).trim();
+    if (!certificateKey) {
+      console.log('[deploy] 未提供私钥路径，已跳过手动证书。');
+      return null;
+    }
+
+    const result = await validateCertificateFiles({ certificate, certificateKey, domain });
+    result.warnings.forEach((w) => console.log(`[deploy] 警告：${w}`));
+
+    if (result.ok) {
+      if (result.names.length > 0) {
+        console.log(`[deploy] 证书校验通过（覆盖：${result.names.join(', ')}）。`);
+      } else {
+        console.log('[deploy] 证书校验通过。');
+      }
+      return { certificate, certificateKey, source: 'manual' };
+    }
+
+    console.log('[deploy] 证书校验失败：');
+    result.errors.forEach((e) => console.log(`  - ${e}`));
+    if (await confirm('是否重新输入路径？', true)) continue;
+    if (await confirm('仍要使用这对未通过校验的路径吗？（强烈不建议）', false)) {
+      return { certificate, certificateKey, source: 'manual (unverified)' };
+    }
+    return null;
+  }
+};
+
 const resolveTlsCertificate = async ({ domain, ask, confirm }) => {
   const tools = await detectAcmeTools();
   const found = await findExistingCertForDomain(domain);
 
-  if (tools.length === 0 && found.length === 0) {
-    console.log('[deploy] 未检测到 ACME 工具（certbot / acme.sh），将生成占位证书路径，请稍后手动填写。');
-    return null;
-  }
-
   if (tools.length > 0) {
     console.log(`[deploy] 检测到 ACME 工具：${tools.map((t) => t.name).join(', ')}`);
+  } else {
+    console.log('[deploy] 未检测到 ACME 工具（certbot / acme.sh / lego / dehydrated）。');
   }
 
   if (found.length > 0) {
@@ -832,8 +979,18 @@ const resolveTlsCertificate = async ({ domain, ask, confirm }) => {
         const idx = Number.parseInt(raw, 10);
         if (Number.isFinite(idx) && idx >= 1 && idx <= found.length) pick = found[idx - 1];
       }
-      console.log(`[deploy] 将在 Nginx 中使用 ${pick.source} 的证书。`);
-      return { certificate: pick.certificate, certificateKey: pick.certificateKey, source: pick.source };
+      const result = await validateCertificateFiles({
+        certificate: pick.certificate,
+        certificateKey: pick.certificateKey,
+        domain
+      });
+      result.warnings.forEach((w) => console.log(`[deploy] 警告：${w}`));
+      if (result.ok) {
+        console.log(`[deploy] 将在 Nginx 中使用 ${pick.source} 的证书。`);
+        return { certificate: pick.certificate, certificateKey: pick.certificateKey, source: pick.source };
+      }
+      console.log(`[deploy] 自动检测到的证书未通过校验：`);
+      result.errors.forEach((e) => console.log(`  - ${e}`));
     }
   } else if (tools.length > 0) {
     console.log(`[deploy] 未在默认路径下找到 ${domain} 的证书。`);
@@ -849,12 +1006,15 @@ const resolveTlsCertificate = async ({ domain, ask, confirm }) => {
       console.log('  签发后建议安装到固定路径（这样 reload 不会丢）：');
       console.log(`    ${acme.bin} --install-cert -d ${domain} \\\n      --key-file       /etc/nginx/ssl/${domain}.key \\\n      --fullchain-file /etc/nginx/ssl/${domain}.cer \\\n      --reloadcmd      "sudo systemctl reload nginx"`);
     }
-    if (await confirm('是否手动填写已有证书路径？', false)) {
-      const certificate = await ask('fullchain 证书绝对路径', '');
-      const certificateKey = await ask('私钥绝对路径', '');
-      if (certificate && certificateKey) {
-        return { certificate, certificateKey, source: 'manual' };
-      }
+  }
+
+  // Fallback for ALL paths (no ACME, ACME without match, or user declined the auto-discovered cert):
+  // let the user paste any cert/key path they have on disk, validate it, and retry on failure.
+  if (await confirm('是否手动填写已有证书路径？', true)) {
+    const manual = await promptManualCertificate({ domain, ask, confirm });
+    if (manual) {
+      console.log(`[deploy] 将在 Nginx 中使用手动指定的证书：${manual.certificate}`);
+      return manual;
     }
   }
 

@@ -1,6 +1,7 @@
+'use strict';
+
 const express = require('express');
 const cors = require('cors');
-const sqlite3 = require('sqlite3').verbose();
 const fs = require('fs-extra');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
@@ -18,9 +19,24 @@ const { rateLimit } = require('express-rate-limit');
 const helmet = require('helmet');
 const STEP_TEMPLATES = require('./stepTemplates');
 const COMPLETION_TEMPLATES = require('./completionTemplates');
+
 const envPath = process.env.NODE_ENV === 'development' ? '.env.development' : '.env.production';
 require('dotenv').config({ path: path.resolve(__dirname, envPath) });
 
+const { createLogger } = require('./src/logger');
+const {
+  openDatabase,
+  applyPragmas,
+  runMigrations,
+  closeDatabase,
+  runAsync,
+  allAsync,
+  getAsync
+} = require('./src/db');
+const { AdminSessionStore } = require('./src/sessions');
+const { Semaphore } = require('./src/semaphore');
+
+const logger = createLogger();
 const encoder = new TextEncoder();
 const execFileAsync = promisify(execFile);
 
@@ -29,12 +45,15 @@ const PORT = process.env.PORT || 3001;
 const HOST = process.env.HOST || '0.0.0.0';
 const TRUST_PROXY = process.env.TRUST_PROXY || 'loopback';
 const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || '10mb';
+const SMALL_JSON_BODY_LIMIT = process.env.SMALL_JSON_BODY_LIMIT || '256kb';
 const MAX_IMAGE_BYTES = Number.parseInt(process.env.MAX_IMAGE_BYTES || `${10 * 1024 * 1024}`, 10);
 const MAX_GUESTS_PER_SUBMISSION = Number.parseInt(process.env.MAX_GUESTS_PER_SUBMISSION || '12', 10);
 const REQUEST_TIMEOUT_MS = Number.parseInt(process.env.REQUEST_TIMEOUT_MS || '30000', 10);
 const MAX_TEXT_FIELD_LENGTH = Number.parseInt(process.env.MAX_TEXT_FIELD_LENGTH || '200', 10);
 const MAX_PASSPORT_NUMBER_LENGTH = Number.parseInt(process.env.MAX_PASSPORT_NUMBER_LENGTH || '32', 10);
-const SESSION_BACKEND = 'memory';
+const OCR_MAX_CONCURRENCY = Number.parseInt(process.env.OCR_MAX_CONCURRENCY || '2', 10);
+const OCR_QUEUE_TIMEOUT_MS = Number.parseInt(process.env.OCR_QUEUE_TIMEOUT_MS || '15000', 10);
+const SESSION_BACKEND = 'sqlite';
 
 // ----------------------------------------------------------------------
 // 1. 環境變數檢查
@@ -46,7 +65,6 @@ if (!ADMIN_API_TOKEN) {
 
 const RP_ID = process.env.WEBAUTHN_RP_ID || 'localhost';
 const RP_NAME = process.env.WEBAUTHN_RP_NAME || 'Checkin Admin';
-// 修復：移除 Origin 可能存在的末尾斜線
 const EXPECTED_ORIGIN = (process.env.WEBAUTHN_ORIGIN || 'http://localhost:5173').replace(/\/$/, '');
 
 const CORS_ORIGINS = (process.env.CORS_ORIGIN || '')
@@ -70,6 +88,10 @@ if (!Number.isFinite(REQUEST_TIMEOUT_MS) || REQUEST_TIMEOUT_MS <= 0) {
   throw new Error('REQUEST_TIMEOUT_MS must be a positive integer');
 }
 
+if (!Number.isFinite(OCR_MAX_CONCURRENCY) || OCR_MAX_CONCURRENCY <= 0) {
+  throw new Error('OCR_MAX_CONCURRENCY must be a positive integer');
+}
+
 // ----------------------------------------------------------------------
 // 2. 中間件配置
 // ----------------------------------------------------------------------
@@ -80,12 +102,33 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       ...helmet.contentSecurityPolicy.getDefaultDirectives(),
-      // PaddleOCR 從 cdn.jsdelivr.net 載入 WASM / JS 資源
+      // CDN entry retained for legacy WASM OCR fallback paths and pinned by tests.
       'script-src': ["'self'", 'cdn.jsdelivr.net']
     }
   }
 }));
-app.use(express.json({ limit: JSON_BODY_LIMIT }));
+
+// Per-route JSON body limits: image-bearing routes get JSON_BODY_LIMIT,
+// everything else is capped at SMALL_JSON_BODY_LIMIT to shrink the abuse surface.
+const LARGE_BODY_PATHS = new Set([
+  '/api/submit',
+  '/api/ocr/passport',
+  '/api/admin/steps',
+  '/api/admin/completion-template'
+]);
+const smallJsonParser = express.json({ limit: SMALL_JSON_BODY_LIMIT });
+const largeJsonParser = express.json({ limit: JSON_BODY_LIMIT });
+app.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
+    return next();
+  }
+  const parser = LARGE_BODY_PATHS.has(req.path) ? largeJsonParser : smallJsonParser;
+  return parser(req, res, next);
+});
+// Fallback parser; previous middleware will have already parsed the body so this is a no-op,
+// retained as a defensive default for any future routes not in LARGE_BODY_PATHS.
+app.use(express.json({ limit: SMALL_JSON_BODY_LIMIT }));
+
 app.use((req, res, next) => {
   req.requestId = crypto.randomUUID();
   res.setHeader('x-request-id', req.requestId);
@@ -96,10 +139,35 @@ app.use((req, res, next) => {
   const startedAt = Date.now();
   res.on('finish', () => {
     const durationMs = Date.now() - startedAt;
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} ${res.statusCode} ${durationMs}ms reqId=${req.requestId}`);
+    const payload = {
+      method: req.method,
+      url: req.originalUrl,
+      status: res.statusCode,
+      durationMs,
+      requestId: req.requestId
+    };
+    if (res.statusCode >= 500) logger.error(payload, 'request');
+    else if (res.statusCode >= 400) logger.warn(payload, 'request');
+    else logger.info(payload, 'request');
   });
   next();
 });
+
+// Helper: log internal errors with full detail but only return generic 5xx to clients.
+const sendInternal = (req, res, err, hint) => {
+  logger.error({
+    err: err?.message || String(err),
+    stack: err?.stack,
+    requestId: req?.requestId,
+    hint
+  }, 'request failed');
+  if (!res.headersSent) {
+    res.status(500).json({
+      error: 'Internal Server Error',
+      requestId: req?.requestId
+    });
+  }
+};
 
 // ----------------------------------------------------------------------
 // 3. 初始化存儲路徑
@@ -113,6 +181,7 @@ const OCR_CACHE_HOME = path.resolve(__dirname, process.env.CHECKIN_OCR_HOME || p
 const OCR_CACHE_DIR = path.resolve(__dirname, process.env.XDG_CACHE_HOME || '.cache');
 const OCR_PADDLE_HOME = path.resolve(__dirname, process.env.PADDLE_HOME || '.paddle');
 const OCR_MODEL_HOME = path.resolve(__dirname, process.env.PADDLEOCR_HOME || '.ocr-models');
+const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 const DEFAULT_APP_SETTINGS = Object.freeze({
   taiwanNamingMode: 'locale-default'
 });
@@ -129,148 +198,29 @@ const ALLOWED_IMAGE_TYPES = new Map([
 fs.ensureDirSync(UPLOAD_DIR);
 
 // ----------------------------------------------------------------------
-// 4. 初始化 SQLite 數據庫
+// 4. 資料庫與 session store（在 startServer 之前可用，但 hydrate 在 startServer 中執行）
 // ----------------------------------------------------------------------
-const db = new sqlite3.Database(DB_PATH, (err) => {
-  if (err) console.error('數據庫連接失敗:', err.message);
-  else console.log('已連接到本地 SQLite 數據庫');
-});
+let db = null;
+let sessionStore = null;
+const ocrSemaphore = new Semaphore(OCR_MAX_CONCURRENCY);
 
-// 創建表結構 (保留原始詳細定義)
-db.run(`
-  CREATE TABLE IF NOT EXISTS checkins (
-    id TEXT PRIMARY KEY,
-    date TEXT,
-    data TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )
-`);
-
-db.run(`
-  CREATE TABLE IF NOT EXISTS step_templates (
-    lang TEXT PRIMARY KEY,
-    steps TEXT,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )
-`);
-
-db.run(`
-  CREATE TABLE IF NOT EXISTS completion_templates (
-    lang TEXT PRIMARY KEY,
-    template TEXT,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )
-`);
-
-db.run(`
-  CREATE TABLE IF NOT EXISTS app_settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )
-`);
-
-db.run(`
-  CREATE TABLE IF NOT EXISTS admin_passkeys (
-    credential_id TEXT PRIMARY KEY,
-    public_key TEXT NOT NULL,
-    counter INTEGER NOT NULL DEFAULT 0,
-    transports TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )
-`);
-
-db.serialize(() => {
-  db.all('PRAGMA table_info(admin_passkeys)', [], (pragmaErr, columns) => {
-    if (pragmaErr) {
-      console.error('讀取 admin_passkeys 表結構失敗:', pragmaErr.message);
-      return;
+const seedStepTemplates = async () => {
+  for (const [lang, steps] of Object.entries(STEP_TEMPLATES)) {
+    const row = await getAsync(db, 'SELECT lang FROM step_templates WHERE lang = ?', [lang]);
+    if (!row) {
+      await runAsync(db, 'INSERT INTO step_templates (lang, steps) VALUES (?, ?)', [lang, JSON.stringify(steps)]);
     }
-
-    const columnNames = new Set((columns || []).map((column) => column.name));
-    if (!columnNames.has('public_key')) {
-      db.run('ALTER TABLE admin_passkeys ADD COLUMN public_key TEXT', (err) => {
-        if (err) console.error('添加 public_key 欄位失敗:', err.message);
-      });
-    }
-    if (!columnNames.has('counter')) {
-      db.run('ALTER TABLE admin_passkeys ADD COLUMN counter INTEGER NOT NULL DEFAULT 0', (err) => {
-        if (err) console.error('添加 counter 欄位失敗:', err.message);
-      });
-    }
-    if (!columnNames.has('transports')) {
-      db.run('ALTER TABLE admin_passkeys ADD COLUMN transports TEXT', (err) => {
-        if (err) console.error('添加 transports 欄位失敗:', err.message);
-      });
-    }
-  });
-
-  db.all('PRAGMA table_info(checkins)', [], (pragmaErr, columns) => {
-    if (pragmaErr) {
-      console.error('讀取 checkins 表結構失敗:', pragmaErr.message);
-      return;
-    }
-    const columnNames = new Set((columns || []).map((column) => column.name));
-    if (!columnNames.has('check_in')) {
-      db.run('ALTER TABLE checkins ADD COLUMN check_in TEXT', (err) => {
-        if (err) console.error('添加 check_in 欄位失敗:', err.message);
-      });
-    }
-    if (!columnNames.has('check_out')) {
-      db.run('ALTER TABLE checkins ADD COLUMN check_out TEXT', (err) => {
-        if (err) console.error('添加 check_out 欄位失敗:', err.message);
-      });
-    }
-  });
-});
-
-const seedStepTemplates = () => {
-  Object.entries(STEP_TEMPLATES).forEach(([lang, steps]) => {
-    db.get('SELECT lang FROM step_templates WHERE lang = ?', [lang], (err, row) => {
-      if (err) {
-        console.error('步驟模板查詢失敗:', err.message);
-        return;
-      }
-      if (!row) {
-        db.run(
-          'INSERT INTO step_templates (lang, steps) VALUES (?, ?)',
-          [lang, JSON.stringify(steps)],
-          (insertErr) => {
-            if (insertErr) {
-              console.error('初始化步驟模板失敗:', insertErr.message);
-            }
-          }
-        );
-      }
-    });
-  });
+  }
 };
 
-seedStepTemplates();
-
-const seedCompletionTemplates = () => {
-  Object.entries(COMPLETION_TEMPLATES).forEach(([lang, template]) => {
-    db.get('SELECT lang FROM completion_templates WHERE lang = ?', [lang], (err, row) => {
-      if (err) {
-        console.error('完成頁模板查詢失敗:', err.message);
-        return;
-      }
-      if (!row) {
-        db.run(
-          'INSERT INTO completion_templates (lang, template) VALUES (?, ?)',
-          [lang, JSON.stringify(template)],
-          (insertErr) => {
-            if (insertErr) {
-              console.error('初始化完成頁模板失敗:', insertErr.message);
-            }
-          }
-        );
-      }
-    });
-  });
+const seedCompletionTemplates = async () => {
+  for (const [lang, template] of Object.entries(COMPLETION_TEMPLATES)) {
+    const row = await getAsync(db, 'SELECT lang FROM completion_templates WHERE lang = ?', [lang]);
+    if (!row) {
+      await runAsync(db, 'INSERT INTO completion_templates (lang, template) VALUES (?, ?)', [lang, JSON.stringify(template)]);
+    }
+  }
 };
-
-seedCompletionTemplates();
 
 // ----------------------------------------------------------------------
 // 5. 輔助函數：業務邏輯與安全驗證
@@ -279,7 +229,6 @@ const saveImagesLocally = async (guests) => {
   const processedGuests = await Promise.all(guests.map(async (guest) => {
     if (guest.passportPhoto && guest.passportPhoto.startsWith('data:image')) {
       try {
-        // 解析 Base64
         const matches = guest.passportPhoto.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
         if (!matches || matches.length !== 3) return guest;
         const extension = ALLOWED_IMAGE_TYPES.get(matches[1]);
@@ -294,17 +243,15 @@ const saveImagesLocally = async (guests) => {
           throw new Error('Invalid upload path');
         }
 
-        // 寫入文件
         await fs.outputFile(filePath, imageBuffer, { flag: 'wx' });
 
-        // 更新 guest 對象中的圖片路徑為文件名，並附帶 MD5 供去重
         return {
           ...guest,
           passportPhoto: filename,
           passportPhotoMd5: photoMd5
         };
       } catch (err) {
-        console.error('圖片保存失敗:', err);
+        logger.error({ err: err.message, guestId: guest?.id }, 'failed to save guest image');
         return guest;
       }
     }
@@ -351,6 +298,14 @@ const runLocalPassportOcr = async (dataImage) => {
     return { success: false, unsupported: true, error: 'Invalid image payload' };
   }
 
+  let release = null;
+  try {
+    release = await ocrSemaphore.acquire(OCR_QUEUE_TIMEOUT_MS);
+  } catch (err) {
+    logger.warn({ err: err.message, semaphore: ocrSemaphore.stats() }, 'OCR queue saturated');
+    return { success: false, unsupported: true, error: 'OCR_BUSY' };
+  }
+
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'passport-ocr-'));
   const imagePath = path.join(tempDir, `passport.${parsed.extension}`);
 
@@ -381,19 +336,20 @@ const runLocalPassportOcr = async (dataImage) => {
       try {
         return JSON.parse(line);
       } catch {
-        // ignore and continue searching previous lines
+        // continue searching previous lines
       }
     }
 
     throw new Error('Passport OCR output does not contain JSON payload');
   } catch (error) {
-    console.error('護照 OCR 本地識別失敗:', error.message || error);
+    logger.error({ err: error.message || String(error) }, 'passport OCR failed');
     return {
       success: false,
       unsupported: true,
       error: error.message || 'Passport OCR execution failed'
     };
   } finally {
+    if (release) release();
     await fs.remove(tempDir);
   }
 };
@@ -402,7 +358,7 @@ const parseRecordData = (row) => {
   try {
     return JSON.parse(row.data);
   } catch (error) {
-    console.warn(`無法解析記錄 ${row.id} 的數據:`, error);
+    logger.warn({ err: error.message, recordId: row.id }, 'failed to parse record data');
     return [];
   }
 };
@@ -593,7 +549,8 @@ const validateSubmissionPayload = (payload) => {
 };
 
 const adminChallenges = new Map();
-const adminSessions = new Map();
+// adminSessions exposes a Map-like API but is backed by SQLite (see AdminSessionStore).
+let adminSessions = null;
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -602,6 +559,7 @@ const purgeExpiredEntries = () => {
   for (const [key, value] of adminChallenges) {
     if (value.expiresAt < now) adminChallenges.delete(key);
   }
+  if (!adminSessions) return;
   for (const [token, expiresAt] of adminSessions) {
     if (expiresAt < now) adminSessions.delete(token);
   }
@@ -629,18 +587,17 @@ const consumeChallenge = (challenge, purpose) => {
     const found = adminChallenges.get(norm);
     adminChallenges.delete(norm);
     if (found.purpose !== purpose) {
-      console.error(`Challenge purpose mismatch: ${found.purpose} vs ${purpose}`);
+      logger.warn({ expected: purpose, actual: found.purpose }, 'challenge purpose mismatch');
       return false;
     }
     if (found.expiresAt < Date.now()) {
-      console.error('Challenge expired');
+      logger.warn('challenge expired');
       return false;
     }
     return true;
   }
 
-  // 2. 嘗試解碼匹配 (處理客戶端回傳雙重編碼的情況)
-  // 如果前端回傳的是 Base64(OriginalChallenge)，我們嘗試解碼它看看是否能對應到 Map 中的 Key
+  // Some clients double-encode the challenge; try decoding once before giving up.
   try {
     const decoded = Buffer.from(norm, 'base64url').toString('utf-8');
     const decodedNorm = normalizeChallenge(decoded);
@@ -648,20 +605,20 @@ const consumeChallenge = (challenge, purpose) => {
       const found = adminChallenges.get(decodedNorm);
       adminChallenges.delete(decodedNorm);
       if (found.purpose !== purpose) {
-        console.error(`Challenge purpose mismatch (decoded): ${found.purpose} vs ${purpose}`);
+        logger.warn({ expected: purpose, actual: found.purpose }, 'challenge purpose mismatch (decoded)');
         return false;
       }
       if (found.expiresAt < Date.now()) {
-        console.error('Challenge expired (decoded)');
+        logger.warn('challenge expired (decoded)');
         return false;
       }
       return true;
     }
   } catch (e) {
-    // 解碼失敗則忽略，繼續報錯
+    // ignore decode errors and fall through
   }
 
-  console.error(`Challenge not found in map. Key: ${norm}, Map keys: ${Array.from(adminChallenges.keys())}`);
+  logger.warn({ key: norm }, 'challenge not found');
   return false;
 };
 
@@ -685,9 +642,9 @@ const getAdminSessionFromRequest = (req) => {
 
 const requireAdminAuth = (req, res, next) => {
   const token = getAdminSessionFromRequest(req);
-  const expiresAt = adminSessions.get(token);
+  const expiresAt = adminSessions?.get(token);
   if (!token || !expiresAt || expiresAt < Date.now()) {
-    if (token) adminSessions.delete(token);
+    if (token && adminSessions) adminSessions.delete(token);
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }
@@ -700,10 +657,9 @@ const extractChallengeFromCredential = (credential) => {
     if (!clientDataJSON) return '';
     const decoded = Buffer.from(clientDataJSON, 'base64url').toString('utf8');
     const parsed = JSON.parse(decoded);
-    // [修復] 提取時也進行標準化處理
     return normalizeChallenge(parsed.challenge);
   } catch (error) {
-    console.error('Error parsing clientDataJSON:', error);
+    logger.warn({ err: error.message }, 'failed to parse clientDataJSON');
     return '';
   }
 };
@@ -790,6 +746,10 @@ app.get('/api/health', (req, res) => {
 });
 
 app.get('/api/ready', (req, res) => {
+  if (!db) {
+    res.status(503).json({ ok: false, error: 'Database not initialized' });
+    return;
+  }
   db.get('SELECT 1 AS ok', [], (err) => {
     if (err) {
       res.status(503).json({ ok: false, error: 'Database unavailable' });
@@ -802,7 +762,7 @@ app.get('/api/ready', (req, res) => {
 app.get('/api/records', requireAdminAuth, (req, res) => {
   db.all("SELECT * FROM checkins ORDER BY created_at DESC", [], (err, rows) => {
     if (err) {
-      res.status(500).json({ error: err.message });
+      sendInternal(req, res, err, 'list records');
       return;
     }
     const records = rows.map((row) => {
@@ -829,13 +789,13 @@ app.get('/api/admin/uploads/:filename', requireAdminAuth, async (req, res) => {
   const filePath = path.resolve(path.join(absoluteUploadDir, filename));
 
   if (!filePath.startsWith(absoluteUploadDir)) {
-    console.error('路徑安全檢查失敗:', { filePath, absoluteUploadDir });
+    logger.warn({ filePath, absoluteUploadDir, requestId: req.requestId }, 'upload path traversal blocked');
     return res.status(403).json({ error: 'Invalid file path' });
   }
 
   const exists = await fs.pathExists(filePath);
   if (!exists) {
-    console.error('請求檔案不存在:', { filePath });
+    logger.warn({ filePath, requestId: req.requestId }, 'upload not found');
     res.status(404).json({ error: 'File not found' });
     return;
   }
@@ -849,7 +809,7 @@ app.get('/api/admin/session', requireAdminAuth, (req, res) => {
 app.get('/api/admin/passkeys/status', (req, res) => {
   db.get('SELECT COUNT(*) as count FROM admin_passkeys', [], (err, row) => {
     if (err) {
-      res.status(500).json({ error: err.message });
+      sendInternal(req, res, err, 'passkeys status');
       return;
     }
     res.json({ hasPasskey: Number(row?.count || 0) > 0 });
@@ -860,7 +820,6 @@ app.post('/api/admin/passkeys/register/options', async (req, res) => {
   const bearerToken = getBearerToken(req);
 
   try {
-    // 檢查管理員狀態
     const row = await new Promise((resolve, reject) => {
       db.get('SELECT COUNT(*) as count FROM admin_passkeys', [], (err, r) => err ? reject(err) : resolve(r));
     });
@@ -878,7 +837,6 @@ app.post('/api/admin/passkeys/register/options', async (req, res) => {
 
     const challenge = createChallenge('register');
 
-    // 獲取排除列表
     const rowsForExclude = await new Promise((resolve, reject) => {
       db.all('SELECT credential_id FROM admin_passkeys', [], (err, rows) => err ? reject(err) : resolve(rows));
     });
@@ -910,8 +868,7 @@ app.post('/api/admin/passkeys/register/options', async (req, res) => {
 
     res.json(serializableOptions);
   } catch (err) {
-    console.error('Registration Options Error:', err);
-    res.status(500).json({ error: err.message });
+    sendInternal(req, res, err, 'registration options');
   }
 });
 
@@ -942,7 +899,7 @@ app.post('/api/admin/passkeys/register/verify', async (req, res) => {
         'INSERT OR REPLACE INTO admin_passkeys (credential_id, public_key, counter, transports) VALUES (?, ?, ?, ?)',
         [credentialID, Buffer.from(credentialPublicKey).toString('base64url'), counter, transports],
         (err) => {
-          if (err) return res.status(500).json({ error: err.message });
+          if (err) return sendInternal(req, res, err, 'persist passkey');
           res.json({ success: true });
         }
       );
@@ -950,14 +907,14 @@ app.post('/api/admin/passkeys/register/verify', async (req, res) => {
       res.status(400).json({ error: 'Registration verification failed' });
     }
   } catch (error) {
-    console.error('Verify Registration Error:', error);
-    res.status(400).json({ error: error.message });
+    logger.warn({ err: error.message, requestId: req.requestId }, 'verify registration error');
+    res.status(400).json({ error: 'Registration verification failed' });
   }
 });
 
 app.post('/api/admin/passkeys/auth/options', (req, res) => {
   db.all('SELECT credential_id FROM admin_passkeys', [], async (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+    if (err) return sendInternal(req, res, err, 'auth options');
     if (!rows?.length) return res.status(404).json({ error: 'No passkey registered' });
 
     const challenge = createChallenge('auth');
@@ -973,7 +930,7 @@ app.post('/api/admin/passkeys/auth/options', (req, res) => {
       });
       res.json(options);
     } catch (e) {
-      res.status(500).json({ error: e.message });
+      sendInternal(req, res, e, 'generate auth options');
     }
   });
 });
@@ -988,7 +945,7 @@ app.post('/api/admin/passkeys/auth/verify', authVerifyRateLimit, async (req, res
   }
 
   db.get('SELECT * FROM admin_passkeys WHERE credential_id = ?', [credential.id], async (err, row) => {
-    if (err) return res.status(500).json({ error: err.message });
+    if (err) return sendInternal(req, res, err, 'lookup passkey');
     if (!row) return res.status(401).json({ error: 'Unknown passkey' });
 
     try {
@@ -1016,8 +973,8 @@ app.post('/api/admin/passkeys/auth/verify', authVerifyRateLimit, async (req, res
         res.status(401).json({ error: 'Authentication verification failed' });
       }
     } catch (verifyErr) {
-      console.error('Verify Auth Error:', verifyErr);
-      res.status(400).json({ error: verifyErr.message });
+      logger.warn({ err: verifyErr.message, requestId: req.requestId }, 'verify auth error');
+      res.status(400).json({ error: 'Authentication verification failed' });
     }
   });
 });
@@ -1037,12 +994,10 @@ app.get('/api/steps', (req, res) => {
       try {
         res.json(JSON.parse(row.payload));
       } catch (parseErr) {
-        res.status(500).json({ error: 'Invalid step data' });
+        sendInternal(req, res, parseErr, 'parse steps');
       }
     })
-    .catch((err) => {
-      res.status(500).json({ error: err.message });
-    });
+    .catch((err) => sendInternal(req, res, err, 'load steps'));
 });
 
 app.get('/api/app-settings', async (req, res) => {
@@ -1050,7 +1005,7 @@ app.get('/api/app-settings', async (req, res) => {
     const settings = await loadAppSettings();
     res.json(settings);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendInternal(req, res, err, 'load app-settings');
   }
 });
 
@@ -1087,10 +1042,10 @@ app.get('/api/template-bundle', async (req, res) => {
         appSettings
       });
     } catch (parseErr) {
-      return res.status(500).json({ error: 'Invalid template bundle data' });
+      return sendInternal(req, res, parseErr, 'parse template bundle');
     }
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return sendInternal(req, res, err, 'load template bundle');
   }
 });
 
@@ -1103,12 +1058,10 @@ app.get('/api/completion-template', (req, res) => {
       try {
         res.json(JSON.parse(row.payload));
       } catch (parseErr) {
-        res.status(500).json({ error: 'Invalid completion template data' });
+        sendInternal(req, res, parseErr, 'parse completion template');
       }
     })
-    .catch((err) => {
-      res.status(500).json({ error: err.message });
-    });
+    .catch((err) => sendInternal(req, res, err, 'load completion template'));
 });
 
 app.patch('/api/records/:recordId/guests/:guestId', requireAdminAuth, (req, res) => {
@@ -1117,7 +1070,7 @@ app.patch('/api/records/:recordId/guests/:guestId', requireAdminAuth, (req, res)
   if (typeof deleted !== 'boolean') return res.status(400).json({ error: 'Invalid deleted flag' });
 
   db.get('SELECT data FROM checkins WHERE id = ?', [recordId], (err, row) => {
-    if (err) return res.status(500).json({ error: err.message });
+    if (err) return sendInternal(req, res, err, 'lookup record for patch');
     if (!row) return res.status(404).json({ error: 'Record not found' });
 
     try {
@@ -1132,11 +1085,11 @@ app.patch('/api/records/:recordId/guests/:guestId', requireAdminAuth, (req, res)
       if (!found) return res.status(404).json({ error: 'Guest not found' });
 
       db.run('UPDATE checkins SET data = ? WHERE id = ?', [JSON.stringify(updatedGuests), recordId], (updateErr) => {
-        if (updateErr) return res.status(500).json({ error: updateErr.message });
+        if (updateErr) return sendInternal(req, res, updateErr, 'update record');
         res.json({ success: true });
       });
     } catch (parseErr) {
-      res.status(500).json({ error: 'Invalid record data' });
+      sendInternal(req, res, parseErr, 'parse record data');
     }
   });
 });
@@ -1157,7 +1110,7 @@ app.put('/api/admin/steps', requireAdminAuth, (req, res) => {
        updated_at = CURRENT_TIMESTAMP`,
     [targetLang, JSON.stringify(steps)],
     (err) => {
-      if (err) return res.status(500).json({ error: err.message });
+      if (err) return sendInternal(req, res, err, 'save steps');
       res.json({ success: true });
     }
   );
@@ -1179,7 +1132,7 @@ app.put('/api/admin/completion-template', requireAdminAuth, (req, res) => {
        updated_at = CURRENT_TIMESTAMP`,
     [targetLang, JSON.stringify(template)],
     (err) => {
-      if (err) return res.status(500).json({ error: err.message });
+      if (err) return sendInternal(req, res, err, 'save completion template');
       res.json({ success: true });
     }
   );
@@ -1195,13 +1148,12 @@ app.put('/api/admin/app-settings', requireAdminAuth, async (req, res) => {
     const saved = await loadAppSettings();
     res.json({ success: true, settings: saved });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendInternal(req, res, err, 'save app-settings');
   }
 });
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// 計算 data URI 圖片的 MD5（去重用）
 const computePhotoMd5 = (dataImage) => {
   if (!dataImage || !dataImage.startsWith('data:image')) return null;
   const matches = dataImage.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
@@ -1213,7 +1165,6 @@ const computePhotoMd5 = (dataImage) => {
 
 const norm = (s) => (s == null ? '' : String(s).trim().toLowerCase());
 
-// 判斷一個新住客是否與現有住客完全重複（照片 MD5 + 所有身份資訊 + 入住日期相符）
 const isContentDuplicate = (newGuest, newMd5, newCheckIn, existing, existingCheckIn) => {
   if (newMd5 && existing.passportPhotoMd5 && newMd5 !== existing.passportPhotoMd5) return false;
   return (
@@ -1247,11 +1198,9 @@ app.post('/api/submit', submitRateLimit, async (req, res) => {
       return;
     }
 
-    // 優先使用客戶端提供的冪等 ID（須符合 UUID 格式），確保重複提交不污染數據
     const submitId = (typeof clientId === 'string' && UUID_RE.test(clientId)) ? clientId : uuidv4();
     const today = new Date().toISOString().split('T')[0];
 
-    // 內容去重：若所有住客資訊（照片 MD5 + 身份欄位 + 入住日期）均與現有記錄完全一致，則靜默忽略
     const incomingMd5s = guests.map(g => computePhotoMd5(g.passportPhoto));
     const isDuplicate = await new Promise((resolve) => {
       db.all('SELECT data, check_in FROM checkins', [], (err, rows) => {
@@ -1269,31 +1218,27 @@ app.post('/api/submit', submitRateLimit, async (req, res) => {
     });
 
     if (isDuplicate) {
-      console.log(`[submit] 內容完全重複，已忽略: ${submitId}`);
+      logger.info({ submitId, requestId: req.requestId }, 'duplicate submission ignored (content match)');
       return res.json({ success: true, id: submitId, duplicate: true });
     }
 
     const guestsWithUrls = (await saveImagesLocally(guests)).map((guest) => ({ ...guest, deleted: guest.deleted === true }));
 
-    // INSERT OR IGNORE：重複 submissionId 靜默忽略，不返回錯誤
     const stmt = db.prepare("INSERT OR IGNORE INTO checkins (id, date, data, check_in, check_out) VALUES (?, ?, ?, ?, ?)");
     stmt.run(submitId, today, JSON.stringify(guestsWithUrls), checkIn || null, checkOut || null, function (err) {
       if (err) {
-        console.error('[submit] 資料庫寫入錯誤:', err);
-        res.status(500).json({ success: false, error: err.message });
+        sendInternal(req, res, err, 'persist submission');
       } else if (this.changes === 0) {
-        // 重複提交（冪等 ID），直接回傳成功
-        console.log(`[submit] 重複 submissionId 已忽略: ${submitId}`);
+        logger.info({ submitId, requestId: req.requestId }, 'duplicate submissionId ignored');
         res.json({ success: true, id: submitId, duplicate: true });
       } else {
-        console.log(`[submit] 新入住登記: ${submitId}, 日期: ${today}`);
+        logger.info({ submitId, date: today, requestId: req.requestId }, 'new check-in registered');
         res.json({ success: true, id: submitId });
       }
     });
     stmt.finalize();
   } catch (error) {
-    console.error('[submit] 服務器錯誤:', error);
-    res.status(500).json({ success: false, error: 'Internal Server Error' });
+    sendInternal(req, res, error, '/api/submit');
   }
 });
 
@@ -1307,10 +1252,14 @@ app.post('/api/ocr/passport', ocrRateLimit, async (req, res) => {
 
     const passportPhoto = await savePassportImage(image);
     const ocrResult = await runLocalPassportOcr(image);
+    if (ocrResult?.error === 'OCR_BUSY') {
+      // Photo was saved; surface a 503 so the client can retry while keeping the upload.
+      res.status(503).json({ success: false, error: 'OCR_BUSY', passportPhoto });
+      return;
+    }
     res.json({ ...ocrResult, passportPhoto });
   } catch (error) {
-    console.error('護照 OCR 接口錯誤:', error);
-    res.status(500).json({ success: false, error: 'Passport OCR failed' });
+    sendInternal(req, res, error, 'passport OCR');
   }
 });
 
@@ -1327,8 +1276,7 @@ app.use((error, req, res, next) => {
     res.status(400).json({ error: 'Invalid JSON payload' });
     return;
   }
-  console.error(`Unhandled server error reqId=${req?.requestId || 'n/a'}:`, error);
-  res.status(500).json({ error: 'Internal Server Error' });
+  sendInternal(req, res, error, 'unhandled error');
 });
 
 let activeServer = null;
@@ -1337,18 +1285,12 @@ let shuttingDown = false;
 const shutdown = (signal = 'unknown') => {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`[shutdown] received ${signal}, closing server...`);
+  logger.info({ signal }, 'shutting down');
   clearInterval(cleanupInterval);
 
-  const finalizeExit = (code) => {
-    db.close((dbErr) => {
-      if (dbErr) {
-        console.error('[shutdown] failed to close database:', dbErr.message);
-        process.exit(1);
-        return;
-      }
-      process.exit(code);
-    });
+  const finalizeExit = async (code) => {
+    await closeDatabase(db);
+    process.exit(code);
   };
 
   if (!activeServer) {
@@ -1358,7 +1300,7 @@ const shutdown = (signal = 'unknown') => {
 
   activeServer.close((closeErr) => {
     if (closeErr) {
-      console.error('[shutdown] failed to close HTTP server:', closeErr.message);
+      logger.error({ err: closeErr.message }, 'failed to close http server');
       finalizeExit(1);
       return;
     }
@@ -1366,35 +1308,54 @@ const shutdown = (signal = 'unknown') => {
   });
 
   setTimeout(() => {
-    console.error('[shutdown] force exiting after timeout');
+    logger.error('force exiting after shutdown timeout');
     process.exit(1);
   }, 10000).unref();
 };
 
-const startServer = () => {
+const startServer = async () => {
+  db = await openDatabase(DB_PATH, logger);
+  await applyPragmas(db, logger);
+  await runMigrations(db, MIGRATIONS_DIR, logger);
+  await seedStepTemplates();
+  await seedCompletionTemplates();
+
+  sessionStore = new AdminSessionStore({ db, logger, runAsync, allAsync });
+  await sessionStore.hydrate();
+  adminSessions = sessionStore;
+
   if (shouldServeClientBuild()) {
     mountClientBuild();
   }
   activeServer = app.listen(PORT, HOST, () => {
-    console.log(`--------------------------------------------------`);
-    console.log(`🏨 飯店管理後台服務已啟動`);
-    console.log(`📡 API 地址: http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
-    console.log(`📂 圖片存儲: ${UPLOAD_DIR}`);
-    console.log(`💾 數據庫: ${DB_PATH}`);
-    console.log(`🖥️ Client dist: ${CLIENT_DIST_DIR}`);
-    console.log(`🌐 WebAuthn Origin: ${EXPECTED_ORIGIN}`);
-    console.log(`🩺 Health: /api/health | Ready: /api/ready`);
-    console.log(`🛡️ trust proxy: ${TRUST_PROXY} | session backend: ${SESSION_BACKEND}`);
-    console.warn(`⚠️ 管理員 session 目前仍為記憶體存儲，正式多實例部署前請改為共享存儲。`);
-    console.log(`--------------------------------------------------`);
+    logger.info({
+      address: `http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`,
+      uploadDir: UPLOAD_DIR,
+      dbPath: DB_PATH,
+      clientDistDir: CLIENT_DIST_DIR,
+      webauthnOrigin: EXPECTED_ORIGIN,
+      trustProxy: TRUST_PROXY,
+      sessionBackend: SESSION_BACKEND,
+      ocrConcurrency: OCR_MAX_CONCURRENCY
+    }, 'checkin-app server started');
   });
   return activeServer;
 };
 
 if (require.main === module) {
-  startServer();
+  startServer().catch((err) => {
+    logger.error({ err: err.message, stack: err.stack }, 'failed to start server');
+    process.exit(1);
+  });
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('unhandledRejection', (reason) => {
+    logger.error({ err: reason?.message || String(reason), stack: reason?.stack }, 'unhandled rejection');
+  });
+  process.on('uncaughtException', (err) => {
+    logger.fatal({ err: err.message, stack: err.stack }, 'uncaught exception');
+    shutdown('uncaughtException');
+  });
 }
 
 module.exports = {
@@ -1409,6 +1370,6 @@ module.exports = {
   shutdown,
   purgeExpiredEntries,
   cleanupInterval,
-  adminSessions,
+  get adminSessions() { return adminSessions; },
   adminChallenges
 };

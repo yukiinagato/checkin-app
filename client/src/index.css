@@ -106,3 +106,15 @@ body {
 .animate-scan-line {
   animation: passport-scan-line 2s ease-in-out infinite;
 }
+
+.rich-text-editor p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: rgb(148 163 184);
+  pointer-events: none;
+  height: 0;
+}
+.rich-text-editor ul { list-style: disc; padding-left: 1.5rem; }
+.rich-text-editor ol { list-style: decimal; padding-left: 1.5rem; }
+.rich-text-editor a { color: rgb(37 99 235); text-decoration: underline; }
+.rich-text-editor img { max-width: 100%; height: auto; }

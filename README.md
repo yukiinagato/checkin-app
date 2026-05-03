@@ -70,7 +70,13 @@ checkin-app/
 │   ├── public/ha-login-image.png # 默认完成页图示资源
 │   └── vite.config.js            # 前端代理配置（/api -> localhost:3002）
 ├── server/
-│   ├── server.js                 # 后端入口、鉴权、API、SQLite 初始化
+│   ├── server.js                 # 后端入口、鉴权、API、HTTP 路由
+│   ├── src/
+│   │   ├── db.js                 # SQLite 连接、PRAGMA 调优、迁移执行器
+│   │   ├── logger.js             # pino 结构化日志工厂
+│   │   ├── sessions.js           # 持久化到 SQLite 的 admin session store
+│   │   └── semaphore.js          # OCR 子进程并发限流
+│   ├── migrations/               # 按文件名顺序执行的 schema 迁移
 │   ├── stepTemplates.js          # 多语言步骤模板初始数据
 │   ├── completionTemplates.js    # 多语言完成页模板初始数据
 │   └── .env.development          # 开发环境默认变量
@@ -208,10 +214,14 @@ pnpm start
 - `WEBAUTHN_RP_NAME`：WebAuthn RP 展示名称（默认 `Checkin Admin`）。
 - `WEBAUTHN_ORIGIN`：WebAuthn 验证 Origin（会移除末尾 `/`）。
 - `TRUST_PROXY`：反向代理场景下的 `Express trust proxy` 设置，默认 `loopback`。
-- `JSON_BODY_LIMIT`：JSON 请求体大小上限，默认 `10mb`。
+- `JSON_BODY_LIMIT`：含图片的路由（`/api/submit`、`/api/ocr/passport`、`/api/admin/steps`、`/api/admin/completion-template`）的 JSON 请求体大小上限，默认 `10mb`。
+- `SMALL_JSON_BODY_LIMIT`：其它 API 的 JSON 请求体大小上限，默认 `256kb`，用于压缩滥用面。
 - `MAX_IMAGE_BYTES`：单张证件图片最大字节数，默认 `10485760`（10MB）。
 - `MAX_GUESTS_PER_SUBMISSION`：单次提交最多住客数，默认 `12`。
 - `REQUEST_TIMEOUT_MS`：单请求超时，默认 `30000`。
+- `OCR_MAX_CONCURRENCY`：同时执行的本地护照 OCR Python 子进程上限，默认 `2`，避免同时多张照片打爆 CPU。
+- `OCR_QUEUE_TIMEOUT_MS`：OCR 信号量等待最长时间，默认 `15000`，超时返回 `503 OCR_BUSY` 并保留已上传照片。
+- `LOG_LEVEL`：pino 日志等级（`trace`/`debug`/`info`/`warn`/`error`/`fatal`），生产默认 `info`、开发默认 `debug`。
 - `PADDLE_OCR_PYTHON`：本地护照 OCR 运行的 Python 命令（默认 `python3`，变量名保留用于兼容旧配置）。
 - `PADDLE_OCR_RUNNER`：本地护照 OCR 识别脚本路径（默认 `server/tools/paddle_ocr_runner.py`，变量名保留用于兼容旧配置）。
 
@@ -222,7 +232,11 @@ pnpm start
 - 用反向代理（Nginx / Caddy / ALB）终止 HTTPS，再把流量转发到本服务。
 - 将 `DB_PATH`、`UPLOAD_DIR` 指向持久化磁盘，不要落在临时目录。
 - `ADMIN_API_TOKEN` 必须替换为长随机串，并只用于首次绑定 Passkey。
-- 目前管理员 session 仍是**进程内存存储**；单机部署可用，多实例或无状态扩缩容前应改为共享存储。
+- 管理员 session 现已持久化到 SQLite `admin_sessions` 表，进程重启不会强制下线。本服务为**单机部署**设计，未对多实例共享 session 做适配。
+- SQLite 启动时会自动开启 `journal_mode=WAL`、`synchronous=NORMAL`、`foreign_keys=ON`、`busy_timeout=5000`，提升并发与崩溃容错。
+- 数据库 schema 由 `server/migrations/` 下的迁移脚本管理，启动时按版本号顺序自动执行；可单独运行 `pnpm --filter server migrate` 手动跑迁移。
+- 日志为 pino JSON 输出（每行一条），生产建议交由 systemd / 文件重定向 / 日志采集器处理；不再使用 `console.*`。
+- 5xx 错误响应不会带出内部错误信息，仅返回 `{ "error": "Internal Server Error", "requestId": "..." }`，详细错误堆栈写入日志，可凭 `requestId` 追溯。
 - 建议用探针接入：
   - `GET /api/health`：进程存活检查
   - `GET /api/ready`：数据库可用性检查
@@ -325,8 +339,15 @@ pnpm --filter server dev
   - `counter`
   - `transports`
   - `created_at`
+- `admin_sessions`
+  - `token` 主键
+  - `expires_at`（毫秒时间戳）
+  - `created_at`
+  - 用于跨进程重启保留管理员会话；启动时 hydrate 到内存缓存。
 
 > `admin_passkeys` 支持启动时自动补齐缺失字段（兼容旧库）。
+
+> 数据库 schema 由 `server/migrations/` 下的版本化脚本管理，记录在 `schema_migrations` 表。新增 schema 变更请新增一个 `00X_*.js` 文件并实现 `up({ db, runAsync, allAsync, getAsync })`。
 
 ---
 
@@ -387,8 +408,25 @@ pnpm --filter server dev
 1. 选择语言并加载该语言步骤模板。
 2. 按步骤阅读须知。
 3. 在登记步骤填入住客信息并上传证件图。
-4. 提交成功后展示“完成页模板”（支持富文本与图片）。
+4. 提交成功后跳转到 `/checkin/done` 完成页，**强提示客人继续阅读住宿指南**（"查看住宿指南"按钮为主 CTA）。
 5. 管理入口可切换到后台登录页，进行 Passkey 登录与数据管理。
+
+### 路由总览
+
+前端使用 `react-router-dom` 的 `BrowserRouter`，所有视图都有独立 URL：
+
+| 路径 | 视图 |
+|---|---|
+| `/` | 首页（语言未选时显示语言选择，已选时显示落地页 / 历史回看入口） |
+| `/checkin` | 多步登记表单（中间步骤是表单 wizard 的内部状态，不会出现在 URL） |
+| `/checkin/done` | 提交成功页 + 强提示阅读指南 |
+| `/guide` | 指南目录 |
+| `/guide/:stepId` | 单步骤页（solo）或群组子目录（如 `/guide/safety`） |
+| `/guide/:stepId/:childId` | 群组下的子步骤（如 `/guide/safety/emergency`） |
+| `/admin` | 自动跳到 `/admin/data` |
+| `/admin/data` / `/admin/files` / `/admin/settings` / `/admin/steps` | 后台四个 tab |
+
+浏览器前进/后退按钮按预期工作；任何深层 URL 都可直接刷新或分享。SPA fallback 配置见下文"生产部署建议"。
 
 ---
 
@@ -397,8 +435,10 @@ pnpm --filter server dev
 - **务必修改默认 `ADMIN_API_TOKEN`**，并仅在受控环境注入。
 - 生产环境使用 HTTPS（WebAuthn 对 HTTPS 依赖强）。
 - 将 `CORS_ORIGIN` 精确配置为可信域名列表。
-- 定期备份 `DB_PATH` 与 `UPLOAD_DIR`。
-- 如果多实例部署，当前内存会话（`adminSessions`）需改造为共享存储（如 Redis）。
+- 定期备份 `DB_PATH` 与 `UPLOAD_DIR`（启用 WAL 后备份建议用 `sqlite3 hotel.db ".backup ..."` 或 `pnpm backup:instance`，避免裸 cp 在 checkpoint 时刻拿到不一致快照）。
+- 若反向代理已限制 client_max_body_size，也保留 nginx 侧的限制；服务端 `SMALL_JSON_BODY_LIMIT` 与 `JSON_BODY_LIMIT` 仍提供第二道防线。
+- OCR 接口同时受 `OCR_MAX_CONCURRENCY`（同时执行）+ `ocrRateLimit`（每分钟 10 次/IP）双重保护，超额自动排队或 503。
+- 数据库迁移：`pnpm --filter server migrate` 可在不启动服务的情况下应用 `server/migrations/` 下未应用的迁移；服务启动时也会自动执行。
 
 ---
 
@@ -418,6 +458,38 @@ pnpm --filter server start
 ```
 
 然后由 Nginx / Caddy 对外提供 HTTPS 与反向代理。
+
+### SPA 路由 fallback
+
+前端使用 react-router 的 BrowserRouter，刷新或直接访问 `/checkin`、`/guide/safety`、`/admin/steps` 等深层 URL 必须能落到 `index.html`，否则会 404。
+
+- **方案 A（默认）**：Node 后端在 `NODE_ENV=production` 下已经接管 `client/dist` 静态托管，并对所有非 `/api` 路径回退到 `index.html`，反代只需把全部流量转给后端即可。
+- **方案 B（Nginx 直接托管前端）**：如果想让 nginx 直接服务静态文件、只把 `/api` 转给后端，需要给前端 location 加 SPA fallback：
+
+  ```nginx
+  server {
+    server_name checkin.example.com;
+    listen 443 ssl http2;
+
+    root /var/www/checkin/client/dist;
+    index index.html;
+
+    location /api/ {
+      proxy_pass http://127.0.0.1:3001;
+      proxy_set_header Host $host;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      client_max_body_size 12m;
+    }
+
+    location / {
+      try_files $uri $uri/ /index.html;
+    }
+  }
+  ```
+
+  - `try_files ... /index.html` 是 SPA 必备项，未配置会让 `/checkin/done` 这类深层路径返回 404。
+  - 如果用方案 B，请把 `CLIENT_DIST_DIR` 留给后端但不会被使用——只要 `/api` 走后端即可，后端的静态托管会被 nginx 屏蔽。
 
 ---
 

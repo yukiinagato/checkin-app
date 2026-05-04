@@ -103,7 +103,8 @@ app.use(helmet({
     directives: {
       ...helmet.contentSecurityPolicy.getDefaultDirectives(),
       // CDN entry retained for legacy WASM OCR fallback paths and pinned by tests.
-      'script-src': ["'self'", 'cdn.jsdelivr.net']
+      'script-src': ["'self'", 'cdn.jsdelivr.net'],
+      'connect-src': ["'self'", 'https://zipcloud.ibsnet.co.jp']
     }
   }
 }));

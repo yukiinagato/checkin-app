@@ -681,8 +681,8 @@ const saveSteps = (lang, steps) => {
 const buildDefaultCompletionTemplate = (lang) => ({
   title: translations[lang]?.welcomeTitle || translations[DEFAULT_LANG].welcomeTitle,
   subtitle: translations[lang]?.welcomeSub || translations[DEFAULT_LANG].welcomeSub,
-  cardHtml: '<p><strong>Wi-Fi SSID:</strong> Hotel Wifi<br><strong>Password:</strong> password</p>',
-  extraHtml: '<p><strong>AC control</strong><br><a href="https://homeassistant.kawachinagano.ox.gy:8123/" target="_blank" rel="noopener noreferrer">https://homeassistant.kawachinagano.ox.gy:8123/</a></p><img src="./ha-login-image.png" alt="HA Login" />'
+  cardHtml: '<p><strong>Wi-Fi SSID:</strong> </p><p><strong>Password:</strong> </p>',
+  extraHtml: ''
 });
 
 const normalizeCompletionTemplate = (template, fallback) => ({

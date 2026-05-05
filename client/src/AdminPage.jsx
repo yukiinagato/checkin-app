@@ -1673,15 +1673,17 @@ const AdminDashboard = ({
                                   <label className="text-[10px] font-bold text-slate-400 uppercase">子項標題</label>
                                   <input type="text" value={child.title} onChange={(e) => updateGroupChild(step.id, child.id, 'title', e.target.value)} className="w-full mt-1 p-2.5 rounded-lg border border-slate-200 text-sm bg-white" />
                                 </div>
-                                <div>
-                                  <label className="text-[10px] font-bold text-slate-400 uppercase">內容編輯</label>
-                                  <div className="mt-2">
-                                    <RichTextEditor value={child.content} onChange={(value) => updateGroupChild(step.id, child.id, 'content', value)} placeholder="输入子项目内容..." />
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:items-start">
+                                  <div>
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase">內容編輯</label>
+                                    <div className="mt-2">
+                                      <RichTextEditor value={child.content} onChange={(value) => updateGroupChild(step.id, child.id, 'content', value)} placeholder="输入子项目内容..." />
+                                    </div>
                                   </div>
-                                </div>
-                                <div className="step-content-surface">
-                                  <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">預覽</p>
-                                  <StepContent content={child.content} fallback={stepLangText.customStepEmpty} />
+                                  <div className="step-content-surface">
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">預覽</p>
+                                    <StepContent content={child.content} fallback={stepLangText.customStepEmpty} />
+                                  </div>
                                 </div>
                               </div>
                             </div>
@@ -1751,18 +1753,20 @@ const AdminDashboard = ({
                             <input type="text" value={step.subtitle} onChange={(e) => updateStepField(step.id, 'subtitle', e.target.value)} className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm" />
                           </div>
                         </div>
-                        <div>
-                          <div className="flex items-center justify-between">
-                            <label className="text-[10px] font-bold text-slate-400 uppercase">内容编辑</label>
-                            <span className="text-[10px] text-slate-400">支持图片与常见文本样式</span>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:items-start">
+                          <div>
+                            <div className="flex items-center justify-between">
+                              <label className="text-[10px] font-bold text-slate-400 uppercase">内容编辑</label>
+                              <span className="text-[10px] text-slate-400">支持图片与常见文本样式</span>
+                            </div>
+                            <div className="mt-3">
+                              <RichTextEditor value={step.content} onChange={(value) => updateStepField(step.id, 'content', value)} placeholder="输入该步骤要展示的内容..." />
+                            </div>
                           </div>
-                          <div className="mt-3">
-                            <RichTextEditor value={step.content} onChange={(value) => updateStepField(step.id, 'content', value)} placeholder="输入该步骤要展示的内容..." />
+                          <div className="step-content-surface">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase mb-3">预览</p>
+                            <StepContent content={step.content} fallback={stepLangText.customStepEmpty} />
                           </div>
-                        </div>
-                        <div className="step-content-surface">
-                          <p className="text-[10px] font-bold text-slate-400 uppercase mb-3">预览</p>
-                          <StepContent content={step.content} fallback={stepLangText.customStepEmpty} />
                         </div>
                       </>
                     )}
@@ -1802,25 +1806,29 @@ const AdminDashboard = ({
                   <input type="text" value={completionTemplate.subtitle} onChange={(e) => updateCompletionField('subtitle', e.target.value)} className="w-full mt-2 p-3 rounded-xl border border-slate-200 text-sm" />
                 </div>
               </div>
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase">卡片内容（Wi‑Fi等）</label>
-                <div className="mt-3">
-                  <RichTextEditor value={completionTemplate.cardHtml} onChange={(value) => updateCompletionField('cardHtml', value)} placeholder="输入完成页顶部卡片内容..." />
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:items-start">
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase">卡片内容（Wi‑Fi等）</label>
+                    <div className="mt-3">
+                      <RichTextEditor value={completionTemplate.cardHtml} onChange={(value) => updateCompletionField('cardHtml', value)} placeholder="输入完成页顶部卡片内容..." />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase">附加内容（可选）</label>
+                    <div className="mt-3">
+                      <RichTextEditor value={completionTemplate.extraHtml} onChange={(value) => updateCompletionField('extraHtml', value)} placeholder="输入完成页下方卡片内容..." />
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase">附加内容（如空调控制）</label>
-                <div className="mt-3">
-                  <RichTextEditor value={completionTemplate.extraHtml} onChange={(value) => updateCompletionField('extraHtml', value)} placeholder="输入完成页下方卡片内容..." />
-                </div>
-              </div>
-              <div className="step-content-surface">
-                <p className="text-[10px] font-bold text-slate-400 uppercase mb-3">预览</p>
-                <p className="text-lg font-bold text-slate-900 mb-1">{completionTemplate.title}</p>
-                <p className="text-sm text-slate-500 mb-3">{completionTemplate.subtitle}</p>
-                <StepContent content={completionTemplate.cardHtml} fallback={stepLangText.customStepEmpty} />
-                <div className="mt-3">
-                  <StepContent content={completionTemplate.extraHtml} fallback={stepLangText.customStepEmpty} />
+                <div className="step-content-surface">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase mb-3">预览</p>
+                  <p className="text-lg font-bold text-slate-900 mb-1">{completionTemplate.title}</p>
+                  <p className="text-sm text-slate-500 mb-3">{completionTemplate.subtitle}</p>
+                  <StepContent content={completionTemplate.cardHtml} fallback={stepLangText.customStepEmpty} />
+                  <div className="mt-3">
+                    <StepContent content={completionTemplate.extraHtml} fallback={stepLangText.customStepEmpty} />
+                  </div>
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-3">

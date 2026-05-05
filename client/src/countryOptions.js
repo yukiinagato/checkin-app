@@ -50,8 +50,11 @@ const TAIWAN_NAMING_MODE_LABELS = {
 const displayNameCache = new Map();
 const countryOptionsCache = new Map();
 
+import { DEFAULT_GUEST_FIELDS_CONFIG } from './guestFieldsConfig.js';
+
 export const DEFAULT_APP_SETTINGS = Object.freeze({
-  taiwanNamingMode: 'locale-default'
+  taiwanNamingMode: 'locale-default',
+  guestFieldsConfig: DEFAULT_GUEST_FIELDS_CONFIG
 });
 
 export const TAIWAN_NAMING_MODE_OPTIONS = Object.freeze([

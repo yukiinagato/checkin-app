@@ -6,6 +6,7 @@
     "install:all": "pnpm install",
     "backup:instance": "node scripts/backup-instance.mjs",
     "deploy": "node scripts/deploy.mjs",
+    "notices": "node scripts/generate-third-party-notices.mjs",
     "dev": "concurrently \"pnpm --filter server dev\" \"pnpm --filter client dev\"",
     "start": "pnpm --filter server start",
     "build": "pnpm --filter client build",

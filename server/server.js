@@ -183,8 +183,18 @@ const OCR_CACHE_DIR = path.resolve(__dirname, process.env.XDG_CACHE_HOME || '.ca
 const OCR_PADDLE_HOME = path.resolve(__dirname, process.env.PADDLE_HOME || '.paddle');
 const OCR_MODEL_HOME = path.resolve(__dirname, process.env.PADDLEOCR_HOME || '.ocr-models');
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
+const {
+  BUILTIN_FIELD_KEYS,
+  ALWAYS_ENABLED_BUILTINS,
+  DEFAULT_GUEST_FIELDS_CONFIG,
+  sanitizeGuestFieldsConfig,
+  isBuiltinEnabled,
+  getActiveCustomFields
+} = require('./guestFieldsConfig');
+
 const DEFAULT_APP_SETTINGS = Object.freeze({
-  taiwanNamingMode: 'locale-default'
+  taiwanNamingMode: 'locale-default',
+  guestFieldsConfig: DEFAULT_GUEST_FIELDS_CONFIG
 });
 const TAIWAN_NAMING_MODES = new Set(['locale-default', 'neutral', 'cn', 'roc']);
 const ALLOWED_IMAGE_TYPES = new Map([
@@ -226,37 +236,58 @@ const seedCompletionTemplates = async () => {
 // ----------------------------------------------------------------------
 // 5. 輔助函數：業務邏輯與安全驗證
 // ----------------------------------------------------------------------
+const persistDataImage = async (dataImage, suffix) => {
+  if (typeof dataImage !== 'string' || !dataImage.startsWith('data:image')) return null;
+  const matches = dataImage.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+  if (!matches || matches.length !== 3) return null;
+  const extension = ALLOWED_IMAGE_TYPES.get(matches[1]);
+  if (!extension) return null;
+
+  const imageBuffer = Buffer.from(matches[2], 'base64');
+  const md5 = crypto.createHash('md5').update(imageBuffer).digest('hex');
+  const filename = `${crypto.randomUUID()}_${suffix}.${extension}`;
+  const safeUploadDir = path.resolve(UPLOAD_DIR);
+  const filePath = path.resolve(safeUploadDir, filename);
+  if (!filePath.startsWith(`${safeUploadDir}${path.sep}`)) {
+    throw new Error('Invalid upload path');
+  }
+  await fs.outputFile(filePath, imageBuffer, { flag: 'wx' });
+  return { filename, md5 };
+};
+
 const saveImagesLocally = async (guests) => {
   const processedGuests = await Promise.all(guests.map(async (guest) => {
-    if (guest.passportPhoto && guest.passportPhoto.startsWith('data:image')) {
+    let next = guest;
+    if (guest.passportPhoto && typeof guest.passportPhoto === 'string' && guest.passportPhoto.startsWith('data:image')) {
       try {
-        const matches = guest.passportPhoto.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-        if (!matches || matches.length !== 3) return guest;
-        const extension = ALLOWED_IMAGE_TYPES.get(matches[1]);
-        if (!extension) return guest;
-
-        const imageBuffer = Buffer.from(matches[2], 'base64');
-        const photoMd5 = crypto.createHash('md5').update(imageBuffer).digest('hex');
-        const filename = `${crypto.randomUUID()}_passport.${extension}`;
-        const safeUploadDir = path.resolve(UPLOAD_DIR);
-        const filePath = path.resolve(safeUploadDir, filename);
-        if (!filePath.startsWith(`${safeUploadDir}${path.sep}`)) {
-          throw new Error('Invalid upload path');
+        const persisted = await persistDataImage(guest.passportPhoto, 'passport');
+        if (persisted) {
+          next = { ...next, passportPhoto: persisted.filename, passportPhotoMd5: persisted.md5 };
         }
-
-        await fs.outputFile(filePath, imageBuffer, { flag: 'wx' });
-
-        return {
-          ...guest,
-          passportPhoto: filename,
-          passportPhotoMd5: photoMd5
-        };
       } catch (err) {
         logger.error({ err: err.message, guestId: guest?.id }, 'failed to save guest image');
-        return guest;
       }
     }
-    return guest;
+
+    if (next.customFields && typeof next.customFields === 'object') {
+      const customFields = { ...next.customFields };
+      let touched = false;
+      for (const [key, value] of Object.entries(customFields)) {
+        if (typeof value === 'string' && value.startsWith('data:image')) {
+          try {
+            const persisted = await persistDataImage(value, 'custom');
+            if (persisted) {
+              customFields[key] = persisted.filename;
+              touched = true;
+            }
+          } catch (err) {
+            logger.error({ err: err.message, guestId: guest?.id, key }, 'failed to save custom field image');
+          }
+        }
+      }
+      if (touched) next = { ...next, customFields };
+    }
+    return next;
   }));
   return processedGuests;
 };
@@ -371,10 +402,20 @@ const loadAppSettings = () => new Promise((resolve, reject) => {
       return;
     }
 
-    const settings = { ...DEFAULT_APP_SETTINGS };
+    const settings = {
+      taiwanNamingMode: DEFAULT_APP_SETTINGS.taiwanNamingMode,
+      guestFieldsConfig: sanitizeGuestFieldsConfig(DEFAULT_GUEST_FIELDS_CONFIG)
+    };
     (rows || []).forEach((row) => {
       if (row.key === 'taiwanNamingMode' && TAIWAN_NAMING_MODES.has(row.value)) {
         settings.taiwanNamingMode = row.value;
+      } else if (row.key === 'guestFieldsConfig') {
+        try {
+          const parsed = JSON.parse(row.value);
+          settings.guestFieldsConfig = sanitizeGuestFieldsConfig(parsed);
+        } catch (parseErr) {
+          logger.warn({ err: parseErr.message }, 'failed to parse guestFieldsConfig — using defaults');
+        }
       }
     });
 
@@ -391,12 +432,31 @@ const validateAppSettings = (settings) => {
     return { valid: false, error: 'Invalid taiwanNamingMode' };
   }
 
+  if (settings.guestFieldsConfig !== undefined && (settings.guestFieldsConfig === null || typeof settings.guestFieldsConfig !== 'object')) {
+    return { valid: false, error: 'guestFieldsConfig must be an object' };
+  }
+
   return { valid: true };
 };
 
+const SETTING_SERIALIZERS = {
+  guestFieldsConfig: (value) => JSON.stringify(sanitizeGuestFieldsConfig(value))
+};
+
 const saveAppSettings = (settings) => new Promise((resolve, reject) => {
-  const merged = { ...DEFAULT_APP_SETTINGS, ...settings };
-  const entries = Object.entries(merged);
+  const incoming = settings && typeof settings === 'object' ? settings : {};
+  const entries = [];
+  if (Object.prototype.hasOwnProperty.call(incoming, 'taiwanNamingMode')) {
+    entries.push(['taiwanNamingMode', String(incoming.taiwanNamingMode)]);
+  }
+  if (Object.prototype.hasOwnProperty.call(incoming, 'guestFieldsConfig')) {
+    entries.push(['guestFieldsConfig', SETTING_SERIALIZERS.guestFieldsConfig(incoming.guestFieldsConfig)]);
+  }
+
+  if (entries.length === 0) {
+    resolve();
+    return;
+  }
 
   db.serialize(() => {
     const stmt = db.prepare(
@@ -408,7 +468,7 @@ const saveAppSettings = (settings) => new Promise((resolve, reject) => {
     );
 
     entries.forEach(([key, value]) => {
-      stmt.run([key, String(value)]);
+      stmt.run([key, value]);
     });
 
     stmt.finalize((err) => {
@@ -468,49 +528,148 @@ const getTemplateRowWithFallback = (tableName, columnName, targetLang, fallbackL
   });
 });
 
-const validateGuestPayload = (guest) => {
+const validateCustomFieldValueServer = (field, value) => {
+  const isEmpty =
+    value === undefined ||
+    value === null ||
+    value === '' ||
+    (field.type === 'checkbox' && value === false && !field.required);
+  if (field.required && field.type === 'checkbox' && value !== true) {
+    return { valid: false, error: `Custom field "${field.key}" is required` };
+  }
+  if (field.required && isEmpty && field.type !== 'checkbox') {
+    return { valid: false, error: `Custom field "${field.key}" is required` };
+  }
+  if (isEmpty && !field.required) return { valid: true };
+
+  switch (field.type) {
+    case 'text': {
+      if (typeof value !== 'string') return { valid: false, error: `Custom field "${field.key}" must be a string` };
+      const len = value.trim().length;
+      const v = field.validation || {};
+      if (Number.isInteger(v.minLength) && len < v.minLength) return { valid: false, error: `Custom field "${field.key}" too short` };
+      if (Number.isInteger(v.maxLength) && len > v.maxLength) return { valid: false, error: `Custom field "${field.key}" too long` };
+      if (value.length > 4000) return { valid: false, error: `Custom field "${field.key}" too long` };
+      if (v.regex) {
+        try { if (!new RegExp(v.regex).test(value)) return { valid: false, error: v.regexMessage || `Custom field "${field.key}" format invalid` }; }
+        catch { /* invalid stored regex, skip */ }
+      }
+      return { valid: true };
+    }
+    case 'number': {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return { valid: false, error: `Custom field "${field.key}" must be a number` };
+      const v = field.validation || {};
+      if (Number.isFinite(v.min) && n < v.min) return { valid: false, error: `Custom field "${field.key}" below min` };
+      if (Number.isFinite(v.max) && n > v.max) return { valid: false, error: `Custom field "${field.key}" above max` };
+      return { valid: true };
+    }
+    case 'date': {
+      if (typeof value !== 'string' || !parseDateOnly(value)) return { valid: false, error: `Custom field "${field.key}" invalid date` };
+      const v = field.validation || {};
+      if (v.min && value < v.min) return { valid: false, error: `Custom field "${field.key}" date too early` };
+      if (v.max && value > v.max) return { valid: false, error: `Custom field "${field.key}" date too late` };
+      return { valid: true };
+    }
+    case 'select': {
+      if (!Array.isArray(field.options) || !field.options.some((o) => o.value === value)) {
+        return { valid: false, error: `Custom field "${field.key}" has invalid option` };
+      }
+      return { valid: true };
+    }
+    case 'checkbox':
+      if (typeof value !== 'boolean') return { valid: false, error: `Custom field "${field.key}" must be boolean` };
+      return { valid: true };
+    case 'file': {
+      if (typeof value !== 'string' || value.length === 0) return { valid: false, error: `Custom field "${field.key}" file missing` };
+      if (!parseDataImage(value) && !/^[0-9a-f-]+_custom\.[a-z0-9]+$/i.test(value)) {
+        return { valid: false, error: `Custom field "${field.key}" invalid file payload` };
+      }
+      return { valid: true };
+    }
+    default:
+      return { valid: true };
+  }
+};
+
+const validateGuestPayload = (guest, config = DEFAULT_GUEST_FIELDS_CONFIG) => {
   if (!guest || typeof guest !== 'object') {
     return { valid: false, error: 'Invalid guest item' };
   }
 
+  // name is always required
   const name = typeof guest.name === 'string' ? guest.name.trim() : '';
-  const age = parseAge(guest.age);
-  const hasValidAge = Number.isInteger(age) && age >= 0 && age <= 120;
-  if (!isSafeTextField(name) || !hasValidAge) {
-    return { valid: false, error: 'Guest name/age is invalid' };
+  if (!isSafeTextField(name)) {
+    return { valid: false, error: 'Guest name is invalid' };
   }
 
-  const isMinor = age < 18;
-  const guardianName = typeof guest.guardianName === 'string' ? guest.guardianName.trim() : '';
-  const guardianPhone = typeof guest.guardianPhone === 'string' ? guest.guardianPhone.trim() : '';
-  if (isMinor && (!isSafeTextField(guardianName) || !isSafeTextField(guardianPhone))) {
-    return { valid: false, error: 'Minor guest must include guardian info' };
-  }
-
-  if (normalizeBoolean(guest.isResident)) {
-    const address = typeof guest.address === 'string' ? guest.address.trim() : '';
-    const phone = typeof guest.phone === 'string' ? guest.phone.trim() : '';
-    const needsPhone = age >= 16;
-    if (!isSafeTextField(address) || (needsPhone && !isSafeTextField(phone))) {
-      return { valid: false, error: 'Resident guest info is incomplete' };
+  // age may be disabled; if enabled, must be valid 0-120
+  const ageEnabled = isBuiltinEnabled(config, 'age');
+  let age = NaN;
+  if (ageEnabled) {
+    age = parseAge(guest.age);
+    if (!Number.isInteger(age) || age < 0 || age > 120) {
+      return { valid: false, error: 'Guest age is invalid' };
     }
-    return { valid: true };
   }
 
-  const nationality = typeof guest.nationality === 'string' ? guest.nationality.trim() : '';
-  const passportNumber = typeof guest.passportNumber === 'string' ? guest.passportNumber.trim() : '';
-  const hasPhoto = typeof guest.passportPhoto === 'string' && guest.passportPhoto.length > 0;
-  if (!isSafeTextField(nationality) || !isSafeTextField(passportNumber, MAX_PASSPORT_NUMBER_LENGTH) || !hasPhoto) {
-    return { valid: false, error: 'Visitor guest info is incomplete' };
+  const isResident = normalizeBoolean(guest.isResident);
+  const isMinor = ageEnabled && age < 18;
+
+  // Guardian fields only enforced when both age + guardian fields enabled and minor.
+  if (isMinor) {
+    if (isBuiltinEnabled(config, 'guardianName')) {
+      const guardianName = typeof guest.guardianName === 'string' ? guest.guardianName.trim() : '';
+      if (!isSafeTextField(guardianName)) return { valid: false, error: 'Minor guest must include guardian name' };
+    }
+    if (isBuiltinEnabled(config, 'guardianPhone')) {
+      const guardianPhone = typeof guest.guardianPhone === 'string' ? guest.guardianPhone.trim() : '';
+      if (!isSafeTextField(guardianPhone)) return { valid: false, error: 'Minor guest must include guardian phone' };
+    }
   }
-  if (!parseDataImage(guest.passportPhoto) && !/^[0-9a-f-]+_passport\.[a-z0-9]+$/i.test(guest.passportPhoto)) {
-    return { valid: false, error: 'Visitor passport photo is invalid' };
+
+  if (isResident) {
+    if (isBuiltinEnabled(config, 'address')) {
+      const address = typeof guest.address === 'string' ? guest.address.trim() : '';
+      if (!isSafeTextField(address)) return { valid: false, error: 'Resident guest info is incomplete' };
+    }
+    if (isBuiltinEnabled(config, 'phone')) {
+      // phone required for adults (or when age disabled, always required)
+      const needsPhone = !ageEnabled || age >= 16;
+      const phone = typeof guest.phone === 'string' ? guest.phone.trim() : '';
+      if (needsPhone && !isSafeTextField(phone)) return { valid: false, error: 'Resident guest info is incomplete' };
+    }
+  } else {
+    if (isBuiltinEnabled(config, 'nationality')) {
+      const nationality = typeof guest.nationality === 'string' ? guest.nationality.trim() : '';
+      if (!isSafeTextField(nationality)) return { valid: false, error: 'Visitor guest info is incomplete' };
+    }
+    if (isBuiltinEnabled(config, 'passportNumber')) {
+      const passportNumber = typeof guest.passportNumber === 'string' ? guest.passportNumber.trim() : '';
+      if (!isSafeTextField(passportNumber, MAX_PASSPORT_NUMBER_LENGTH)) return { valid: false, error: 'Visitor guest info is incomplete' };
+    }
+    if (isBuiltinEnabled(config, 'passportPhoto')) {
+      const hasPhoto = typeof guest.passportPhoto === 'string' && guest.passportPhoto.length > 0;
+      if (!hasPhoto) return { valid: false, error: 'Visitor guest info is incomplete' };
+      if (!parseDataImage(guest.passportPhoto) && !/^[0-9a-f-]+_passport\.[a-z0-9]+$/i.test(guest.passportPhoto)) {
+        return { valid: false, error: 'Visitor passport photo is invalid' };
+      }
+    }
+  }
+
+  // custom fields (only validate ones in scope)
+  const customFields = guest.customFields && typeof guest.customFields === 'object' ? guest.customFields : {};
+  const activeCustom = getActiveCustomFields(config, { isResident });
+  for (const field of activeCustom) {
+    const value = customFields[field.key];
+    const result = validateCustomFieldValueServer(field, value);
+    if (!result.valid) return result;
   }
 
   return { valid: true };
 };
 
-const validateSubmissionPayload = (payload) => {
+const validateSubmissionPayload = (payload, config = DEFAULT_GUEST_FIELDS_CONFIG) => {
   if (!payload || typeof payload !== 'object') {
     return { valid: false, error: 'Invalid request body' };
   }
@@ -534,7 +693,7 @@ const validateSubmissionPayload = (payload) => {
   }
 
   for (const guest of guests) {
-    const validation = validateGuestPayload(guest);
+    const validation = validateGuestPayload(guest, config);
     if (!validation.valid) return validation;
   }
 
@@ -1180,7 +1339,9 @@ const isContentDuplicate = (newGuest, newMd5, newCheckIn, existing, existingChec
 
 app.post('/api/submit', submitRateLimit, async (req, res) => {
   try {
-    const validation = validateSubmissionPayload(req.body);
+    const appSettings = await loadAppSettings();
+    const fieldsConfig = appSettings.guestFieldsConfig || DEFAULT_GUEST_FIELDS_CONFIG;
+    const validation = validateSubmissionPayload(req.body, fieldsConfig);
     if (!validation.valid) {
       res.status(400).json({ success: false, error: validation.error || 'Invalid submission payload' });
       return;
@@ -1192,9 +1353,9 @@ app.post('/api/submit', submitRateLimit, async (req, res) => {
       checkIn,
       checkOut
     } = validation.normalized;
-    const invalidGuest = guests.find((guest) => !validateGuestPayload(guest).valid);
+    const invalidGuest = guests.find((guest) => !validateGuestPayload(guest, fieldsConfig).valid);
     if (invalidGuest) {
-      const { error } = validateGuestPayload(invalidGuest);
+      const { error } = validateGuestPayload(invalidGuest, fieldsConfig);
       res.status(400).json({ success: false, error: error || 'Guest payload validation failed' });
       return;
     }

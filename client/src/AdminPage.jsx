@@ -33,6 +33,332 @@ import {
   LogIn
 } from 'lucide-react';
 import { DEFAULT_APP_SETTINGS, TAIWAN_NAMING_MODE_OPTIONS, getCountryName } from './countryOptions';
+import {
+  BUILTIN_FIELD_KEYS,
+  ALWAYS_ENABLED_BUILTINS,
+  CUSTOM_FIELD_TYPES,
+  SCOPES,
+  DEFAULT_GUEST_FIELDS_CONFIG,
+  buildDefaultBuiltinsConfig
+} from './guestFieldsConfig';
+
+const BUILTIN_FIELD_LABELS = {
+  name: '姓名',
+  age: '年龄',
+  phone: '电话',
+  address: '地址',
+  postalCode: '邮政编码',
+  nationality: '国籍',
+  passportNumber: '护照号码',
+  passportPhoto: '护照照片',
+  guardianName: '监护人姓名',
+  guardianPhone: '监护人电话'
+};
+
+const CUSTOM_FIELD_TYPE_LABELS = {
+  text: '文本',
+  number: '数字',
+  select: '下拉选择',
+  checkbox: '复选框',
+  date: '日期',
+  file: '文件'
+};
+
+const SCOPE_LABELS = { both: '两者皆可', resident: '仅居民', visitor: '仅访客' };
+
+const sanitizeKey = (raw) => String(raw || '').replace(/[^a-zA-Z0-9_]/g, '').slice(0, 32);
+
+const newCustomFieldDraft = () => ({
+  id: `cf_${Math.random().toString(36).slice(2, 10)}_${Date.now().toString(36)}`,
+  key: '',
+  label: '',
+  type: 'text',
+  required: false,
+  defaultValue: '',
+  scope: 'both',
+  options: [],
+  validation: {},
+  archived: false
+});
+
+const GuestFieldsManager = ({ value, onChange }) => {
+  const config = value || DEFAULT_GUEST_FIELDS_CONFIG;
+  const builtins = config.builtins || buildDefaultBuiltinsConfig();
+  const custom = Array.isArray(config.custom) ? config.custom : [];
+
+  const updateBuiltin = (key, patch) => {
+    const next = { ...builtins, [key]: { ...builtins[key], ...patch } };
+    onChange({ ...config, builtins: next });
+  };
+
+  const updateCustom = (id, patch) => {
+    const next = custom.map((f) => (f.id === id ? { ...f, ...patch } : f));
+    onChange({ ...config, custom: next });
+  };
+
+  const updateCustomValidation = (id, patch) => {
+    const next = custom.map((f) => (f.id === id ? { ...f, validation: { ...(f.validation || {}), ...patch } } : f));
+    onChange({ ...config, custom: next });
+  };
+
+  const addCustom = () => {
+    onChange({ ...config, custom: [...custom, newCustomFieldDraft()] });
+  };
+
+  const archiveCustom = (id) => {
+    if (!window.confirm('归档后该字段不再出现在表单中，但已登记的历史数据保持不变。继续？')) return;
+    updateCustom(id, { archived: true });
+  };
+
+  const restoreCustom = (id) => updateCustom(id, { archived: false });
+
+  const removeCustomPermanently = (id) => {
+    if (!window.confirm('永久删除该字段配置？已登记的历史数据中的该字段值会保留但不再显示。')) return;
+    onChange({ ...config, custom: custom.filter((f) => f.id !== id) });
+  };
+
+  const addOption = (id) => {
+    const f = custom.find((c) => c.id === id);
+    if (!f) return;
+    const opts = Array.isArray(f.options) ? f.options : [];
+    updateCustom(id, { options: [...opts, { value: '', label: '' }] });
+  };
+
+  const updateOption = (id, idx, patch) => {
+    const f = custom.find((c) => c.id === id);
+    if (!f) return;
+    const opts = (f.options || []).map((o, i) => (i === idx ? { ...o, ...patch } : o));
+    updateCustom(id, { options: opts });
+  };
+
+  const removeOption = (id, idx) => {
+    const f = custom.find((c) => c.id === id);
+    if (!f) return;
+    updateCustom(id, { options: (f.options || []).filter((_, i) => i !== idx) });
+  };
+
+  return (
+    <div className="bg-white rounded-3xl border border-slate-200 p-8 shadow-sm space-y-6">
+      <div>
+        <h3 className="font-bold text-xl text-slate-800">登记表单字段管理</h3>
+        <p className="text-sm text-slate-500 mt-1">控制内置字段的显示与默认值，添加自定义字段。修改不会影响已登记的历史数据。</p>
+      </div>
+
+      <div className="space-y-3">
+        <h4 className="text-sm font-bold text-slate-700">内置字段</h4>
+        <div className="border border-slate-100 rounded-2xl divide-y divide-slate-100">
+          {BUILTIN_FIELD_KEYS.map((key) => {
+            const cfg = builtins[key] || { enabled: true, defaultValue: '' };
+            const locked = ALWAYS_ENABLED_BUILTINS.has(key);
+            const allowsDefault = key !== 'passportPhoto';
+            return (
+              <div key={key} className="flex flex-col gap-3 p-3 sm:grid sm:grid-cols-12 sm:items-center">
+                <div className="col-span-3">
+                  <p className="font-bold text-sm text-slate-800">{BUILTIN_FIELD_LABELS[key] || key}</p>
+                  <p className="text-[10px] text-slate-400 font-mono">{key}</p>
+                </div>
+                <div className="col-span-3">
+                  <label className="flex items-center gap-2 text-xs text-slate-700">
+                    <input
+                      type="checkbox"
+                      disabled={locked}
+                      checked={cfg.enabled !== false}
+                      onChange={(e) => updateBuiltin(key, { enabled: e.target.checked })}
+                    />
+                    {locked ? '必启用' : '启用'}
+                  </label>
+                </div>
+                <div className="col-span-6">
+                  {allowsDefault ? (
+                    <input
+                      type={key === 'age' ? 'number' : 'text'}
+                      placeholder="默认值（可选）"
+                      value={cfg.defaultValue ?? ''}
+                      onChange={(e) => updateBuiltin(key, { defaultValue: e.target.value })}
+                      className="w-full p-2 rounded-lg border border-slate-200 text-sm bg-white"
+                    />
+                  ) : (
+                    <span className="text-xs text-slate-400">（图片字段无默认值）</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h4 className="text-sm font-bold text-slate-700">自定义字段</h4>
+          <button onClick={addCustom} className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-bold">＋ 新增字段</button>
+        </div>
+        {custom.length === 0 && (
+          <p className="text-xs text-slate-400">尚未添加自定义字段。</p>
+        )}
+        {custom.map((field) => (
+          <div key={field.id} className={`border rounded-2xl p-4 space-y-3 ${field.archived ? 'bg-slate-50 border-dashed opacity-70' : 'bg-white border-slate-200'}`}>
+            <div className="flex flex-col gap-3 sm:grid sm:grid-cols-12">
+              <div className="col-span-3">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">键名 (key)</label>
+                <input
+                  value={field.key}
+                  onChange={(e) => updateCustom(field.id, { key: sanitizeKey(e.target.value) })}
+                  placeholder="companyName"
+                  className="w-full p-2 rounded-lg border border-slate-200 text-sm font-mono bg-white"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">字母开头，仅含字母数字下划线。保存后请勿再修改。</p>
+              </div>
+              <div className="col-span-3">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">显示名称</label>
+                <input
+                  value={field.label}
+                  onChange={(e) => updateCustom(field.id, { label: e.target.value })}
+                  placeholder="公司名称"
+                  className="w-full p-2 rounded-lg border border-slate-200 text-sm bg-white"
+                />
+              </div>
+              <div className="col-span-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">类型</label>
+                <select
+                  value={field.type}
+                  onChange={(e) => updateCustom(field.id, { type: e.target.value, defaultValue: '', options: e.target.value === 'select' ? (field.options || []) : [], validation: {} })}
+                  className="w-full p-2 rounded-lg border border-slate-200 text-sm bg-white"
+                >
+                  {CUSTOM_FIELD_TYPES.map((t) => (
+                    <option key={t} value={t}>{CUSTOM_FIELD_TYPE_LABELS[t] || t}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="col-span-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">作用范围</label>
+                <select
+                  value={field.scope || 'both'}
+                  onChange={(e) => updateCustom(field.id, { scope: e.target.value })}
+                  className="w-full p-2 rounded-lg border border-slate-200 text-sm bg-white"
+                >
+                  {SCOPES.map((s) => (
+                    <option key={s} value={s}>{SCOPE_LABELS[s]}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="col-span-2 flex items-end">
+                <label className="flex items-center gap-2 text-xs text-slate-700 mb-1">
+                  <input
+                    type="checkbox"
+                    checked={!!field.required}
+                    onChange={(e) => updateCustom(field.id, { required: e.target.checked })}
+                  />
+                  必填
+                </label>
+              </div>
+            </div>
+
+            {field.type === 'select' && (
+              <div className="space-y-2">
+                <p className="text-[10px] font-bold text-slate-400 uppercase">下拉选项</p>
+                {(field.options || []).map((opt, i) => (
+                  <div key={i} className="flex gap-2">
+                    <input value={opt.value} onChange={(e) => updateOption(field.id, i, { value: e.target.value })} placeholder="value" className="flex-1 p-2 rounded-lg border border-slate-200 text-xs font-mono bg-white" />
+                    <input value={opt.label} onChange={(e) => updateOption(field.id, i, { label: e.target.value })} placeholder="显示名" className="flex-1 p-2 rounded-lg border border-slate-200 text-xs bg-white" />
+                    <button onClick={() => removeOption(field.id, i)} className="p-2 text-rose-400 hover:text-rose-600"><Trash2 className="w-4 h-4" /></button>
+                  </div>
+                ))}
+                <button onClick={() => addOption(field.id)} className="text-xs text-slate-600 underline">＋ 添加选项</button>
+              </div>
+            )}
+
+            {field.type === 'text' && (
+              <div className="flex flex-col gap-3 sm:grid sm:grid-cols-12">
+                <div className="col-span-4">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">最小长度</label>
+                  <input type="number" min={0} value={field.validation?.minLength ?? ''} onChange={(e) => updateCustomValidation(field.id, { minLength: e.target.value === '' ? undefined : Number(e.target.value) })} className="w-full p-2 rounded-lg border border-slate-200 text-sm bg-white" />
+                </div>
+                <div className="col-span-4">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">最大长度</label>
+                  <input type="number" min={1} value={field.validation?.maxLength ?? ''} onChange={(e) => updateCustomValidation(field.id, { maxLength: e.target.value === '' ? undefined : Number(e.target.value) })} className="w-full p-2 rounded-lg border border-slate-200 text-sm bg-white" />
+                </div>
+                <div className="col-span-12">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">正则校验 (可选)</label>
+                  <input value={field.validation?.regex ?? ''} onChange={(e) => updateCustomValidation(field.id, { regex: e.target.value })} placeholder="^[A-Z]{2}\\d+$" className="w-full p-2 rounded-lg border border-slate-200 text-sm font-mono bg-white" />
+                </div>
+                <div className="col-span-12">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">校验失败提示</label>
+                  <input value={field.validation?.regexMessage ?? ''} onChange={(e) => updateCustomValidation(field.id, { regexMessage: e.target.value })} placeholder="格式错误" className="w-full p-2 rounded-lg border border-slate-200 text-sm bg-white" />
+                </div>
+              </div>
+            )}
+
+            {field.type === 'number' && (
+              <div className="flex flex-col gap-3 sm:grid sm:grid-cols-12">
+                <div className="col-span-6">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">最小值</label>
+                  <input type="number" value={field.validation?.min ?? ''} onChange={(e) => updateCustomValidation(field.id, { min: e.target.value === '' ? undefined : Number(e.target.value) })} className="w-full p-2 rounded-lg border border-slate-200 text-sm bg-white" />
+                </div>
+                <div className="col-span-6">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">最大值</label>
+                  <input type="number" value={field.validation?.max ?? ''} onChange={(e) => updateCustomValidation(field.id, { max: e.target.value === '' ? undefined : Number(e.target.value) })} className="w-full p-2 rounded-lg border border-slate-200 text-sm bg-white" />
+                </div>
+              </div>
+            )}
+
+            {field.type === 'date' && (
+              <div className="flex flex-col gap-3 sm:grid sm:grid-cols-12">
+                <div className="col-span-6">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">最早日期 YYYY-MM-DD</label>
+                  <input value={field.validation?.min ?? ''} onChange={(e) => updateCustomValidation(field.id, { min: e.target.value })} placeholder="2024-01-01" className="w-full p-2 rounded-lg border border-slate-200 text-sm font-mono bg-white" />
+                </div>
+                <div className="col-span-6">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">最晚日期 YYYY-MM-DD</label>
+                  <input value={field.validation?.max ?? ''} onChange={(e) => updateCustomValidation(field.id, { max: e.target.value })} placeholder="2030-12-31" className="w-full p-2 rounded-lg border border-slate-200 text-sm font-mono bg-white" />
+                </div>
+              </div>
+            )}
+
+            {field.type !== 'file' && field.type !== 'checkbox' && (
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase">默认值（可选）</label>
+                {field.type === 'select' ? (
+                  <select value={field.defaultValue ?? ''} onChange={(e) => updateCustom(field.id, { defaultValue: e.target.value })} className="w-full p-2 rounded-lg border border-slate-200 text-sm bg-white">
+                    <option value="">--</option>
+                    {(field.options || []).filter((o) => o.value).map((o) => (
+                      <option key={o.value} value={o.value}>{o.label || o.value}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
+                    value={field.defaultValue ?? ''}
+                    onChange={(e) => updateCustom(field.id, { defaultValue: field.type === 'number' ? (e.target.value === '' ? '' : Number(e.target.value)) : e.target.value })}
+                    className="w-full p-2 rounded-lg border border-slate-200 text-sm bg-white"
+                  />
+                )}
+              </div>
+            )}
+
+            {field.type === 'checkbox' && (
+              <label className="flex items-center gap-2 text-xs text-slate-700">
+                <input type="checkbox" checked={field.defaultValue === true} onChange={(e) => updateCustom(field.id, { defaultValue: e.target.checked })} />
+                默认勾选
+              </label>
+            )}
+
+            <div className="flex items-center gap-3 pt-2 border-t border-slate-100">
+              {field.archived ? (
+                <>
+                  <span className="text-[11px] text-slate-500">已归档</span>
+                  <button onClick={() => restoreCustom(field.id)} className="text-xs text-emerald-600 underline">恢复</button>
+                  <button onClick={() => removeCustomPermanently(field.id)} className="text-xs text-rose-500 underline ml-auto">永久删除</button>
+                </>
+              ) : (
+                <button onClick={() => archiveCustom(field.id)} className="text-xs text-amber-600 underline ml-auto">归档（隐藏）</button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
 
 
 const fileToBase64 = (file) => {
@@ -421,7 +747,7 @@ const AdminLogin = ({ db, onLogin, onBack }) => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-6 text-white animate-in fade-in duration-500">
+    <div className="min-h-screen-dvh bg-slate-900 flex flex-col items-center justify-center p-6 text-white animate-in fade-in duration-500">
       <div className="w-full max-w-sm space-y-8 text-center">
         <div className="mx-auto w-20 h-20 bg-slate-800 rounded-3xl flex items-center justify-center mb-6 shadow-2xl border border-slate-700">
           <Lock className="w-10 h-10 text-emerald-400" />
@@ -1164,6 +1490,23 @@ const AdminDashboard = ({
                 {settingsSaved && <span className="text-sm text-emerald-600 font-bold">已保存</span>}
               </div>
             </div>
+            <GuestFieldsManager
+              value={appSettings.guestFieldsConfig || DEFAULT_GUEST_FIELDS_CONFIG}
+              onChange={(next) => {
+                setAppSettings((prev) => ({ ...prev, guestFieldsConfig: next }));
+                setSettingsSaved(false);
+              }}
+            />
+            <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm flex flex-wrap items-center gap-3">
+              <button onClick={handleSaveAppSettings} className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-bold">保存登记字段配置</button>
+              {settingsSaved && <span className="text-sm text-emerald-600 font-bold">已保存</span>}
+              <span className="ml-auto text-xs text-slate-400">未保存的修改不会生效。</span>
+            </div>
+            <div className="md:hidden text-center pt-2">
+              <a href="/third-party-licenses.html" target="_blank" rel="noopener noreferrer" className="text-[11px] text-slate-400">
+                MIT · 开源许可证 ↗
+              </a>
+            </div>
           </div>
         );
       case 'steps':
@@ -1499,36 +1842,79 @@ const AdminDashboard = ({
     }
   };
 
+  const ADMIN_TABS = [
+    { id: 'data',     label: '住客数据', short: '数据', icon: FileSpreadsheet },
+    { id: 'files',    label: '护照管理', short: '护照', icon: FolderOpen },
+    { id: 'settings', label: '系统设置', short: '设置', icon: Settings },
+    { id: 'steps',    label: '步骤管理', short: '步骤', icon: LayoutDashboard }
+  ];
+
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row text-slate-900 font-sans">
-      <div className="w-full md:w-72 bg-slate-900 text-white p-6 flex flex-col justify-between shrink-0 z-20">
+    <div className="min-h-screen-dvh bg-slate-50 flex flex-col md:flex-row text-slate-900 font-sans">
+      {/* Mobile top bar */}
+      <header className="md:hidden sticky top-0 z-30 bg-slate-900 text-white px-4 py-3 flex items-center justify-between shadow-lg" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)' }}>
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-gradient-to-br from-emerald-400 to-emerald-600 rounded-lg flex items-center justify-center font-black">H</div>
+          <h1 className="font-bold tracking-wide">Hotel Admin</h1>
+        </div>
+        <button onClick={onLogout} className="px-3 py-2 text-rose-300 active:text-rose-400 text-xs font-bold bg-rose-500/10 rounded-lg">退出</button>
+      </header>
+
+      {/* Desktop sidebar */}
+      <div className="hidden md:flex w-72 bg-slate-900 text-white p-6 flex-col justify-between shrink-0 z-20">
         <div>
           <div className="flex items-center gap-4 mb-12 px-2">
             <div className="w-10 h-10 bg-gradient-to-br from-emerald-400 to-emerald-600 rounded-xl flex items-center justify-center font-black text-xl">H</div>
             <h1 className="font-bold text-lg tracking-wide">Hotel Admin</h1>
           </div>
           <nav className="space-y-2">
-            <button onClick={() => setTab('data')} className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all font-bold text-sm ${tab === 'data' ? 'bg-white text-slate-900 shadow-xl' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
-              <FileSpreadsheet className="w-5 h-5" /> 住客數據
-            </button>
-            <button onClick={() => setTab('files')} className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all font-bold text-sm ${tab === 'files' ? 'bg-white text-slate-900 shadow-xl' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
-              <FolderOpen className="w-5 h-5" /> 護照管理
-            </button>
-            <button onClick={() => setTab('settings')} className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all font-bold text-sm ${tab === 'settings' ? 'bg-white text-slate-900 shadow-xl' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
-              <Settings className="w-5 h-5" /> 系統設置
-            </button>
-            <button onClick={() => setTab('steps')} className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all font-bold text-sm ${tab === 'steps' ? 'bg-white text-slate-900 shadow-xl' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
-              <LayoutDashboard className="w-5 h-5" /> 步驟管理
-            </button>
+            {ADMIN_TABS.map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                onClick={() => setTab(id)}
+                className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all font-bold text-sm ${tab === id ? 'bg-white text-slate-900 shadow-xl' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+              >
+                <Icon className="w-5 h-5" /> {label}
+              </button>
+            ))}
           </nav>
         </div>
-        <button onClick={onLogout} className="flex items-center gap-3 p-4 text-rose-400 hover:text-rose-300 transition-colors text-sm font-bold bg-rose-500/10 rounded-2xl">
-          <LogOut className="w-5 h-5" /> 退出登錄
-        </button>
+        <div className="space-y-3">
+          <button onClick={onLogout} className="flex w-full items-center gap-3 p-4 text-rose-400 hover:text-rose-300 transition-colors text-sm font-bold bg-rose-500/10 rounded-2xl">
+            <LogOut className="w-5 h-5" /> 退出登錄
+          </button>
+          <a
+            href="/third-party-licenses.html"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block px-2 text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
+            title="查看本应用使用的开源依赖与许可证"
+          >
+            MIT · 开源许可证 ↗
+          </a>
+        </div>
       </div>
-      <div className="flex-1 p-6 md:p-10 overflow-y-auto h-screen relative">
+
+      <div className="flex-1 p-4 md:p-10 overflow-y-auto md:h-screen relative pb-24 md:pb-10">
         {renderContent()}
       </div>
+
+      {/* Mobile bottom tab bar */}
+      <nav
+        className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-slate-900 text-white border-t border-white/10 grid grid-cols-4"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+      >
+        {ADMIN_TABS.map(({ id, short, icon: Icon }) => (
+          <button
+            key={id}
+            onClick={() => setTab(id)}
+            className={`flex flex-col items-center justify-center gap-1 py-3 text-[11px] font-bold active:bg-white/5 ${tab === id ? 'text-emerald-300' : 'text-slate-400'}`}
+          >
+            <Icon className="w-5 h-5" />
+            {short}
+          </button>
+        ))}
+      </nav>
     </div>
   );
 };

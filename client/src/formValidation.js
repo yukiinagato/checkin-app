@@ -1,3 +1,10 @@
+import {
+  DEFAULT_GUEST_FIELDS_CONFIG,
+  isBuiltinEnabled,
+  getActiveCustomFields,
+  validateCustomFieldValue
+} from './guestFieldsConfig.js';
+
 export const parseAge = (ageValue) => Number.parseInt(String(ageValue ?? '').trim(), 10);
 
 export const parsePassportBirthDateToAge = (birthDate, todayValue = new Date()) => {
@@ -31,27 +38,47 @@ export const parsePassportBirthDateToAge = (birthDate, todayValue = new Date()) 
   return age >= 0 ? String(age) : '';
 };
 
-export const validateGuestForm = (guest) => {
+export const validateGuestForm = (guest, config = DEFAULT_GUEST_FIELDS_CONFIG) => {
   if (!guest || typeof guest !== 'object') return false;
 
-  const age = parseAge(guest.age);
-  const hasValidAge = Number.isInteger(age) && age >= 0 && age <= 120;
-  if (!guest.name?.trim() || !hasValidAge) return false;
+  // name always required
+  if (!guest.name?.trim()) return false;
 
-  const isMinor = age < 18;
-  if (isMinor && !(guest.guardianName?.trim() && guest.guardianPhone?.trim())) {
-    return false;
+  const ageEnabled = isBuiltinEnabled(config, 'age');
+  let age = NaN;
+  if (ageEnabled) {
+    age = parseAge(guest.age);
+    if (!Number.isInteger(age) || age < 0 || age > 120) return false;
+  }
+
+  const isMinor = ageEnabled && age < 18;
+  if (isMinor) {
+    if (isBuiltinEnabled(config, 'guardianName') && !guest.guardianName?.trim()) return false;
+    if (isBuiltinEnabled(config, 'guardianPhone') && !guest.guardianPhone?.trim()) return false;
   }
 
   if (guest.isResident) {
-    const needsPhone = age >= 16;
-    return Boolean(Boolean(guest.address?.trim()) && (!needsPhone || guest.phone?.trim()));
+    if (isBuiltinEnabled(config, 'address') && !guest.address?.trim()) return false;
+    if (isBuiltinEnabled(config, 'phone')) {
+      const needsPhone = !ageEnabled || age >= 16;
+      if (needsPhone && !guest.phone?.trim()) return false;
+    }
+  } else {
+    if (isBuiltinEnabled(config, 'nationality') && !guest.nationality) return false;
+    if (isBuiltinEnabled(config, 'passportNumber') && !guest.passportNumber?.trim()) return false;
+    if (isBuiltinEnabled(config, 'passportPhoto') && !guest.passportPhoto) return false;
   }
 
-  return Boolean(guest.nationality && guest.passportNumber?.trim() && guest.passportPhoto);
+  const customFields = guest.customFields || {};
+  const activeCustom = getActiveCustomFields(config, { isResident: !!guest.isResident });
+  for (const field of activeCustom) {
+    if (!validateCustomFieldValue(field, customFields[field.key])) return false;
+  }
+
+  return true;
 };
 
-export const isRegistrationValid = (guests) => {
+export const isRegistrationValid = (guests, config = DEFAULT_GUEST_FIELDS_CONFIG) => {
   if (!Array.isArray(guests) || guests.length === 0) return false;
-  return guests.every(validateGuestForm);
+  return guests.every((g) => validateGuestForm(g, config));
 };

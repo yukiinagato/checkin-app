@@ -1,18 +1,10 @@
 # Checkin App 🏨
 
-一个用于酒店前台 / 自助终端的全栈入住登记系统，包含住客登记流程、多语言引导、证件图片上传、后台模板管理与 Passkey 管理员认证。
+一个用于酒店前台 / 自助终端的全栈入住登记系统。包含住客登记流程、多语言引导、护照 OCR、可配置的登记字段、后台模板管理与 Passkey 管理员认证。
 
-## 🌍 语言支持（UI）
+## 🌍 语言支持
 
-当前内置并可在前台切换的主要语言：
-
-- 日本語 (`jp`)
-- English (`en`)
-- 简体中文 (`zh-hans`)
-- 繁體中文 (`zh-hant`)
-- 한국어 (`ko`)
-
-> 说明：默认语言为 `jp`（代码中 `DEFAULT_LANG = 'jp'`）。
+前台可切换：日本語 (`jp`)、English (`en`)、简体中文 (`zh-hans`)、繁體中文 (`zh-hant`)、한국어 (`ko`)。默认语言为 `jp`。
 
 ---
 
@@ -20,42 +12,28 @@
 
 ### 前台（住客端）
 
-- 分步骤阅读入住须知（可多语言）。
-- 按人数登记住客信息（成人 / 未成年人）。
-- 区分本地住客与海外住客字段：
-  - 本地住客：姓名、年龄、地址；16 岁及以上要求电话。
-  - 海外住客：姓名、年龄、国籍、护照号、护照照片。
-  - 未成年人：额外要求监护人姓名与电话。
-- 提交后将数据写入 SQLite，证件图保存到本地上传目录。
-- 完成页支持按语言渲染可配置内容（标题、副标题、HTML 富文本区块）。
+- 多步骤阅读入住须知（多语言）。
+- 居民 / 访客 / 未成年人分支登记。
+- 内置字段（除姓名外均可在后台启停、可设默认值）：年龄、电话、地址、邮编、国籍、护照号、护照照片、监护人姓名、监护人电话。
+- 自定义字段：管理员可新增 text / number / select / checkbox / date / file 六种类型，支持必填、默认值、正则与最小/最大长度（或值范围、日期范围），可指定仅居民、仅访客或两者皆显示。
+- 护照照片本地 OCR（RapidOCR ONNX Runtime）自动回填姓名、出生日期、国籍、护照号。
+- 完成页支持按语言渲染可配置的标题、副标题与 HTML 富文本区块。
 
 ### 后台（管理员）
 
 - Passkey 注册与登录（WebAuthn）。
-- 查看所有入住记录（按时间倒序）。
-- 按住客维度软删除/恢复（`deleted` 标记）。
-- 查看护照图片（鉴权后访问）。
-- 编辑并保存多语言步骤模板。
-- 编辑并保存多语言完成页模板。
-- 导出 CSV。
+- 浏览所有入住记录、按住客维度软删除/恢复、查看护照图片、导出 CSV。
+- 编辑多语言步骤模板与完成页模板。
+- 配置登记表单字段（内置启停 / 默认值，自定义增删改 / 归档）。
+- 调整台湾命名模式等全局设置。
 
 ---
 
 ## 🧱 技术栈
 
-### Client
-
-- React 18 + Vite
-- Tailwind CSS
-- Lucide React
-- DOMPurify（富文本清洗）
-
-### Server
-
-- Node.js + Express
-- SQLite3
-- fs-extra（文件写入）
-- @simplewebauthn/server（Passkey / WebAuthn）
+- **Client**：React 18 + Vite + Tailwind CSS + react-router-dom + DOMPurify + lucide-react
+- **Server**：Node.js + Express + SQLite3 + pino + @simplewebauthn/server
+- **OCR**：RapidOCR ONNX Runtime（Python 子进程）
 
 ---
 
@@ -64,452 +42,386 @@
 ```text
 checkin-app/
 ├── client/
-│   ├── src/
-│   │   ├── App.jsx               # 前台流程、API 调用、语言与登记逻辑
-│   │   └── AdminPage.jsx         # 后台登录与管理页面
-│   ├── public/ha-login-image.png # 默认完成页图示资源
-│   └── vite.config.js            # 前端代理配置（/api -> localhost:3002）
+│   └── src/
+│       ├── App.jsx                # 前台流程
+│       ├── AdminPage.jsx          # 后台界面（含字段管理）
+│       ├── guestFieldsConfig.js   # 登记字段 schema（前端镜像）
+│       ├── formValidation.js      # 配置驱动的客户端校验
+│       └── countryOptions.js      # ISO 国家代码与本地化
 ├── server/
-│   ├── server.js                 # 后端入口、鉴权、API、HTTP 路由
-│   ├── src/
-│   │   ├── db.js                 # SQLite 连接、PRAGMA 调优、迁移执行器
-│   │   ├── logger.js             # pino 结构化日志工厂
-│   │   ├── sessions.js           # 持久化到 SQLite 的 admin session store
-│   │   └── semaphore.js          # OCR 子进程并发限流
-│   ├── migrations/               # 按文件名顺序执行的 schema 迁移
-│   ├── stepTemplates.js          # 多语言步骤模板初始数据
-│   ├── completionTemplates.js    # 多语言完成页模板初始数据
-│   └── .env.development          # 开发环境默认变量
-├── package.json                  # monorepo 根脚本
+│   ├── server.js                  # 后端入口、API、鉴权
+│   ├── guestFieldsConfig.js       # 登记字段 schema（服务端，权威清洗）
+│   ├── migrations/                # 顺序执行的 schema 迁移
+│   ├── stepTemplates.js           # 多语言步骤模板初始数据
+│   ├── completionTemplates.js     # 多语言完成页模板初始数据
+│   └── tools/paddle_ocr_runner.py # 本地护照 OCR 子进程
+├── scripts/
+│   ├── deploy.mjs                 # 一键部署 Node + Python OCR 环境
+│   └── backup-instance.mjs        # 备份生产实例的 DB / 上传 / env
 └── pnpm-workspace.yaml
 ```
 
 ---
 
-## ✅ 环境要求
-
-- Node.js 18+
-- pnpm 8+
-
-安装依赖：
+## 🚀 开发
 
 ```bash
 pnpm install
-```
-
----
-
-## 🚀 快速启动（开发）
-
-在仓库根目录执行：
-
-```bash
 pnpm dev
 ```
 
-该命令会并行启动：
+并行启动后端（`http://localhost:3002`）与 Vite（`http://localhost:5173`），前端 `/api` 已代理到后端。`pnpm test` 跑前后端全部测试。
 
-- `server`：`NODE_ENV=development nodemon server.js`
-- `client`：`vite`
-
-默认开发端口（来自现有配置）：
-
-- 前端：`http://localhost:5173`
-- 后端：`http://localhost:3002`（`server/.env.development` 中 `PORT=3002`）
-
-> 前端通过 Vite proxy 将 `/api` 转发到 `http://localhost:3002`。
+> 后端启动需要 `ADMIN_API_TOKEN` 与 `CORS_ORIGIN`，仓库内置的 `server/.env.development` 已经填好。
 
 ---
 
-## 📦 一键部署本地依赖与 OCR
+## 🛳 生产部署
 
-在仓库根目录执行：
+### 1. 服务器准备
+
+- Node.js 18+、pnpm 8+。
+- HTTPS 反向代理（Nginx / Caddy / ALB），WebAuthn 强依赖 HTTPS。
+- 用于持久化的目录：SQLite 文件 + 上传图片。
+
+### 2. 拉取并安装依赖
 
 ```bash
-pnpm run deploy
+git clone <repo> checkin-app && cd checkin-app
+pnpm install --frozen-lockfile
 ```
 
-该命令会完成：
-
-- 安装 Node 依赖：`pnpm install --frozen-lockfile`。
-- 优先复用系统 Python 3.10/3.11；若仅检测到 Python 3.9 或未检测到合适版本，会自动下载项目内 CPython 3.11 到 `server/.python/`。
-- 创建项目内 Python 虚拟环境：`server/.venv`。
-- 将 RapidOCR ONNX Runtime、OpenCV、Pillow/AVIF 等 OCR 依赖安装到 `server/.venv`。
-- 在项目内预热 OCR runtime，避免首次识别时才初始化。
-- 将 OCR/Python/pip 相关缓存限制在 `server/.cache`、`server/.ocr-models`、`server/.paddle`。
-- 生成/更新 `server/.env.development`，指向项目内 venv 和 OCR runner。
-
-这套流程不会安装 Python 包到系统环境，也不会把 OCR 模型写入用户 home 目录。若触发自动升级，CPython runtime 也只会落在项目目录 `server/.python/`。部署产物均已加入 `.gitignore`。
-
-可选参数：
+### 3. 部署 OCR 环境（推荐）
 
 ```bash
-# 跳过 Node 依赖安装，只部署 OCR 环境
-CHECKIN_SKIP_NODE_INSTALL=1 pnpm deploy
-
-# 跳过模型预热，只安装依赖
-CHECKIN_SKIP_OCR_WARMUP=1 pnpm deploy
-
-# 指定 Python 3.10-3.11
-PYTHON=/path/to/python3.11 pnpm deploy
-
-# 覆盖内置的 standalone Python 版本或 release tag
-CHECKIN_PYTHON_STANDALONE_VERSION=3.11.15 CHECKIN_PYTHON_STANDALONE_TAG=20260414 pnpm deploy
-```
-
----
-
-## 🧪 常用命令
-
-```bash
-# 根目录
 pnpm deploy
-pnpm dev
-pnpm build
-pnpm start
-pnpm test
-
-# 单独运行后端
-pnpm --filter server dev
-pnpm --filter server start
-pnpm --filter server test
-
-# 单独运行前端
-pnpm --filter client dev
-pnpm --filter client test
-pnpm --filter client build
-pnpm --filter client preview
 ```
 
-生产启动顺序：
+执行内容：
+
+- 创建 `server/.venv`，安装 RapidOCR / OpenCV / Pillow-AVIF。
+- 优先复用系统 Python 3.10/3.11；若不可用，自动下载 standalone CPython 到 `server/.python/`。
+- 预热 OCR runtime，模型缓存写入 `server/.cache` / `server/.ocr-models` / `server/.paddle`，不污染系统。
+- 写入 `server/.env.development` 中的 `PADDLE_OCR_PYTHON` 与 `PADDLE_OCR_RUNNER`。
+
+可选环境变量：
 
 ```bash
-pnpm build
-pnpm start
+CHECKIN_SKIP_NODE_INSTALL=1 pnpm deploy   # 跳过 Node 依赖安装
+CHECKIN_SKIP_OCR_WARMUP=1   pnpm deploy   # 跳过模型预热
+PYTHON=/path/to/python3.11  pnpm deploy   # 指定 Python
 ```
 
-`pnpm start` 现在只启动后端生产服务；当 `NODE_ENV=production` 时，后端会直接托管 `client/dist` 静态文件，不再依赖 Vite 开发服务器。
+跳过这一步时，护照照片仍可上传，前台会提示手动补充护照信息。
 
----
-
-## ⚙️ 配置说明（后端环境变量）
-
-后端会根据 `NODE_ENV` 自动读取：
-
-- `development` -> `server/.env.development`
-- `production` -> `server/.env.production`
-
-生产环境建议从 [server/.env.production.example](/Users/ox/Documents/project/checkin-app/server/.env.production.example) 复制生成 `server/.env.production`，再按真实域名、数据库目录与管理员令牌调整。
-
-关键变量如下：
-
-- `PORT`：后端监听端口。
-- `HOST`：后端绑定地址，默认 `0.0.0.0`。
-- `DB_PATH`：SQLite 数据库路径。
-- `UPLOAD_DIR`：上传文件目录。
-- `CLIENT_DIST_DIR`：生产环境前端构建目录，默认 `../client/dist`。
-- `ADMIN_API_TOKEN`：首次注册 Passkey 时的初始化令牌（必填）。
-- `CORS_ORIGIN`：允许跨域来源，支持逗号分隔多值（必填）。
-- `WEBAUTHN_RP_ID`：WebAuthn Relying Party ID（默认 `localhost`）。
-- `WEBAUTHN_RP_NAME`：WebAuthn RP 展示名称（默认 `Checkin Admin`）。
-- `WEBAUTHN_ORIGIN`：WebAuthn 验证 Origin（会移除末尾 `/`）。
-- `TRUST_PROXY`：反向代理场景下的 `Express trust proxy` 设置，默认 `loopback`。
-- `JSON_BODY_LIMIT`：含图片的路由（`/api/submit`、`/api/ocr/passport`、`/api/admin/steps`、`/api/admin/completion-template`）的 JSON 请求体大小上限，默认 `10mb`。
-- `SMALL_JSON_BODY_LIMIT`：其它 API 的 JSON 请求体大小上限，默认 `256kb`，用于压缩滥用面。
-- `MAX_IMAGE_BYTES`：单张证件图片最大字节数，默认 `10485760`（10MB）。
-- `MAX_GUESTS_PER_SUBMISSION`：单次提交最多住客数，默认 `12`。
-- `REQUEST_TIMEOUT_MS`：单请求超时，默认 `30000`。
-- `OCR_MAX_CONCURRENCY`：同时执行的本地护照 OCR Python 子进程上限，默认 `2`，避免同时多张照片打爆 CPU。
-- `OCR_QUEUE_TIMEOUT_MS`：OCR 信号量等待最长时间，默认 `15000`，超时返回 `503 OCR_BUSY` 并保留已上传照片。
-- `LOG_LEVEL`：pino 日志等级（`trace`/`debug`/`info`/`warn`/`error`/`fatal`），生产默认 `info`、开发默认 `debug`。
-- `PADDLE_OCR_PYTHON`：本地护照 OCR 运行的 Python 命令（默认 `python3`，变量名保留用于兼容旧配置）。
-- `PADDLE_OCR_RUNNER`：本地护照 OCR 识别脚本路径（默认 `server/tools/paddle_ocr_runner.py`，变量名保留用于兼容旧配置）。
-
-如果缺少 `ADMIN_API_TOKEN` 或 `CORS_ORIGIN`，服务将直接抛错退出。
-
-### 生产运行建议
-
-- 用反向代理（Nginx / Caddy / ALB）终止 HTTPS，再把流量转发到本服务。
-- 将 `DB_PATH`、`UPLOAD_DIR` 指向持久化磁盘，不要落在临时目录。
-- `ADMIN_API_TOKEN` 必须替换为长随机串，并只用于首次绑定 Passkey。
-- 管理员 session 现已持久化到 SQLite `admin_sessions` 表，进程重启不会强制下线。本服务为**单机部署**设计，未对多实例共享 session 做适配。
-- SQLite 启动时会自动开启 `journal_mode=WAL`、`synchronous=NORMAL`、`foreign_keys=ON`、`busy_timeout=5000`，提升并发与崩溃容错。
-- 数据库 schema 由 `server/migrations/` 下的迁移脚本管理，启动时按版本号顺序自动执行；可单独运行 `pnpm --filter server migrate` 手动跑迁移。
-- 日志为 pino JSON 输出（每行一条），生产建议交由 systemd / 文件重定向 / 日志采集器处理；不再使用 `console.*`。
-- 5xx 错误响应不会带出内部错误信息，仅返回 `{ "error": "Internal Server Error", "requestId": "..." }`，详细错误堆栈写入日志，可凭 `requestId` 追溯。
-- 建议用探针接入：
-  - `GET /api/health`：进程存活检查
-  - `GET /api/ready`：数据库可用性检查
-
-### 已部署实例迁移步骤
-
-已有实例升级到当前版本时，建议按下面顺序执行：
+### 4. 配置生产环境变量
 
 ```bash
-# 1) 先备份当前生产实例数据
-pnpm backup:instance
+cp server/.env.production.example server/.env.production
+```
 
-# 2) 更新代码并安装依赖
+按 [配置参考](#-配置参考) 调整。**至少**修改：
+
+- `ADMIN_API_TOKEN`（首次绑定 Passkey 用，必须为长随机串）
+- `CORS_ORIGIN` / `WEBAUTHN_ORIGIN` / `WEBAUTHN_RP_ID`（与对外域名一致）
+- `DB_PATH` / `UPLOAD_DIR`（指向持久化磁盘，不要落在临时目录）
+
+### 5. 构建并启动
+
+```bash
+pnpm build      # 构建 client/dist
+pnpm start      # 启动后端（NODE_ENV=production，托管 client/dist）
+```
+
+`NODE_ENV=production` 时后端会直接托管前端静态资源并对非 `/api` 路径回退到 `index.html`，反向代理只需把全部流量转给后端即可。
+
+### 6. 反向代理
+
+最简模式（推荐）— 把全部流量交给后端，由 Node 处理静态资源 + SPA fallback：
+
+```nginx
+server {
+  server_name checkin.example.com;
+  listen 443 ssl http2;
+
+  location / {
+    proxy_pass http://127.0.0.1:3002;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    client_max_body_size 12m;
+  }
+}
+```
+
+如果希望 Nginx 直接托管 `client/dist` 静态资源、只把 `/api` 转给后端，**必须**为前端 location 加 SPA fallback，否则刷新 `/checkin/done` 等深层路径会 404：
+
+```nginx
+root /var/www/checkin/client/dist;
+
+location /api/ {
+  proxy_pass http://127.0.0.1:3002;
+  proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto $scheme;
+  client_max_body_size 12m;
+}
+
+location / {
+  try_files $uri $uri/ /index.html;
+}
+```
+
+### 7. 升级既有实例
+
+```bash
+pnpm backup:instance     # 1) 备份当前 DB / UPLOAD_DIR / .env.production 到 backups/
 git pull
-pnpm install
-
-# 3) 构建前端静态资源
+pnpm install --frozen-lockfile
 pnpm build
-
-# 4) 重启生产服务
 pnpm start
 ```
 
-说明：
+- 数据库 schema 由 `server/migrations/` 顺序脚本管理，启动时自动应用，也可单独执行 `pnpm --filter server migrate`。
+- 当前版本对既有 SQLite 数据库**非破坏性兼容**：`checkins` / `admin_passkeys` / 模板 / 上传图片均保留。
+- `app_settings` 中缺失 `guestFieldsConfig` 时自动回落到默认（全部启用）。
+- 升级后请核对 `CORS_ORIGIN` / `WEBAUTHN_ORIGIN` / `DB_PATH` / `UPLOAD_DIR` 仍指向预期位置。
 
-- `pnpm backup:instance` 会读取 `server/.env.production`，备份当前 `DB_PATH`、`UPLOAD_DIR` 以及 `.env.production` 到项目根目录 `backups/`。
-- 当前版本对既有 SQLite 数据库是**非破坏性兼容**的，不会重置 `checkins`、`admin_passkeys`、模板数据或上传图片。
-- 远端新增的步骤 `category` 字段对旧模板数据做了兼容推断；旧实例不需要手工改库即可启动。
-- 如果生产实例仍使用旧的 `server/.env.production`，请至少核对 `CORS_ORIGIN`、`WEBAUTHN_ORIGIN`、`DB_PATH`、`UPLOAD_DIR` 是否仍指向正确的持久化位置。
+### 8. 运维与监控
 
-### 本地部署 OCR（服务端）
+- `GET /api/health`：进程存活探针。
+- `GET /api/ready`：数据库可用性探针。
+- 日志为 pino JSON（每行一条），交给 systemd / 日志采集器即可；5xx 响应不带堆栈，仅返回 `requestId`，凭它在日志中追溯。
+- 备份建议用 `pnpm backup:instance` 或 `sqlite3 hotel.db ".backup ..."`，避免裸 `cp` 在 WAL checkpoint 间隙拿到不一致快照。
+- 单机部署：管理员 session 持久化到 SQLite `admin_sessions`，进程重启不会强制下线，但未对多实例共享 session 做适配。
 
-当前项目已支持通过后端本地调用 RapidOCR ONNX Runtime 进行护照识别，并在 OCR 请求时保存护照照片，接口为：
+---
 
-- `POST /api/ocr/passport`（body: `{ "image": "data:image/...;base64,..." }`，返回包含 `passportPhoto` 文件名）
+## ⚙️ 配置参考
 
-部署步骤：
+后端按 `NODE_ENV` 自动读取 `server/.env.development` 或 `server/.env.production`。
 
-```bash
-# 1) 一键部署项目内虚拟环境和 OCR 依赖
-pnpm deploy
+### 必填
 
-# 2) 确认运行脚本存在
-ls server/tools/paddle_ocr_runner.py
+| 变量 | 说明 |
+|---|---|
+| `ADMIN_API_TOKEN` | 首次绑定 Passkey 时使用的初始化令牌 |
+| `CORS_ORIGIN` | 允许跨域来源，逗号分隔 |
 
-# 3) 启动后端（按需设置环境变量）
-PADDLE_OCR_PYTHON=./server/.venv/bin/python \
-PADDLE_OCR_RUNNER=./server/tools/paddle_ocr_runner.py \
-pnpm --filter server dev
+### 监听与路径
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `PORT` | `3002` (dev) / 按 env | 后端监听端口 |
+| `HOST` | `0.0.0.0` | 监听地址 |
+| `DB_PATH` | `server/hotel.db` | SQLite 文件路径 |
+| `UPLOAD_DIR` | `server/uploads` | 上传文件目录 |
+| `CLIENT_DIST_DIR` | `../client/dist` | 生产环境前端构建目录 |
+| `TRUST_PROXY` | `loopback` | Express trust proxy 设置 |
+
+### WebAuthn
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `WEBAUTHN_RP_ID` | `localhost` | RP ID，需与对外域名匹配 |
+| `WEBAUTHN_RP_NAME` | `Checkin Admin` | RP 显示名称 |
+| `WEBAUTHN_ORIGIN` | — | 验证 Origin（末尾 `/` 会被去除） |
+
+### 限额与超时
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `JSON_BODY_LIMIT` | `10mb` | 含图片路由的请求体上限 |
+| `SMALL_JSON_BODY_LIMIT` | `256kb` | 其他 API 的请求体上限 |
+| `MAX_IMAGE_BYTES` | `10485760` | 单张证件图最大字节 |
+| `MAX_GUESTS_PER_SUBMISSION` | `12` | 单次提交住客数上限 |
+| `REQUEST_TIMEOUT_MS` | `30000` | 单请求超时 |
+| `OCR_MAX_CONCURRENCY` | `2` | 同时执行的 OCR 子进程上限 |
+| `OCR_QUEUE_TIMEOUT_MS` | `15000` | OCR 排队等待超时；超时返回 `503 OCR_BUSY` |
+
+### OCR 与日志
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `PADDLE_OCR_PYTHON` | `python3` | OCR 子进程的 Python 命令 |
+| `PADDLE_OCR_RUNNER` | `server/tools/paddle_ocr_runner.py` | OCR 识别脚本路径 |
+| `LOG_LEVEL` | dev `debug` / prod `info` | pino 日志等级 |
+
+---
+
+## 🧩 登记字段配置
+
+字段集合保存在 `app_settings.guestFieldsConfig`，schema 由 [server/guestFieldsConfig.js](server/guestFieldsConfig.js) 与 [client/src/guestFieldsConfig.js](client/src/guestFieldsConfig.js) 镜像定义。
+
+```jsonc
+{
+  "builtins": {
+    "name":           { "enabled": true, "defaultValue": "" }, // 永远启用
+    "age":            { "enabled": true, "defaultValue": "" },
+    "phone":          { "enabled": true, "defaultValue": "" },
+    "address":        { "enabled": true, "defaultValue": "" },
+    "postalCode":     { "enabled": true, "defaultValue": "" },
+    "nationality":    { "enabled": true, "defaultValue": "" },
+    "passportNumber": { "enabled": true, "defaultValue": "" },
+    "passportPhoto":  { "enabled": true, "defaultValue": "" }, // 图片字段无默认值
+    "guardianName":   { "enabled": true, "defaultValue": "" },
+    "guardianPhone":  { "enabled": true, "defaultValue": "" }
+  },
+  "custom": [
+    {
+      "id": "cf_xxx",
+      "key": "companyName",                // [a-zA-Z][a-zA-Z0-9_]{0,31}，不可与内置 key 冲突
+      "label": "公司名称",
+      "type": "text",                       // text | number | select | checkbox | date | file
+      "required": true,
+      "defaultValue": "",
+      "scope": "both",                      // both | resident | visitor
+      "options": [{ "value": "vip", "label": "VIP" }],   // 仅 select
+      "validation": {
+        "regex": "^[A-Z]",                  // text 专用
+        "regexMessage": "需以大写字母开头",
+        "minLength": 2, "maxLength": 80,    // text 专用
+        "min": 0, "max": 100                // number 专用；date 时为最早 / 最晚日期 YYYY-MM-DD
+      },
+      "archived": false                     // 软删除：隐藏字段但保留旧数据
+    }
+  ]
+}
 ```
 
-说明：前端使用系统拍照/相册选择上传护照照片；后端会先保存照片，再执行 OCR。若本地 OCR 不可用，照片仍会保存，前台会提示手动补充护照信息。
+`checkins.data` 中每位住客对象会新增 `customFields: { [key]: value }`。文件类自定义字段在写入时会被服务端转为 `<uuid>_custom.<ext>` 文件名。
+
+兼容性约定：
+
+- 老 DB 没有 `guestFieldsConfig` 行 → 回落到默认（全部启用、无默认值）。
+- 老 `checkins` 记录没有 `customFields` → 读取无影响，新字段不会回溯校验旧记录。
+- 自定义字段 `key` 一旦保存请勿再修改（历史数据按 key 检索）；想换名请归档旧字段后新建一个新 key。
+- `app_settings` 写入按 key 增量进行：保存「台湾命名模式」不会覆盖 `guestFieldsConfig`，反之亦然。
 
 ---
 
-## 🔐 管理员认证机制（Passkey）
+## 🧾 提交校验规则
 
-### 首次绑定
+`POST /api/submit` 时后端先加载 `guestFieldsConfig`，再按当前配置驱动校验：
 
-1. 后台查询当前是否已有 Passkey。
-2. 若无 Passkey，必须用 `Authorization: Bearer <ADMIN_API_TOKEN>` 调用注册 options。
-3. 前端发起 `navigator.credentials.create(...)`。
-4. 后端验证注册响应后写入 `admin_passkeys` 表。
+- `guests` 必须非空、不超过 `MAX_GUESTS_PER_SUBMISSION`。
+- `name` 永远必填，最长 200 字符。
+- 内置字段仅在 `enabled === true` 时参与校验：
+  - `age`：整数 `0~120`；为 `< 18` 时触发未成年人逻辑。
+  - `phone`：居民住客 `age` 关闭或 `age >= 16` 时必填。
+  - `address`：居民必填。
+  - `nationality` / `passportNumber` / `passportPhoto`：访客必填。
+  - `guardianName` / `guardianPhone`：未成年时必填。
+- 自定义字段按 `scope` 筛选后逐一校验类型与 `validation`。
+- 已归档字段不参与新数据校验；历史 `customFields` 中的旧值保留。
 
-### 后续登录
+图片与文件保存：
 
-1. 请求认证 options。
-2. 前端调用 `navigator.credentials.get(...)`。
-3. 后端验证签名并更新计数器 `counter`。
-4. 返回 `sessionToken`（内存会话，默认有效期 24 小时）。
-
-### 会话与挑战
-
-- 挑战 challenge 有效期 5 分钟。
-- 管理员会话 token 有效期 24 小时。
-- 受保护接口通过 `Bearer token`（或个别图片场景 query 参数）鉴权。
+- 仅接受 `data:image/...;base64,...`，白名单类型 jpg / jpeg / png / webp / heic / heif。
+- 文件名为随机 UUID（护照 `_passport.<ext>`，自定义文件字段 `_custom.<ext>`），写入 `UPLOAD_DIR`，使用路径检查避免目录穿越。
 
 ---
 
-## 🗄️ 数据存储设计
+## 🔐 Passkey 认证
 
-系统初始化时自动创建/迁移以下表：
-
-- `checkins`
-  - `id` 主键
-  - `date`（提交日期）
-  - `data`（住客数组 JSON）
-  - `created_at`
-- `step_templates`
-  - `lang` 主键
-  - `steps`（JSON）
-  - `updated_at`
-- `completion_templates`
-  - `lang` 主键
-  - `template`（JSON）
-  - `updated_at`
-- `admin_passkeys`
-  - `credential_id` 主键
-  - `public_key`
-  - `counter`
-  - `transports`
-  - `created_at`
-- `admin_sessions`
-  - `token` 主键
-  - `expires_at`（毫秒时间戳）
-  - `created_at`
-  - 用于跨进程重启保留管理员会话；启动时 hydrate 到内存缓存。
-
-> `admin_passkeys` 支持启动时自动补齐缺失字段（兼容旧库）。
-
-> 数据库 schema 由 `server/migrations/` 下的版本化脚本管理，记录在 `schema_migrations` 表。新增 schema 变更请新增一个 `00X_*.js` 文件并实现 `up({ db, runAsync, allAsync, getAsync })`。
+- **首次绑定**：调用注册 options 时需 `Authorization: Bearer <ADMIN_API_TOKEN>`，前端 `navigator.credentials.create(...)`，后端验证后写入 `admin_passkeys`。
+- **后续登录**：请求认证 options → `navigator.credentials.get(...)` → 验证签名并更新 `counter` → 返回 `sessionToken`。
+- challenge 5 分钟、session 24 小时；session 持久化到 `admin_sessions`，进程重启仍有效。
 
 ---
 
-## 🧾 前台提交校验规则
+## 🗄️ 数据存储
 
-提交 `/api/submit` 时，后端会做核心校验：
+启动时自动创建 / 迁移以下表：
 
-- `guests` 必须是非空数组。
-- 每位住客都必须有有效 `name` 与 `age`（`0~120`）。
-- 未成年人（`age < 18`）必须有 `guardianName` + `guardianPhone`。
-- `isResident === true`：
-  - 必须有 `address`
-  - 若 `age >= 16`，必须有 `phone`
-- `isResident !== true`：
-  - 必须有 `nationality`、`passportNumber`、`passportPhoto`
+| 表 | 主键 | 说明 |
+|---|---|---|
+| `checkins` | `id` | `data` 含住客数组 JSON（含可选 `customFields`），还有 `check_in` / `check_out` / `created_at` |
+| `app_settings` | `key` | `value`（TEXT，复杂值序列化为 JSON），当前 key：`taiwanNamingMode`、`guestFieldsConfig` |
+| `step_templates` | `lang` | 多语言步骤模板 |
+| `completion_templates` | `lang` | 多语言完成页模板 |
+| `admin_passkeys` | `credential_id` | WebAuthn 凭证（启动时自动补齐缺失字段，兼容旧库） |
+| `admin_sessions` | `token` | 管理员会话；启动时 hydrate 到内存 |
+| `schema_migrations` | — | 已应用的迁移记录 |
 
-图片保存逻辑：
-
-- 仅处理 `data:image/...;base64,...` 格式。
-- 白名单类型：jpg / jpeg / png / webp / heic / heif。
-- 文件名使用随机 UUID，写入 `UPLOAD_DIR`。
-- 使用路径安全检查避免目录穿越。
+新增 schema 变更：在 `server/migrations/` 下新增 `00X_*.js` 并实现 `up({ db, runAsync, allAsync, getAsync })`。
 
 ---
 
 ## 🔌 API 概览
 
-### 公开接口
+### 公开
 
-- `GET /api/steps?lang=...`：获取指定语言步骤模板。
-- `GET /api/completion-template?lang=...`：获取指定语言完成页模板。
-- `POST /api/submit`：提交入住数据。
-- `GET /api/admin/passkeys/status`：查询是否已绑定 Passkey。
-- `POST /api/admin/passkeys/auth/options`：获取认证 options。
-- `POST /api/admin/passkeys/auth/verify`：验证认证响应。
-- `POST /api/admin/passkeys/register/verify`：验证注册响应。
+- `GET /api/health` / `GET /api/ready`
+- `GET /api/steps?lang=...` / `GET /api/completion-template?lang=...`
+- `GET /api/app-settings`：含 `taiwanNamingMode` 与 `guestFieldsConfig`
+- `GET /api/template-bundle?lang=...`：一次性返回 steps + completion + app-settings（前台首屏使用）
+- `POST /api/submit`：按当前 `guestFieldsConfig` 校验
+- `POST /api/ocr/passport`：本地护照 OCR，返回识别字段与 `passportPhoto` 文件名
+- Passkey 公开端点：`/api/admin/passkeys/status`、`/api/admin/passkeys/auth/options`、`/api/admin/passkeys/auth/verify`、`/api/admin/passkeys/register/verify`
 
-### 需管理员会话接口
+### 需管理员会话
 
-- `GET /api/records`
-- `PATCH /api/records/:recordId/guests/:guestId`
+- `GET /api/records`、`PATCH /api/records/:recordId/guests/:guestId`
 - `GET /api/admin/uploads/:filename`
-- `GET /api/admin/session`
-- `POST /api/admin/logout`
+- `GET /api/admin/session`、`POST /api/admin/logout`
 - `PUT /api/admin/steps?lang=...`
 - `PUT /api/admin/completion-template?lang=...`
+- `PUT /api/admin/app-settings`：按 key 增量写入
 
 ### 需初始化令牌或管理员会话
 
-- `POST /api/admin/passkeys/register/options`
-  - 无 Passkey 时：需 `ADMIN_API_TOKEN`
-  - 有 Passkey 后：需管理员会话 token
+- `POST /api/admin/passkeys/register/options`：无 Passkey 时需 `ADMIN_API_TOKEN`，已绑定后需会话 token
 
 ---
 
-## 🧭 前端流程说明
+## 🧭 前端路由
 
-1. 选择语言并加载该语言步骤模板。
-2. 按步骤阅读须知。
-3. 在登记步骤填入住客信息并上传证件图。
-4. 提交成功后跳转到 `/checkin/done` 完成页，**强提示客人继续阅读住宿指南**（"查看住宿指南"按钮为主 CTA）。
-5. 管理入口可切换到后台登录页，进行 Passkey 登录与数据管理。
-
-### 路由总览
-
-前端使用 `react-router-dom` 的 `BrowserRouter`，所有视图都有独立 URL：
+前端使用 `react-router-dom` 的 `BrowserRouter`，所有视图都有独立 URL，可直接刷新或分享。
 
 | 路径 | 视图 |
 |---|---|
-| `/` | 首页（语言未选时显示语言选择，已选时显示落地页 / 历史回看入口） |
-| `/checkin` | 多步登记表单（中间步骤是表单 wizard 的内部状态，不会出现在 URL） |
-| `/checkin/done` | 提交成功页 + 强提示阅读指南 |
-| `/guide` | 指南目录 |
-| `/guide/:stepId` | 单步骤页（solo）或群组子目录（如 `/guide/safety`） |
-| `/guide/:stepId/:childId` | 群组下的子步骤（如 `/guide/safety/emergency`） |
+| `/` | 首页（语言选择 / 落地 / 历史回看入口） |
+| `/checkin` | 多步登记表单 |
+| `/checkin/done` | 提交成功页，引导阅读住宿指南 |
+| `/guide` / `/guide/:stepId` / `/guide/:stepId/:childId` | 指南目录与子步骤 |
 | `/admin` | 自动跳到 `/admin/data` |
 | `/admin/data` / `/admin/files` / `/admin/settings` / `/admin/steps` | 后台四个 tab |
 
-浏览器前进/后退按钮按预期工作；任何深层 URL 都可直接刷新或分享。SPA fallback 配置见下文"生产部署建议"。
+---
+
+## 🛡️ 安全清单
+
+- 必须修改默认 `ADMIN_API_TOKEN`，仅在受控环境注入。
+- 生产强制 HTTPS（WebAuthn 要求）。
+- `CORS_ORIGIN` 精确配置为可信域名列表。
+- 反向代理与服务端均设置请求体上限（`client_max_body_size` + `JSON_BODY_LIMIT` / `SMALL_JSON_BODY_LIMIT`）。
+- OCR 接口受 `OCR_MAX_CONCURRENCY` + `ocrRateLimit`（每分钟 10 次/IP）双重保护。
+- 定期备份 `DB_PATH` 与 `UPLOAD_DIR`（建议用 `pnpm backup:instance`）。
 
 ---
 
-## 🛡️ 安全与运维建议
+## 📜 许可证
 
-- **务必修改默认 `ADMIN_API_TOKEN`**，并仅在受控环境注入。
-- 生产环境使用 HTTPS（WebAuthn 对 HTTPS 依赖强）。
-- 将 `CORS_ORIGIN` 精确配置为可信域名列表。
-- 定期备份 `DB_PATH` 与 `UPLOAD_DIR`（启用 WAL 后备份建议用 `sqlite3 hotel.db ".backup ..."` 或 `pnpm backup:instance`，避免裸 cp 在 checkpoint 时刻拿到不一致快照）。
-- 若反向代理已限制 client_max_body_size，也保留 nginx 侧的限制；服务端 `SMALL_JSON_BODY_LIMIT` 与 `JSON_BODY_LIMIT` 仍提供第二道防线。
-- OCR 接口同时受 `OCR_MAX_CONCURRENCY`（同时执行）+ `ocrRateLimit`（每分钟 10 次/IP）双重保护，超额自动排队或 503。
-- 数据库迁移：`pnpm --filter server migrate` 可在不启动服务的情况下应用 `server/migrations/` 下未应用的迁移；服务启动时也会自动执行。
+- 本项目代码以 **MIT** 协议发布，见 [LICENSE](LICENSE)。
+- 所有 npm 依赖均为宽松协议（MIT / ISC / BSD / Apache-2.0 / 0BSD / Python-2.0），未引入 GPL/LGPL/AGPL/SSPL 等会污染源码协议的依赖。
+- 第三方依赖的版权声明与许可文本汇总在 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)，由脚本生成：
 
----
-
-## 🚢 生产部署建议
-
-推荐使用反向代理统一入口：
-
-- `/` -> 前端静态资源（`client/dist`）
-- `/api` -> Node 服务
-
-最小流程：
-
-```bash
-pnpm install --frozen-lockfile
-pnpm build
-pnpm --filter server start
-```
-
-然后由 Nginx / Caddy 对外提供 HTTPS 与反向代理。
-
-### SPA 路由 fallback
-
-前端使用 react-router 的 BrowserRouter，刷新或直接访问 `/checkin`、`/guide/safety`、`/admin/steps` 等深层 URL 必须能落到 `index.html`，否则会 404。
-
-- **方案 A（默认）**：Node 后端在 `NODE_ENV=production` 下已经接管 `client/dist` 静态托管，并对所有非 `/api` 路径回退到 `index.html`，反代只需把全部流量转给后端即可。
-- **方案 B（Nginx 直接托管前端）**：如果想让 nginx 直接服务静态文件、只把 `/api` 转给后端，需要给前端 location 加 SPA fallback：
-
-  ```nginx
-  server {
-    server_name checkin.example.com;
-    listen 443 ssl http2;
-
-    root /var/www/checkin/client/dist;
-    index index.html;
-
-    location /api/ {
-      proxy_pass http://127.0.0.1:3001;
-      proxy_set_header Host $host;
-      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-      proxy_set_header X-Forwarded-Proto $scheme;
-      client_max_body_size 12m;
-    }
-
-    location / {
-      try_files $uri $uri/ /index.html;
-    }
-  }
+  ```bash
+  pnpm notices
   ```
 
-  - `try_files ... /index.html` 是 SPA 必备项，未配置会让 `/checkin/done` 这类深层路径返回 404。
-  - 如果用方案 B，请把 `CLIENT_DIST_DIR` 留给后端但不会被使用——只要 `/api` 走后端即可，后端的静态托管会被 nginx 屏蔽。
+  发布前或升级依赖后请重新运行该命令。
 
 ---
 
 ## 🧰 故障排查
 
-### 1) 启动即报错 `ADMIN_API_TOKEN is required`
-
-- 检查环境变量是否存在。
-- 确认 `NODE_ENV` 对应的 env 文件中已配置。
-
-### 2) 启动即报错 `CORS_ORIGIN is required`
-
-- 设置 `CORS_ORIGIN`，可用逗号分隔多个来源。
-
-### 3) 前端请求失败
-
-- 检查 Vite 代理目标端口是否与后端端口一致（默认 3002）。
-- 检查后端是否已启动。
-
-### 4) Passkey 验证失败
-
-- 检查 `WEBAUTHN_ORIGIN`、`WEBAUTHN_RP_ID` 与实际访问域名是否匹配。
-- 确保浏览器/系统支持 WebAuthn 与 Passkey。
+| 现象 | 检查项 |
+|---|---|
+| `ADMIN_API_TOKEN is required` | 对应 env 文件中是否配置 |
+| `CORS_ORIGIN is required` | 设置 `CORS_ORIGIN`，多个来源逗号分隔 |
+| 前端请求失败 | Vite 代理目标端口与后端是否一致；后端是否启动 |
+| Passkey 验证失败 | `WEBAUTHN_ORIGIN` / `WEBAUTHN_RP_ID` 是否与实际域名匹配；浏览器是否支持 |
+| OCR 一直返回 `OCR_BUSY` | 增大 `OCR_MAX_CONCURRENCY` 或确认 `pnpm deploy` 已成功执行 |
+| 刷新 `/checkin/done` 返回 404 | Nginx 直接托管前端时缺少 `try_files ... /index.html` |

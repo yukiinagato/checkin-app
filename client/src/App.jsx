@@ -41,19 +41,43 @@ import AdminPage from './AdminPage';
 import { isRegistrationValid, parsePassportBirthDateToAge } from './formValidation';
 import PassportScannerFlow from './components/PassportScannerFlow';
 import { DEFAULT_APP_SETTINGS, getCountryOptions, isOfficialIsoCountryCode } from './countryOptions';
+import {
+  DEFAULT_GUEST_FIELDS_CONFIG,
+  isBuiltinEnabled,
+  getActiveCustomFields,
+  getBuiltinDefault,
+  buildCustomFieldsDefaults,
+  validateCustomFieldValue
+} from './guestFieldsConfig';
 
 // ----------------------------------------------------------------------
 // 輔助函數與常量
 // ----------------------------------------------------------------------
-const createGuestTemplate = (type = 'adult') => ({
-  id: Math.random().toString(36).substr(2, 9),
-  type,
-  isResident: true,
-  name: '', age: '', phone: '', address: '', postalCode: '', nationality: '', nationalityDetected: '', passportNumber: '', passportPhoto: null, guardianName: '', guardianPhone: '',
-  passportOcrStatus: 'idle',
-  passportOcrMessage: '',
-  isEditable: true
-});
+const getFieldsConfig = (appSettings) => appSettings?.guestFieldsConfig || DEFAULT_GUEST_FIELDS_CONFIG;
+
+const createGuestTemplate = (type = 'adult', config = DEFAULT_GUEST_FIELDS_CONFIG) => {
+  const isResident = true;
+  return {
+    id: Math.random().toString(36).substr(2, 9),
+    type,
+    isResident,
+    name: getBuiltinDefault(config, 'name'),
+    age: getBuiltinDefault(config, 'age'),
+    phone: getBuiltinDefault(config, 'phone'),
+    address: getBuiltinDefault(config, 'address'),
+    postalCode: getBuiltinDefault(config, 'postalCode'),
+    nationality: getBuiltinDefault(config, 'nationality'),
+    nationalityDetected: '',
+    passportNumber: getBuiltinDefault(config, 'passportNumber'),
+    passportPhoto: null,
+    guardianName: getBuiltinDefault(config, 'guardianName'),
+    guardianPhone: getBuiltinDefault(config, 'guardianPhone'),
+    customFields: buildCustomFieldsDefaults(config, { isResident }),
+    passportOcrStatus: 'idle',
+    passportOcrMessage: '',
+    isEditable: true
+  };
+};
 
 const resolveNationalityForForm = (ocrResult) => {
   const code = typeof ocrResult?.nationalityCode === 'string' ? ocrResult.nationalityCode.trim().toUpperCase() : '';
@@ -890,7 +914,7 @@ const App = () => {
 
   if (!lang) {
     return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 animate-in fade-in">
+      <div className="min-h-screen-dvh bg-slate-50 flex flex-col items-center justify-center p-6 animate-in fade-in">
         <div className="w-full max-w-sm space-y-8 text-center">
           <div className="inline-flex items-center justify-center w-16 h-16 bg-white rounded-2xl shadow-sm mb-4 border border-slate-100">
             <Languages className="w-8 h-8 text-slate-900" />
@@ -984,7 +1008,7 @@ const HomeLanding = ({ lang, setLang, hasHistory, stepsConfig, onStartCheckin })
   const onQuickNav = (stepId) => navigate(`/guide/${encodeURIComponent(stepId)}`);
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-start p-6 animate-in fade-in">
+    <div className="min-h-screen-dvh bg-slate-50 flex flex-col items-center justify-start p-6 animate-in fade-in">
       <div className="w-full max-w-sm space-y-6 pt-8">
         <div className="flex justify-between items-center">
           <button onClick={() => setLang(null)} className="flex items-center gap-2 text-slate-400 hover:text-slate-600 text-sm">
@@ -1049,6 +1073,156 @@ const HomeLanding = ({ lang, setLang, hasHistory, stepsConfig, onStartCheckin })
 };
 
 // ----------------------------------------------------------------------
+// CustomFieldsSection — renders admin-defined custom fields for one guest
+// ----------------------------------------------------------------------
+const ALLOWED_CUSTOM_FILE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/avif', 'image/heic', 'image/heif'];
+
+const fileToDataUrl = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(reader.result);
+  reader.onerror = (e) => reject(e);
+  reader.readAsDataURL(file);
+});
+
+const CustomFieldInput = ({ field, value, disabled, onChange }) => {
+  const baseClass = "w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none disabled:bg-slate-100";
+  switch (field.type) {
+    case 'text':
+      return (
+        <input
+          disabled={disabled}
+          type="text"
+          value={value ?? ''}
+          maxLength={field.validation?.maxLength || 1000}
+          onChange={(e) => onChange(e.target.value)}
+          className={baseClass}
+        />
+      );
+    case 'number':
+      return (
+        <input
+          disabled={disabled}
+          type="number"
+          value={value ?? ''}
+          min={field.validation?.min ?? undefined}
+          max={field.validation?.max ?? undefined}
+          onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))}
+          className={baseClass}
+        />
+      );
+    case 'date':
+      return (
+        <input
+          disabled={disabled}
+          type="date"
+          value={value ?? ''}
+          min={field.validation?.min || undefined}
+          max={field.validation?.max || undefined}
+          onChange={(e) => onChange(e.target.value)}
+          className={baseClass}
+        />
+      );
+    case 'select':
+      return (
+        <select
+          disabled={disabled}
+          value={value ?? ''}
+          onChange={(e) => onChange(e.target.value)}
+          className={`${baseClass} appearance-none cursor-pointer`}
+        >
+          <option value="">--</option>
+          {(field.options || []).map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+      );
+    case 'checkbox':
+      return (
+        <label className="flex items-center gap-3 p-3 bg-white border border-slate-100 rounded-xl text-sm">
+          <input
+            type="checkbox"
+            disabled={disabled}
+            checked={value === true}
+            onChange={(e) => onChange(e.target.checked)}
+            className="w-5 h-5 accent-slate-900"
+          />
+          <span className="text-slate-700">{field.label}</span>
+        </label>
+      );
+    case 'file': {
+      const hasFile = typeof value === 'string' && value.length > 0;
+      return (
+        <div className="space-y-2">
+          <label className={`w-full flex items-center justify-center gap-2 p-3 border-2 border-dashed rounded-xl cursor-pointer text-xs font-bold uppercase ${hasFile ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-slate-200 text-slate-500 hover:border-slate-400'} ${disabled ? 'opacity-60 pointer-events-none' : ''}`}>
+            <Camera className="w-4 h-4" />
+            {hasFile ? '已上传 / 重新上传' : '上传文件'}
+            <input
+              type="file"
+              accept={ALLOWED_CUSTOM_FILE_TYPES.join(',')}
+              disabled={disabled}
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                if (!ALLOWED_CUSTOM_FILE_TYPES.includes(file.type)) return;
+                try {
+                  const dataUrl = await fileToDataUrl(file);
+                  onChange(dataUrl);
+                } catch { /* ignore */ }
+                e.target.value = '';
+              }}
+            />
+          </label>
+          {hasFile && (
+            <button type="button" onClick={() => onChange('')} className="text-[11px] text-rose-500 underline">清除</button>
+          )}
+        </div>
+      );
+    }
+    default:
+      return null;
+  }
+};
+
+const CustomFieldsSection = ({ guest, fieldsConfig, onChange }) => {
+  const fields = getActiveCustomFields(fieldsConfig, { isResident: !!guest.isResident });
+  if (!fields.length) return null;
+  return (
+    <>
+      {fields.map((field) => {
+        if (field.type === 'checkbox') {
+          return (
+            <div key={field.id} className="col-span-2">
+              <CustomFieldInput
+                field={field}
+                value={guest.customFields?.[field.key]}
+                disabled={!guest.isEditable}
+                onChange={(v) => onChange(field.key, v)}
+              />
+              {field.required && <span className="ml-2 text-[10px] text-rose-400">*必填</span>}
+            </div>
+          );
+        }
+        return (
+          <div key={field.id} className="col-span-2">
+            <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase flex items-center gap-1">
+              <span>{field.label}</span>
+              {field.required && <span className="text-rose-400">*</span>}
+            </label>
+            <CustomFieldInput
+              field={field}
+              value={guest.customFields?.[field.key]}
+              disabled={!guest.isEditable}
+              onChange={(v) => onChange(field.key, v)}
+            />
+          </div>
+        );
+      })}
+    </>
+  );
+};
+
+// ----------------------------------------------------------------------
 // CheckinFlow（登記表單，5 步驟）
 // ----------------------------------------------------------------------
 const CheckinFlow = ({
@@ -1070,11 +1244,13 @@ const CheckinFlow = ({
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [scannerGuestId, setScannerGuestId] = useState(null);
 
+  const fieldsConfig = getFieldsConfig(appSettings);
+
   useEffect(() => {
     if (guests.length === 0) {
-      setGuests([createGuestTemplate('adult')]);
+      setGuests([createGuestTemplate('adult', fieldsConfig)]);
     }
-  }, [guests.length, setGuests]);
+  }, [guests.length, setGuests, fieldsConfig]);
 
   const t = translations[lang || DEFAULT_LANG];
   const countryOptions = getCountryOptions(lang, appSettings.taiwanNamingMode);
@@ -1093,12 +1269,29 @@ const CheckinFlow = ({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasPendingRetry, hasHistory, steps.length]);
 
-  const addGuest = () => setGuests((prevGuests) => [...prevGuests, createGuestTemplate('adult')]);
+  const addGuest = () => setGuests((prevGuests) => [...prevGuests, createGuestTemplate('adult', fieldsConfig)]);
   const removeGuest = (id) => setGuests((prevGuests) => prevGuests.filter((guest) => guest.id !== id));
-  const updateGuest = (id, field, value) => setGuests((prevGuests) => prevGuests.map((guest) => (guest.id === id ? { ...guest, [field]: value } : guest)));
+  const updateGuest = (id, field, value) => setGuests((prevGuests) => prevGuests.map((guest) => {
+    if (guest.id !== id) return guest;
+    if (field === 'isResident') {
+      const customDefaults = buildCustomFieldsDefaults(fieldsConfig, { isResident: value });
+      const mergedCustom = { ...customDefaults, ...(guest.customFields || {}) };
+      // Drop custom values that are no longer in scope after the switch.
+      const activeKeys = new Set(getActiveCustomFields(fieldsConfig, { isResident: value }).map((f) => f.key));
+      const next = {};
+      for (const [k, v] of Object.entries(mergedCustom)) {
+        if (activeKeys.has(k)) next[k] = v;
+      }
+      return { ...guest, isResident: value, customFields: next };
+    }
+    return { ...guest, [field]: value };
+  }));
+  const updateGuestCustomField = (id, key, value) => setGuests((prevGuests) => prevGuests.map((guest) => (
+    guest.id === id ? { ...guest, customFields: { ...(guest.customFields || {}), [key]: value } } : guest
+  )));
   const updateCheckInDate = (value) => setCheckInDate(value);
   const updateCheckOutDate = (value) => setCheckOutDate(value);
-  const isRegValid = () => isRegistrationValid(guests);
+  const isRegValid = () => isRegistrationValid(guests, fieldsConfig);
 
   const uploadAndOcrPassport = async (base64Image, options = { strict: true }) => {
     const ocrResult = await DB.recognizePassport(base64Image);
@@ -1224,7 +1417,7 @@ const CheckinFlow = ({
   );
 
   return (
-    <div className="h-screen bg-slate-50 flex">
+    <div className="min-h-screen-dvh bg-slate-50 flex" style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
       {/* Sidebar Menu for Desktop */}
       <div className="hidden md:block md:w-72 bg-white border-r border-slate-200 h-full overflow-y-auto">
         {menuContent}
@@ -1270,17 +1463,17 @@ const CheckinFlow = ({
                   <div className="p-4 bg-slate-50 rounded-2xl flex items-center justify-between">
                     <div><p className="font-bold text-slate-800 text-sm">{t.countAdults}</p></div>
                     <div className="flex items-center gap-4">
-                      <button onClick={() => guests.length > 1 && removeGuest(guests[guests.length - 1].id)} className="w-8 h-8 rounded-full border border-slate-300">-</button>
+                      <button onClick={() => guests.length > 1 && removeGuest(guests[guests.length - 1].id)} className="w-10 h-10 rounded-full border border-slate-300 active:bg-slate-100 text-lg leading-none">-</button>
                       <span className="font-bold">{guests.length}</span>
-                      <button onClick={addGuest} className="w-8 h-8 rounded-full border border-slate-300">+</button>
+                      <button onClick={addGuest} className="w-10 h-10 rounded-full border border-slate-300 active:bg-slate-100 text-lg leading-none">+</button>
                     </div>
                   </div>
                   <div className="p-4 bg-slate-50 rounded-2xl flex items-center justify-between">
                     <div><p className="font-bold text-slate-800 text-sm">{t.petLabel}</p></div>
                     <div className="flex items-center gap-4">
-                      <button onClick={() => petCount > 0 && setPetCount(petCount - 1)} className="w-8 h-8 rounded-full border border-slate-300">-</button>
+                      <button onClick={() => petCount > 0 && setPetCount(petCount - 1)} className="w-10 h-10 rounded-full border border-slate-300 active:bg-slate-100 text-lg leading-none">-</button>
                       <span className="font-bold">{petCount}</span>
-                      <button onClick={() => setPetCount(petCount + 1)} className="w-8 h-8 rounded-full border border-slate-300">+</button>
+                      <button onClick={() => setPetCount(petCount + 1)} className="w-10 h-10 rounded-full border border-slate-300 active:bg-slate-100 text-lg leading-none">+</button>
                     </div>
                   </div>
                 </div>
@@ -1315,7 +1508,13 @@ const CheckinFlow = ({
 
               {stepConfig.id === 'registration' && (
                 <div className="space-y-6 custom-scrollbar">
-                  {guests.map((guest, idx) => (
+                  {guests.map((guest, idx) => {
+                    const ageEnabled = isBuiltinEnabled(fieldsConfig, 'age');
+                    const ageNum = ageEnabled ? parseInt(guest.age) : NaN;
+                    const isMinor = ageEnabled && Number.isFinite(ageNum) && ageNum < 18;
+                    const phoneAdult = !ageEnabled || (Number.isFinite(ageNum) && ageNum >= 16);
+                    const fieldOn = (key) => isBuiltinEnabled(fieldsConfig, key);
+                    return (
                     <div key={guest.id} className="p-5 bg-slate-50/50 rounded-2xl border border-slate-100 space-y-4 shadow-sm relative">
                       <div className="flex justify-between items-center">
                         <span className="text-[10px] font-black uppercase text-slate-400">{t.guestLabel} {idx + 1}</span>
@@ -1339,121 +1538,183 @@ const CheckinFlow = ({
                               <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormName}</label>
                               <input disabled={!guest.isEditable} type="text" value={guest.name} onChange={(e) => updateGuest(guest.id, 'name', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none disabled:bg-slate-100" />
                             </div>
-                            <div>
-                              <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormAge}</label>
-                              <input disabled={!guest.isEditable} type="number" value={guest.age} onChange={(e) => updateGuest(guest.id, 'age', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none disabled:bg-slate-100" />
-                            </div>
-                            <div>
-                              <label className={`text-[10px] font-bold ml-1 uppercase ${parseInt(guest.age) < 18 ? 'text-slate-300' : 'text-slate-400'}`}>{t.regFormPhone}</label>
-                              <input
-                                disabled={!guest.isEditable || parseInt(guest.age) < 16}
-                                type="text"
-                                value={parseInt(guest.age) < 16 ? "000-0000-0000" : guest.phone}
-                                onChange={(e) => updateGuest(guest.id, 'phone', e.target.value)}
-                                className={`w-full p-3 border border-slate-100 rounded-xl text-sm shadow-sm outline-none transition-colors ${parseInt(guest.age) < 16 ? 'bg-slate-100/50 text-slate-300 cursor-not-allowed' : 'bg-white text-slate-900'} disabled:bg-slate-100`}
-                              />
-                            </div>
-                            <div className="col-span-2 space-y-3">
+                            {fieldOn('age') && (
                               <div>
-                                <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormZip}</label>
-                                <div className="flex gap-3">
-                                  <input disabled={!guest.isEditable} type="text" placeholder={t.zipPlaceholder} value={guest.postalCode} onChange={(e) => updateGuest(guest.id, 'postalCode', e.target.value.replace(/\D/g, ''))} className="flex-1 p-3 bg-white border border-slate-100 rounded-xl text-sm font-mono disabled:bg-slate-100" maxLength={7} />
-                                  <button disabled={!guest.isEditable} onClick={() => lookupZipCode(guest.id, guest.postalCode)} className="flex-1 px-4 bg-slate-900 text-white rounded-xl text-xs font-bold disabled:bg-slate-200 flex items-center gap-2">
-                                    {isLookingUpZip === guest.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />} {isLookingUpZip === guest.id ? t.zipLoading : t.zipLookup}
-                                  </button>
-                                </div>
+                                <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormAge}</label>
+                                <input disabled={!guest.isEditable} type="number" value={guest.age} onChange={(e) => updateGuest(guest.id, 'age', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none disabled:bg-slate-100" />
                               </div>
-                              <div>
-                                <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormAddr}</label>
-                                <input disabled={!guest.isEditable} type="text" value={guest.address} onChange={(e) => updateGuest(guest.id, 'address', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm disabled:bg-slate-100" placeholder="大阪府大阪市…" />
+                            )}
+                            {fieldOn('phone') && (
+                              <div className={fieldOn('age') ? '' : 'col-span-2'}>
+                                <label className={`text-[10px] font-bold ml-1 uppercase ${!phoneAdult ? 'text-slate-300' : 'text-slate-400'}`}>{t.regFormPhone}</label>
+                                <input
+                                  disabled={!guest.isEditable || !phoneAdult}
+                                  type="text"
+                                  value={!phoneAdult ? "000-0000-0000" : guest.phone}
+                                  onChange={(e) => updateGuest(guest.id, 'phone', e.target.value)}
+                                  className={`w-full p-3 border border-slate-100 rounded-xl text-sm shadow-sm outline-none transition-colors ${!phoneAdult ? 'bg-slate-100/50 text-slate-300 cursor-not-allowed' : 'bg-white text-slate-900'} disabled:bg-slate-100`}
+                                />
                               </div>
-                            </div>
+                            )}
+                            {(fieldOn('postalCode') || fieldOn('address')) && (
+                              <div className="col-span-2 space-y-3">
+                                {fieldOn('postalCode') && (
+                                  <div>
+                                    <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormZip}</label>
+                                    <div className="flex gap-3">
+                                      <input disabled={!guest.isEditable} type="text" placeholder={t.zipPlaceholder} value={guest.postalCode} onChange={(e) => updateGuest(guest.id, 'postalCode', e.target.value.replace(/\D/g, ''))} className="flex-1 p-3 bg-white border border-slate-100 rounded-xl text-sm font-mono disabled:bg-slate-100" maxLength={7} />
+                                      <button disabled={!guest.isEditable} onClick={() => lookupZipCode(guest.id, guest.postalCode)} className="flex-1 px-4 bg-slate-900 text-white rounded-xl text-xs font-bold disabled:bg-slate-200 flex items-center gap-2">
+                                        {isLookingUpZip === guest.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />} {isLookingUpZip === guest.id ? t.zipLoading : t.zipLookup}
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                                {fieldOn('address') && (
+                                  <div>
+                                    <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormAddr}</label>
+                                    <input disabled={!guest.isEditable} type="text" value={guest.address} onChange={(e) => updateGuest(guest.id, 'address', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm disabled:bg-slate-100" placeholder="大阪府大阪市…" />
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </>
                         ) : guest.passportPhoto ? (
                           <>
+                            {fieldOn('passportPhoto') && (
+                              <div className="col-span-2 space-y-2">
+                                <button
+                                  disabled={!guest.isEditable || guest.passportOcrStatus === 'processing'}
+                                  onClick={() => setScannerGuestId(guest.id)}
+                                  className="w-full p-4 border-2 border-dashed rounded-xl flex items-center justify-center gap-2 transition-colors bg-emerald-50 border-emerald-200 text-emerald-600 disabled:opacity-60"
+                                >
+                                  {guest.passportOcrStatus === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+                                  <span className="text-[10px] font-bold uppercase">{t.regPassportUploaded}</span>
+                                </button>
+                                {guest.passportOcrMessage && (
+                                  <p className={`text-[11px] ${guest.passportOcrStatus === 'failed' ? 'text-rose-500' : guest.passportOcrStatus === 'manual-required' ? 'text-amber-600' : 'text-emerald-600'}`}>{guest.passportOcrMessage}</p>
+                                )}
+                              </div>
+                            )}
+                            <div className="col-span-2">
+                              <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormName}</label>
+                              <input disabled={!guest.isEditable} type="text" value={guest.name} onChange={(e) => updateGuest(guest.id, 'name', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none disabled:bg-slate-100" />
+                            </div>
+                            {fieldOn('age') && (
+                              <div>
+                                <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormAge}</label>
+                                <input disabled={!guest.isEditable} type="number" value={guest.age} onChange={(e) => updateGuest(guest.id, 'age', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none disabled:bg-slate-100" />
+                              </div>
+                            )}
+                            {fieldOn('phone') && (
+                              <div className={fieldOn('age') ? '' : 'col-span-2'}>
+                                <label className={`text-[10px] font-bold ml-1 uppercase ${!phoneAdult ? 'text-slate-300' : 'text-slate-400'}`}>{t.regFormPhone}</label>
+                                <input
+                                  disabled={!guest.isEditable || !phoneAdult}
+                                  type="text"
+                                  value={!phoneAdult ? "000-0000-0000" : guest.phone}
+                                  onChange={(e) => updateGuest(guest.id, 'phone', e.target.value)}
+                                  className={`w-full p-3 border border-slate-100 rounded-xl text-sm shadow-sm outline-none transition-colors ${!phoneAdult ? 'bg-slate-100/50 text-slate-300 cursor-not-allowed' : 'bg-white text-slate-900'} disabled:bg-slate-100`}
+                                />
+                              </div>
+                            )}
+                            {fieldOn('nationality') && (
+                              <div className="col-span-2">
+                                <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormNation}</label>
+                                <select
+                                  disabled={!guest.isEditable}
+                                  value={guest.nationality}
+                                  onChange={(e) => {
+                                    updateGuest(guest.id, 'nationality', e.target.value);
+                                    updateGuest(guest.id, 'nationalityDetected', '');
+                                  }}
+                                  className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none appearance-none cursor-pointer disabled:bg-slate-100"
+                                >
+                                  <option value="">-- {t.selectCountry} --</option>
+                                  {countryOptions.map((country) => (
+                                    <option key={country.code} value={country.code}>{country.label}</option>
+                                  ))}
+                                </select>
+                                {guest.nationalityDetected && (
+                                  <p className="text-[11px] text-amber-600 mt-1">{t.detectedNationHint}: {guest.nationalityDetected}</p>
+                                )}
+                              </div>
+                            )}
+                            {fieldOn('passportNumber') && (
+                              <div className="col-span-2">
+                                <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormPass}</label>
+                                <input disabled={!guest.isEditable} type="text" value={guest.passportNumber} onChange={(e) => updateGuest(guest.id, 'passportNumber', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm disabled:bg-slate-100" />
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          fieldOn('passportPhoto') ? (
                             <div className="col-span-2 space-y-2">
                               <button
                                 disabled={!guest.isEditable || guest.passportOcrStatus === 'processing'}
                                 onClick={() => setScannerGuestId(guest.id)}
-                                className="w-full p-4 border-2 border-dashed rounded-xl flex items-center justify-center gap-2 transition-colors bg-emerald-50 border-emerald-200 text-emerald-600 disabled:opacity-60"
+                                className="w-full p-5 border-2 border-dashed rounded-xl flex items-center justify-center gap-2 transition-colors bg-white border-slate-200 text-slate-500 hover:border-slate-400 disabled:opacity-60"
                               >
                                 {guest.passportOcrStatus === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
-                                <span className="text-[10px] font-bold uppercase">{t.regPassportUploaded}</span>
+                                <span className="text-[10px] font-bold uppercase">{t.regPassportUpload}</span>
                               </button>
                               {guest.passportOcrMessage && (
                                 <p className={`text-[11px] ${guest.passportOcrStatus === 'failed' ? 'text-rose-500' : guest.passportOcrStatus === 'manual-required' ? 'text-amber-600' : 'text-emerald-600'}`}>{guest.passportOcrMessage}</p>
                               )}
                             </div>
-                            <div className="col-span-2">
-                              <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormName}</label>
-                              <input disabled={!guest.isEditable} type="text" value={guest.name} onChange={(e) => updateGuest(guest.id, 'name', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none disabled:bg-slate-100" />
-                            </div>
-                            <div>
-                              <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormAge}</label>
-                              <input disabled={!guest.isEditable} type="number" value={guest.age} onChange={(e) => updateGuest(guest.id, 'age', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none disabled:bg-slate-100" />
-                            </div>
-                            <div>
-                              <label className={`text-[10px] font-bold ml-1 uppercase ${parseInt(guest.age) < 18 ? 'text-slate-300' : 'text-slate-400'}`}>{t.regFormPhone}</label>
-                              <input
-                                disabled={!guest.isEditable || parseInt(guest.age) < 16}
-                                type="text"
-                                value={parseInt(guest.age) < 16 ? "000-0000-0000" : guest.phone}
-                                onChange={(e) => updateGuest(guest.id, 'phone', e.target.value)}
-                                className={`w-full p-3 border border-slate-100 rounded-xl text-sm shadow-sm outline-none transition-colors ${parseInt(guest.age) < 16 ? 'bg-slate-100/50 text-slate-300 cursor-not-allowed' : 'bg-white text-slate-900'} disabled:bg-slate-100`}
-                              />
-                            </div>
-                            <div className="col-span-2">
-                              <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormNation}</label>
-                              <select
-                                disabled={!guest.isEditable}
-                                value={guest.nationality}
-                                onChange={(e) => {
-                                  updateGuest(guest.id, 'nationality', e.target.value);
-                                  updateGuest(guest.id, 'nationalityDetected', '');
-                                }}
-                                className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none appearance-none cursor-pointer disabled:bg-slate-100"
-                              >
-                                <option value="">-- {t.selectCountry} --</option>
-                                {countryOptions.map((country) => (
-                                  <option key={country.code} value={country.code}>{country.label}</option>
-                                ))}
-                              </select>
-                              {guest.nationalityDetected && (
-                                <p className="text-[11px] text-amber-600 mt-1">{t.detectedNationHint}: {guest.nationalityDetected}</p>
+                          ) : (
+                            <>
+                              <div className="col-span-2">
+                                <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormName}</label>
+                                <input disabled={!guest.isEditable} type="text" value={guest.name} onChange={(e) => updateGuest(guest.id, 'name', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none disabled:bg-slate-100" />
+                              </div>
+                              {fieldOn('age') && (
+                                <div>
+                                  <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormAge}</label>
+                                  <input disabled={!guest.isEditable} type="number" value={guest.age} onChange={(e) => updateGuest(guest.id, 'age', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none disabled:bg-slate-100" />
+                                </div>
                               )}
-                            </div>
-                            <div className="col-span-2">
-                              <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormPass}</label>
-                              <input disabled={!guest.isEditable} type="text" value={guest.passportNumber} onChange={(e) => updateGuest(guest.id, 'passportNumber', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm disabled:bg-slate-100" />
-                            </div>
-                          </>
-                        ) : (
-                          <div className="col-span-2 space-y-2">
-                            <button
-                              disabled={!guest.isEditable || guest.passportOcrStatus === 'processing'}
-                              onClick={() => setScannerGuestId(guest.id)}
-                              className="w-full p-5 border-2 border-dashed rounded-xl flex items-center justify-center gap-2 transition-colors bg-white border-slate-200 text-slate-500 hover:border-slate-400 disabled:opacity-60"
-                            >
-                              {guest.passportOcrStatus === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
-                              <span className="text-[10px] font-bold uppercase">{t.regPassportUpload}</span>
-                            </button>
-                            {guest.passportOcrMessage && (
-                              <p className={`text-[11px] ${guest.passportOcrStatus === 'failed' ? 'text-rose-500' : guest.passportOcrStatus === 'manual-required' ? 'text-amber-600' : 'text-emerald-600'}`}>{guest.passportOcrMessage}</p>
-                            )}
-                          </div>
+                              {fieldOn('nationality') && (
+                                <div className="col-span-2">
+                                  <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormNation}</label>
+                                  <select disabled={!guest.isEditable} value={guest.nationality} onChange={(e) => updateGuest(guest.id, 'nationality', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none appearance-none cursor-pointer disabled:bg-slate-100">
+                                    <option value="">-- {t.selectCountry} --</option>
+                                    {countryOptions.map((country) => (
+                                      <option key={country.code} value={country.code}>{country.label}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              )}
+                              {fieldOn('passportNumber') && (
+                                <div className="col-span-2">
+                                  <label className="text-[10px] font-bold text-slate-400 ml-1 uppercase">{t.regFormPass}</label>
+                                  <input disabled={!guest.isEditable} type="text" value={guest.passportNumber} onChange={(e) => updateGuest(guest.id, 'passportNumber', e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm disabled:bg-slate-100" />
+                                </div>
+                              )}
+                            </>
+                          )
                         )}
-                        {guest.age && parseInt(guest.age) < 18 && (
+                        <CustomFieldsSection
+                          guest={guest}
+                          fieldsConfig={fieldsConfig}
+                          onChange={(key, value) => updateGuestCustomField(guest.id, key, value)}
+                        />
+                        {isMinor && (fieldOn('guardianName') || fieldOn('guardianPhone')) && (
                           <div className="col-span-2 bg-rose-50 p-4 rounded-xl border border-rose-100 space-y-3">
                             <p className="text-[10px] font-bold text-rose-600 flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> {t.regMinorAlert}</p>
                             <div className="grid grid-cols-2 gap-2">
-                              <input disabled={!guest.isEditable} type="text" placeholder={t.regFormName} value={guest.guardianName} onChange={(e) => updateGuest(guest.id, 'guardianName', e.target.value)} className="w-full p-2 bg-white rounded-lg text-xs outline-none disabled:bg-slate-100" />
-                              <input disabled={!guest.isEditable} type="text" placeholder="Phone" value={guest.guardianPhone} onChange={(e) => updateGuest(guest.id, 'guardianPhone', e.target.value)} className="w-full p-2 bg-white rounded-lg text-xs outline-none disabled:bg-slate-100" />
+                              {fieldOn('guardianName') && (
+                                <input disabled={!guest.isEditable} type="text" placeholder={t.regFormName} value={guest.guardianName} onChange={(e) => updateGuest(guest.id, 'guardianName', e.target.value)} className="w-full p-2 bg-white rounded-lg text-xs outline-none disabled:bg-slate-100" />
+                              )}
+                              {fieldOn('guardianPhone') && (
+                                <input disabled={!guest.isEditable} type="text" placeholder="Phone" value={guest.guardianPhone} onChange={(e) => updateGuest(guest.id, 'guardianPhone', e.target.value)} className="w-full p-2 bg-white rounded-lg text-xs outline-none disabled:bg-slate-100" />
+                              )}
                             </div>
                           </div>
                         )}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                   <button onClick={addGuest} className="w-full py-4 border-2 border-dashed border-slate-200 rounded-2xl flex items-center justify-center gap-2 text-slate-400 hover:text-slate-900 transition-all focus:ring-1 focus:ring-slate-900 outline-none"><UserPlus className="w-5 h-5" /> <span className="text-xs font-bold uppercase">{t.addGuest}</span></button>
                 </div>
               )}
@@ -1516,7 +1777,7 @@ const CompletionScreen = ({ lang, completionTemplate }) => {
   const navigate = useNavigate();
   const t = translations[lang || DEFAULT_LANG] || translations[DEFAULT_LANG];
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center animate-in fade-in">
+    <div className="min-h-screen-dvh bg-slate-50 flex flex-col items-center justify-center p-6 text-center animate-in fade-in">
       <CheckCircle2 className="w-16 h-16 text-emerald-500 mb-6 mx-auto" />
       <h1 className="text-3xl font-bold mb-2">{completionTemplate.title}</h1>
       <p className="text-slate-500 mb-6">{completionTemplate.subtitle}</p>
@@ -1573,7 +1834,7 @@ const GuideView = ({ lang, stepsConfig, savedRegistration, hasHistory }) => {
     if (!childStep) return <Navigate to={`/guide/${encodeURIComponent(stepId)}`} replace />;
     const fallback = getBuiltinStepFallback(lang, childId);
     return (
-      <div className="min-h-screen bg-slate-50 flex flex-col">
+      <div className="min-h-screen-dvh bg-slate-50 flex flex-col">
         <div className="bg-white border-b border-slate-200 p-4 flex items-center gap-3">
           <button onClick={() => navigate(`/guide/${encodeURIComponent(stepId)}`)} className="p-2 text-slate-500 hover:text-slate-900"><ArrowLeft className="w-5 h-5" /></button>
           <div className="flex items-center gap-2">
@@ -1600,7 +1861,7 @@ const GuideView = ({ lang, stepsConfig, savedRegistration, hasHistory }) => {
     if (step.type === 'group') {
       const children = (step.children || []).filter(c => c.enabled !== false);
       return (
-        <div className="min-h-screen bg-slate-50 flex flex-col">
+        <div className="min-h-screen-dvh bg-slate-50 flex flex-col">
           <div className="bg-white border-b border-slate-200 p-4 flex items-center gap-3">
             <button onClick={() => navigate('/guide')} className="p-2 text-slate-500 hover:text-slate-900"><ArrowLeft className="w-5 h-5" /></button>
             <div className="flex items-center gap-2 flex-1">
@@ -1630,7 +1891,7 @@ const GuideView = ({ lang, stepsConfig, savedRegistration, hasHistory }) => {
     // Solo step
     const fallback = getBuiltinStepFallback(lang, stepId);
     return (
-      <div className="min-h-screen bg-slate-50 flex flex-col">
+      <div className="min-h-screen-dvh bg-slate-50 flex flex-col">
         <div className="bg-white border-b border-slate-200 p-4 flex items-center gap-3">
           <button onClick={() => navigate('/guide')} className="p-2 text-slate-500 hover:text-slate-900"><ArrowLeft className="w-5 h-5" /></button>
           <div className="flex items-center gap-2">
@@ -1653,7 +1914,7 @@ const GuideView = ({ lang, stepsConfig, savedRegistration, hasHistory }) => {
   const guideSteps = rawSteps.filter(s => s.category === 'guide' && s.enabled !== false);
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div className="min-h-screen-dvh bg-slate-50 flex flex-col">
       <div className="bg-white border-b border-slate-200 p-4 flex items-center justify-between">
         <button onClick={() => navigate('/')} className="flex items-center gap-2 text-slate-500 hover:text-slate-900">
           <ArrowLeft className="w-5 h-5" />

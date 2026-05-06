@@ -19,6 +19,11 @@
 - 护照照片本地 OCR（RapidOCR ONNX Runtime）自动回填姓名、出生日期、国籍、护照号。
 - 完成页支持按语言渲染可配置的标题、副标题与 HTML 富文本区块。
 
+<img width="912" height="1820" alt="checkin-reg-p" src="https://github.com/user-attachments/assets/ec80fbca-925b-49af-ab34-616aa8ee2ee5" />
+<img width="2830" height="1820" alt="checkin-reg" src="https://github.com/user-attachments/assets/893fc4b6-6e37-41fe-b91c-7399813c061e" />
+<img width="2830" height="1836" alt="localhost_5173_checkin" src="https://github.com/user-attachments/assets/d5209387-3853-4f18-bb80-be22e407f449" />
+
+
 ### 后台（管理员）
 
 - Passkey 注册与登录（WebAuthn）。
@@ -26,6 +31,9 @@
 - 编辑多语言步骤模板与完成页模板。
 - 配置登记表单字段（内置启停 / 默认值，自定义增删改 / 归档）。
 - 调整台湾命名模式等全局设置。
+
+<img width="2154" height="1390" alt="checkin_admin" src="https://github.com/user-attachments/assets/a7f96df2-3fbc-4688-944c-f72a145b3b55" />
+
 
 ---
 

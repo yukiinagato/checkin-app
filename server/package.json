@@ -12,7 +12,7 @@
     "reset-passkey:prod": "node reset-passkey.js --env production"
   },
   "dependencies": {
-    "@simplewebauthn/server": "^10.0.1",
+    "@simplewebauthn/server": "^13.3.2",
     "body-parser": "^1.20.2",
     "cors": "^2.8.5",
     "dotenv": "^17.2.4",

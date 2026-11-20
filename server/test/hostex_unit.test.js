@@ -20,6 +20,7 @@ const openMemoryDb = () => new Promise((resolve, reject) => {
 const createSchema = async (db) => {
   const migration = require('../migrations/003_hostex');
   await migration.up({ db, runAsync });
+  await require('../migrations/008_hanastay').up({ db, runAsync, allAsync });
 };
 
 test('normalizeImageUrl 剥掉 OSS 水印参数、保留原图 URL', () => {

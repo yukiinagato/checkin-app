@@ -39,6 +39,7 @@ const { Semaphore } = require('./src/semaphore');
 const { createHostexClient } = require('./src/hostex');
 const { createReservationLinker, createReservationReconciler } = require('./src/reservationLinks');
 const { createHostexSync, dedupeReservationPhotos } = require('./src/hostexSync');
+const { createHanastayClient, createHanastaySync } = require('./src/hanastaySync');
 const { createOcrWorkerPool } = require('./src/ocrWorkerPool');
 
 const logger = createLogger();
@@ -68,6 +69,13 @@ const HOSTEX_SYNC_INTERVAL_MS = Number.parseInt(process.env.HOSTEX_SYNC_INTERVAL
 const HOSTEX_SYNC_PAST_DAYS = Number.parseInt(process.env.HOSTEX_SYNC_PAST_DAYS || '7', 10);
 const HOSTEX_SYNC_FUTURE_DAYS = Number.parseInt(process.env.HOSTEX_SYNC_FUTURE_DAYS || '60', 10);
 const HOSTEX_ENABLED = Boolean(HOSTEX_API_TOKEN && HOSTEX_PROPERTY_ID);
+// g.hanastay.net 登记同步（依赖 Hostex 订单数据；未配 token 時停用）
+const HANASTAY_EXPORT_TOKEN = process.env.HANASTAY_EXPORT_TOKEN || '';
+const HANASTAY_EXPORT_BASE = process.env.HANASTAY_EXPORT_BASE || 'https://hostex-lark-bridge.hanastay.workers.dev';
+const HANASTAY_USER_AGENT = process.env.HANASTAY_USER_AGENT || 'curl/8.7.1';
+const HANASTAY_SYNC_INTERVAL_MS = Number.parseInt(process.env.HANASTAY_SYNC_INTERVAL_MS || '600000', 10);
+const HANASTAY_AUTO_REGISTER = process.env.HANASTAY_AUTO_REGISTER !== 'false';
+const HANASTAY_ENABLED = Boolean(HOSTEX_ENABLED && HANASTAY_EXPORT_TOKEN);
 // 客人照片回顯令牌有效期
 const RESERVATION_PHOTO_TOKEN_TTL_MS = 30 * 60 * 1000;
 
@@ -817,6 +825,7 @@ const adminChallenges = new Map();
 let adminSessions = null;
 // Hostex 同步實例（startServer 中構建）；enabled 快取供輪詢間隔判斷
 let hostexSync = null;
+let hanastaySync = null;
 const reconcileReservationLinks = createReservationReconciler({ db: null, allAsync: (_, ...args) => allAsync(db, ...args), runAsync: (_, ...args) => runAsync(db, ...args), logger });
 const reconcileLinksSafely = () => reconcileReservationLinks().catch((err) => logger.warn({ err: err.message }, 'registration reconciliation failed'));
 let hostexSyncEnabledCache = true;
@@ -1846,6 +1855,30 @@ app.post('/api/admin/hostex/sync', requireAdminAuth, async (req, res) => {
   }
 });
 
+app.get('/api/admin/hanastay/status', requireAdminAuth, async (req, res) => {
+  try {
+    if (!hanastaySync) {
+      res.json({ enabled: false });
+      return;
+    }
+    res.json({ enabled: true, syncEnabled: hostexSyncEnabledCache, autoRegister: HANASTAY_AUTO_REGISTER, ...(await hanastaySync.getStatus()) });
+  } catch (error) {
+    sendInternal(req, res, error, 'hanastay status');
+  }
+});
+
+app.post('/api/admin/hanastay/sync', requireAdminAuth, async (req, res) => {
+  try {
+    if (!hanastaySync) {
+      res.status(400).json({ success: false, error: 'hanastay integration is not configured' });
+      return;
+    }
+    res.json(await hanastaySync.syncNow());
+  } catch (error) {
+    sendInternal(req, res, error, 'hanastay manual sync');
+  }
+});
+
 app.get('/api/admin/hostex/reservations', requireAdminAuth, async (req, res) => {
   try {
     const registrationMatches = await reconcileReservationLinks();
@@ -1920,6 +1953,7 @@ const shutdown = (signal = 'unknown') => {
   logger.info({ signal }, 'shutting down');
   clearInterval(cleanupInterval);
   if (hostexSync) hostexSync.stop();
+  if (hanastaySync) hanastaySync.stop();
   if (ocrWorkerPool) ocrWorkerPool.stop();
 
   const finalizeExit = async (code) => {
@@ -2004,6 +2038,36 @@ const startServer = async () => {
       logger
     });
     hostexSync.start();
+
+    if (HANASTAY_ENABLED) {
+      hanastaySync = createHanastaySync({
+        db,
+        runAsync,
+        allAsync,
+        getAsync,
+        client: createHanastayClient({ baseUrl: HANASTAY_EXPORT_BASE, token: HANASTAY_EXPORT_TOKEN, userAgent: HANASTAY_USER_AGENT, logger }),
+        uploadDir: UPLOAD_DIR,
+        propertyId: HOSTEX_PROPERTY_ID,
+        intervalMs: HANASTAY_SYNC_INTERVAL_MS,
+        autoRegister: HANASTAY_AUTO_REGISTER,
+        loadFieldsConfig: async () => (await loadAppSettings()).guestFieldsConfig || DEFAULT_GUEST_FIELDS_CONFIG,
+        validateGuest: validateGuestPayload,
+        isEnabled: () => hostexSyncEnabledCache,
+        reconcileLinks: reconcileReservationLinks,
+        runOcr: async (imagePath) => {
+          const release = await ocrSemaphore.acquire(OCR_QUEUE_TIMEOUT_MS);
+          try {
+            return await executePassportOcr(imagePath);
+          } finally {
+            release();
+          }
+        },
+        logger
+      });
+      hanastaySync.start();
+    } else {
+      logger.info('hanastay registration sync disabled (HANASTAY_EXPORT_TOKEN not configured)');
+    }
   } else {
     logger.info('hostex integration disabled (HOSTEX_API_TOKEN not configured)');
   }

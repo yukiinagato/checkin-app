@@ -258,6 +258,24 @@ pnpm start
 
 同步内容：订单基本信息 + 客人经 Hostex 上传的护照/证件照片（下载到 `UPLOAD_DIR` 本地留存，并后台预跑 OCR）。前台深链 `/?res=订单号` 或在欢迎页手动查找后，日期、人数、姓名、证件照自动预填。管理后台「Hostex 订单」tab 可查看同步状态并手动触发；「系统设置」可临时停用自动同步。
 
+### g.hanastay.net 登记同步（可选，依赖 Hostex 同步）
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `HANASTAY_EXPORT_TOKEN` | 空（停用） | hostex-lark-bridge Worker 的 `X-Auth` 密钥 |
+| `HANASTAY_EXPORT_BASE` | `https://hostex-lark-bridge.hanastay.workers.dev` | Worker 地址 |
+| `HANASTAY_SYNC_INTERVAL_MS` | `600000` | 轮询间隔（毫秒） |
+| `HANASTAY_AUTO_REGISTER` | `true` | `false` 时只预填证件照，不自动建档 |
+| `HANASTAY_USER_AGENT` | `curl/8.7.1` | 请求 UA（与 hanastay 运维脚本一致） |
+
+客人在 g.hanastay.net 指南页上传的证件照（R2）经 Worker `/reg/export` + `/reg/file` 拉取，按订单号对应本房源的 Hostex 订单，只处理 `HOSTEX_PROPERTY_ID` 且退房未超过 7 天的订单：
+
+1. 证件照写入 `hostex_id_images`（`source='hanastay'`）并预跑 OCR → 客人在本系统查找订单时自动预填。
+2. 若每张证件都识别出姓名/证件号/国籍/年龄、人数 ≥ 订单人数、且通过当前字段配置校验，则自动生成 `checkins` 记录并以 `checkin_link_source='hanastay'` 关联订单 → Wi-Fi 门户与门锁视为已登记。未成年人的监护人取同组成年人 + 订单预订人电话。
+3. 不满足条件（人数不足、非护照证件、日本国籍需电话、校验失败等）时只预填，原因记在 `hanastay_registrations.detail`；客人已在本系统登记过的订单不会另建记录。
+
+管理端：`GET /api/admin/hanastay/status`、`POST /api/admin/hanastay/sync`。
+
 ---
 
 ## 🧩 登记字段配置

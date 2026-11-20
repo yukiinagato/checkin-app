@@ -243,6 +243,7 @@ const createHostexSync = ({
       const pending = await allAsync(db, `
         SELECT image_id, reservation_code, source_url FROM hostex_id_images
         WHERE status IN ('pending', 'failed') AND attempts < ?
+          AND COALESCE(source, 'hostex') = 'hostex'
       `, [MAX_DOWNLOAD_ATTEMPTS]);
 
       const downloaded = (await Promise.all(pending.map((row) => downloadOne(row)))).filter(Boolean);

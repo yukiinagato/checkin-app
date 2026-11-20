@@ -19,11 +19,6 @@
 - 护照照片本地 OCR（RapidOCR ONNX Runtime）自动回填姓名、出生日期、国籍、护照号。
 - 完成页支持按语言渲染可配置的标题、副标题与 HTML 富文本区块。
 
-<img width="auto" height="600" alt="checkin-reg-p" src="https://github.com/user-attachments/assets/ec80fbca-925b-49af-ab34-616aa8ee2ee5" />
-<img width="1200" height="auto" alt="checkin-reg" src="https://github.com/user-attachments/assets/893fc4b6-6e37-41fe-b91c-7399813c061e" />
-<img width="1200" height="auto" alt="localhost_5173_checkin" src="https://github.com/user-attachments/assets/d5209387-3853-4f18-bb80-be22e407f449" />
-
-
 ### 后台（管理员）
 
 - Passkey 注册与登录（WebAuthn）。
@@ -31,9 +26,6 @@
 - 编辑多语言步骤模板与完成页模板。
 - 配置登记表单字段（内置启停 / 默认值，自定义增删改 / 归档）。
 - 调整台湾命名模式等全局设置。
-
-<img width="1200" height="auto" alt="checkin_admin" src="https://github.com/user-attachments/assets/a7f96df2-3fbc-4688-944c-f72a145b3b55" />
-
 
 ---
 
@@ -255,6 +247,17 @@ pnpm start
 | `PADDLE_OCR_RUNNER` | `server/tools/paddle_ocr_runner.py` | OCR 识别脚本路径 |
 | `LOG_LEVEL` | dev `debug` / prod `info` | pino 日志等级 |
 
+### Hostex 订单同步（可选）
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `HOSTEX_API_TOKEN` | 空（停用） | Hostex Open API Access Token，不配则整体停用 |
+| `HOSTEX_PROPERTY_ID` | 无 | 本部署服务的唯一房源 ID；配了 token 就必须配 |
+| `HOSTEX_SYNC_INTERVAL_MS` | `600000` | 轮询间隔（毫秒） |
+| `HOSTEX_SYNC_PAST_DAYS` / `HOSTEX_SYNC_FUTURE_DAYS` | `7` / `60` | 同步的入住日期窗口 |
+
+同步内容：订单基本信息 + 客人经 Hostex 上传的护照/证件照片（下载到 `UPLOAD_DIR` 本地留存，并后台预跑 OCR）。前台深链 `/?res=订单号` 或在欢迎页手动查找后，日期、人数、姓名、证件照自动预填。管理后台「Hostex 订单」tab 可查看同步状态并手动触发；「系统设置」可临时停用自动同步。
+
 ---
 
 ## 🧩 登记字段配置
@@ -366,6 +369,8 @@ pnpm start
 - `GET /api/template-bundle?lang=...`：一次性返回 steps + completion + app-settings（前台首屏使用）
 - `POST /api/submit`：按当前 `guestFieldsConfig` 校验
 - `POST /api/ocr/passport`：本地护照 OCR，返回识别字段与 `passportPhoto` 文件名
+- `POST /api/checkin/reservation-lookup`：按订单号或「预订人姓名+入住日期」查找已同步的 Hostex 订单（限流 10 次/10 分钟）
+- `GET /api/checkin/reservation-photo/:token`：短时效令牌回显订单内的证件照片（lookup 时签发，30 分钟有效）
 - Passkey 公开端点：`/api/admin/passkeys/status`、`/api/admin/passkeys/auth/options`、`/api/admin/passkeys/auth/verify`、`/api/admin/passkeys/register/verify`
 
 ### 需管理员会话
@@ -373,6 +378,7 @@ pnpm start
 - `GET /api/records`、`PATCH /api/records/:recordId/guests/:guestId`
 - `GET /api/admin/uploads/:filename`
 - `GET /api/admin/session`、`POST /api/admin/logout`
+- `GET /api/admin/hostex/status`、`POST /api/admin/hostex/sync`、`GET /api/admin/hostex/reservations`
 - `PUT /api/admin/steps?lang=...`
 - `PUT /api/admin/completion-template?lang=...`
 - `PUT /api/admin/app-settings`：按 key 增量写入

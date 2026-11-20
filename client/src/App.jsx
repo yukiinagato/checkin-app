@@ -1,4 +1,8 @@
-import { useState, useEffect } from 'react';
+import ReservationChooser, { SELECTION_STORAGE_KEY, readSelectedOrder } from './ReservationChooser';
+import OrderAccessCode, { ACCESS_RECEIPT_KEY, readAccessReceipt } from './OrderAccessCode';
+import { reservationLinkState, reservationPath } from './reservationLink.js';
+import { reservationGuestCount } from './reservationGuestCount.js';
+import { useState, useEffect, useRef } from 'react';
 import DOMPurify from 'dompurify';
 import { Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom';
 import {
@@ -106,6 +110,19 @@ const STEP_STORAGE_KEY = 'checkin.steps';
 const COMPLETION_TEMPLATE_STORAGE_KEY = 'checkin.completionTemplate';
 const ADMIN_TOKEN_STORAGE_KEY = 'checkin.adminSessionToken';
 const DEFAULT_LANG = 'jp';
+const CHECKIN_LANGUAGE_QUERY_MAP = Object.freeze({
+  ja: 'jp',
+  jp: 'jp',
+  en: 'en',
+  'zh-hans': 'zh-hans',
+  'zh-hant': 'zh-hant',
+  ko: 'ko'
+});
+
+const initialLanguageFromQuery = () => {
+  const requested = new URLSearchParams(window.location.search).get('lang');
+  return requested ? CHECKIN_LANGUAGE_QUERY_MAP[requested.toLowerCase()] || null : null;
+};
 const CHECKIN_STORAGE_KEY = 'checkin.completed';
 const GUEST_STORAGE_KEY = 'checkin.guests';
 const PET_COUNT_STORAGE_KEY = 'checkin.petCount';
@@ -154,10 +171,10 @@ const DB = {
     return await res.json();
   },
 
-  async verifyPasskeyRegistration(payload) {
+  async verifyPasskeyRegistration(payload, registrationToken) {
     const res = await fetch(`${API_URL}/admin/passkeys/register/verify`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${registrationToken}` },
       body: JSON.stringify(payload)
     });
     if (!res.ok) throw new Error('Failed to verify passkey registration');
@@ -268,19 +285,107 @@ const DB = {
     }
   },
 
-  async recognizePassport(imageData) {
+  // 走 NDJSON 串流，讓伺服器邊識別邊回報階段；onProgress 收到的是每一行事件。
+  // 若環境不支援串流讀取（舊瀏覽器沒有 body.getReader），自動退回單次 JSON 請求。
+  async recognizePassport(imageData, onProgress) {
     const res = await fetch(`${API_URL}/ocr/passport`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/x-ndjson'
+      },
       body: JSON.stringify({ image: imageData })
     });
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error(payload.error || 'Passport OCR request failed');
+
+    const isStream = res.ok && res.headers.get('content-type')?.includes('application/x-ndjson');
+    if (!isStream || !res.body?.getReader) {
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload.error || 'Passport OCR request failed');
+      }
+      return payload;
     }
-    return payload;
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result = null;
+    let streamError = null;
+
+    const consumeLine = (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      let event;
+      try {
+        event = JSON.parse(trimmed);
+      } catch {
+        return; // 忽略無法解析的行，不中斷串流
+      }
+      if (event.stage === 'done') {
+        result = event.result || {};
+      } else if (event.stage === 'error') {
+        streamError = event.error || 'Passport OCR request failed';
+      } else {
+        onProgress?.(event);
+      }
+    };
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      lines.forEach(consumeLine);
+    }
+    consumeLine(buffer);
+
+    if (streamError) throw new Error(streamError);
+    if (!result) throw new Error('Passport OCR request failed');
+    return result;
   },
 
+
+  // Hostex 訂單查找（深鏈 ?res= 或手動輸入）
+  async lookupReservation(body) {
+    const res = await fetch(`${API_URL}/checkin/reservation-lookup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      if (res.status === 429) throw new Error('RATE_LIMITED');
+      throw new Error('Lookup failed');
+    }
+    return await res.json();
+  },
+
+  async getHostexStatus(adminToken) {
+    const res = await fetch(`${API_URL}/admin/hostex/status`, {
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+    if (!res.ok) throw new Error('Failed to fetch hostex status');
+    return await res.json();
+  },
+
+  async triggerHostexSync(adminToken) {
+    const res = await fetch(`${API_URL}/admin/hostex/sync`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+    if (!res.ok) throw new Error('Sync request failed');
+    return await res.json();
+  },
+
+  async getHostexReservations(adminToken, { offset = 0, limit = 50, q = '' } = {}) {
+    const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+    if (q) params.set('q', q);
+    const res = await fetch(`${API_URL}/admin/hostex/reservations?${params}`, {
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+    if (!res.ok) throw new Error('Failed to fetch hostex reservations');
+    return await res.json();
+  },
 
   async setGuestDeleted(adminToken, recordId, guestId, deleted) {
     const res = await fetch(`${API_URL}/records/${encodeURIComponent(recordId)}/guests/${encodeURIComponent(guestId)}`, {
@@ -389,7 +494,10 @@ const translations = {
     footer: "您的安全与舒适是我们的最高宗旨。", guideTitle: "入住导览", changeLang: "语言", manualLink: "说明书 PDF",
     regResident: "日本居民", regTourist: "访日游客", startNewCheckin: "开始新登记", regFormName: "姓名", regFormAge: "年龄", regFormOcc: "职业", regFormPhone: "电话号码",
     regFormNation: "国籍", regFormPass: "护照号码", regPassportUpload: "拍摄/上传护照照片", regPassportUploaded: "护照照片已上传", regMinorAlert: "未成年人需填监护人信息",
+    passportReviewHint: "部分信息尚未通过核对，请对照护照检查后再确认填入。",
     passportModalTitle: "护照拍摄与上传", passportModalClose: "关闭", passportModalIntro: "请使用系统相机拍摄护照信息页，或从相册选择清晰照片。上传后会自动识别并填入表单。", passportModalPick: "拍摄或上传护照照片", passportModalProcessing: "正在保存照片并识别护照信息，请稍候...", passportModalConfirm: "确认填入", passportModalRetake: "重新拍摄", passportModalSavedHint: "照片会保存到后端本地上传目录，仅管理后台可查看。", passportFileTooLarge: "图片过大，请上传 12MB 以内的护照照片。", passportFileInvalid: "请选择图片格式的护照照片。",
+    ocrStageUploading: "正在上传照片...", ocrStageUploaded: "照片已保存", ocrStageLoading: "正在启动识别引擎...", ocrStageCompressed: "图片已处理，准备识别", ocrStageRecognizing: "正在识别护照（第 {pass}/{totalPasses} 次尝试）...", ocrStageMatched: "已读取到护照信息，正在收尾...",
+    resLookupTitle: "我有预订（自动填写入住信息）", resLookupCode: "订单号", resLookupOr: "或", resLookupName: "预订人姓名", resLookupFind: "查找我的预订", resLookupFound: "已找到您的预订", resLookupNotFound: "未找到匹配的预订，请检查后重试，或直接继续登记。", resLookupRateLimited: "查询过于频繁，请稍后再试。", resGuestsUnit: "位客人", resPrefilledNote: "入住日期与人数已自动填写，后续步骤可确认或修改。", resPhotoConfirmTitle: "这是您随预订提交的证件照片，请确认", resPhotoConfirmYes: "确认无误", resPhotoRetake: "重新拍摄", resPhotoPoolTitle: "预订中已上传的证件照片，点击选择属于您的一张：", resPhotoApplied: "已使用预订中的证件照片并自动填写信息。", resPhotoUnrecognized: "无法识别", resPhotoUnrecognizedHint: "该照片无法自动识别（可能拍摄模糊），已保留照片，请手动填写护照信息，或重新拍摄。", resPhotosPartial: "已自动填入 {n}/{total} 位客人的证件信息，其余客人请现场拍摄或手动填写。", regGuardianPick: "从同行成年人中选择：",
     ocrChecking: "正在本地识别证件...", ocrAutoFillSuccess: "已识别护照并自动填充护照号码。", ocrManualNeeded: "已检测到护照，但多次识别失败，请手动补充信息。", ocrInvalidDoc: "上传内容未通过证件校验，请上传护照照片或扫描件。", ocrFailed: "识别失败，请重试。", ocrUnsupported: "当前浏览器不支持本地OCR，已保留照片，请手动补充护照信息。",
     addGuest: "增加人员", guestLabel: "住客", petLabel: "宠物数量", countAdults: "住客人数 (成人/未成年)",
     checkIn: "入住日期", checkOut: "退房日期",
@@ -422,7 +530,10 @@ const translations = {
     footer: "您的安全與舒適是我們的最高宗旨。", guideTitle: "入住導覽", changeLang: "語言", manualLink: "說明書 PDF",
     regResident: "日本居民", regTourist: "訪日遊客", startNewCheckin: "開始新登記", regFormName: "姓名", regFormAge: "年齡", regFormOcc: "職業", regFormPhone: "電話號碼",
     regFormNation: "國籍", regFormPass: "護照號碼", regPassportUpload: "拍攝/上傳護照照片", regPassportUploaded: "護照照片已上傳", regMinorAlert: "未成年人需填監護人資訊",
+    passportReviewHint: "部分資訊尚未通過核對，請對照護照檢查後再確認填入。",
     passportModalTitle: "護照拍攝與上傳", passportModalClose: "關閉", passportModalIntro: "請使用系統相機拍攝護照資訊頁，或從相簿選擇清晰照片。上傳後會自動辨識並填入表單。", passportModalPick: "拍攝或上傳護照照片", passportModalProcessing: "正在保存照片並辨識護照資訊，請稍候...", passportModalConfirm: "確認填入", passportModalRetake: "重新拍攝", passportModalSavedHint: "照片會保存到後端本地上傳目錄，僅管理後台可查看。", passportFileTooLarge: "圖片過大，請上傳 12MB 以內的護照照片。", passportFileInvalid: "請選擇圖片格式的護照照片。",
+    ocrStageUploading: "正在上傳照片...", ocrStageUploaded: "照片已保存", ocrStageLoading: "正在啟動辨識引擎...", ocrStageCompressed: "圖片已處理，準備辨識", ocrStageRecognizing: "正在辨識護照（第 {pass}/{totalPasses} 次嘗試）...", ocrStageMatched: "已讀取到護照資訊，正在收尾...",
+    resLookupTitle: "我有預訂（自動填寫入住資訊）", resLookupCode: "訂單號", resLookupOr: "或", resLookupName: "預訂人姓名", resLookupFind: "查找我的預訂", resLookupFound: "已找到您的預訂", resLookupNotFound: "未找到符合的預訂，請檢查後重試，或直接繼續登記。", resLookupRateLimited: "查詢過於頻繁，請稍後再試。", resGuestsUnit: "位客人", resPrefilledNote: "入住日期與人數已自動填寫，後續步驟可確認或修改。", resPhotoConfirmTitle: "這是您隨預訂提交的證件照片，請確認", resPhotoConfirmYes: "確認無誤", resPhotoRetake: "重新拍攝", resPhotoPoolTitle: "預訂中已上傳的證件照片，點擊選擇屬於您的一張：", resPhotoApplied: "已使用預訂中的證件照片並自動填寫資訊。", resPhotoUnrecognized: "無法辨識", resPhotoUnrecognizedHint: "該照片無法自動辨識（可能拍攝模糊），已保留照片，請手動填寫護照資訊，或重新拍攝。", resPhotosPartial: "已自動填入 {n}/{total} 位客人的證件資訊，其餘客人請現場拍攝或手動填寫。", regGuardianPick: "從同行成年人中選擇：",
     ocrChecking: "正在本地辨識證件...", ocrAutoFillSuccess: "已辨識護照並自動填入護照號碼。", ocrManualNeeded: "已檢測到護照，但多次辨識失敗，請手動補充資訊。", ocrInvalidDoc: "上傳內容未通過證件校驗，請上傳護照照片或掃描件。", ocrFailed: "辨識失敗，請重試。", ocrUnsupported: "目前瀏覽器不支援本地OCR，已保留照片，請手動補充護照資訊。",
     addGuest: "增加人員", guestLabel: "住客", petLabel: "寵物數量", countAdults: "住客人數 (成人/未成年)",
     checkIn: "入住日期", checkOut: "退房日期",
@@ -455,7 +566,10 @@ const translations = {
     footer: "Your safety and comfort are our top priority.", guideTitle: "Check-in Guide", changeLang: "Language", manualLink: "Manual PDF",
     regResident: "Japan Resident", regTourist: "Visitor", startNewCheckin: "Start New Check-in", regFormName: "Name", regFormAge: "Age", regFormOcc: "Occupation", regFormPhone: "Phone Number",
     regFormNation: "Nationality", regFormPass: "Passport No.", regPassportUpload: "Upload passport photo", regPassportUploaded: "Passport photo uploaded", regMinorAlert: "Minors need guardian info",
+    passportReviewHint: "Some details could not be verified. Check the fields against your passport before applying them.",
     passportModalTitle: "Passport Photo Upload", passportModalClose: "Close", passportModalIntro: "Use your device camera to photograph the passport information page, or choose a clear image from your library. We will read it and fill the form automatically.", passportModalPick: "Take or upload passport photo", passportModalProcessing: "Saving photo and reading passport information...", passportModalConfirm: "Apply to form", passportModalRetake: "Retake", passportModalSavedHint: "The photo is stored on the backend and is only visible in the admin console.", passportFileTooLarge: "Image is too large. Please upload a passport photo under 12MB.", passportFileInvalid: "Please choose an image file.",
+    ocrStageUploading: "Uploading photo...", ocrStageUploaded: "Photo saved", ocrStageLoading: "Starting recognition engine...", ocrStageCompressed: "Image prepared for recognition", ocrStageRecognizing: "Reading passport (attempt {pass}/{totalPasses})...", ocrStageMatched: "Passport data found, finishing up...",
+    resLookupTitle: "I have a booking (auto-fill my details)", resLookupCode: "Reservation code", resLookupOr: "or", resLookupName: "Booker's name", resLookupFind: "Find my booking", resLookupFound: "Booking found", resLookupNotFound: "No matching booking found. Please check and retry, or simply continue without it.", resLookupRateLimited: "Too many lookups — please try again later.", resGuestsUnit: "guests", resPrefilledNote: "Dates and guest count are pre-filled — you can review or edit them in the next steps.", resPhotoConfirmTitle: "This ID photo was submitted with your booking — please confirm", resPhotoConfirmYes: "Looks right", resPhotoRetake: "Retake", resPhotoPoolTitle: "ID photos uploaded with this booking — tap yours:", resPhotoApplied: "Booking ID photo applied and details auto-filled.", resPhotoUnrecognized: "Unreadable", resPhotoUnrecognizedHint: "This photo could not be read automatically (it may be blurry). The photo is kept — please fill in the passport details manually, or retake it.", resPhotosPartial: "ID details auto-filled for {n}/{total} guests — the rest can photograph their passport here or enter details manually.", regGuardianPick: "Pick an accompanying adult:",
     ocrChecking: "Running local document OCR...", ocrAutoFillSuccess: "Passport detected and number auto-filled.", ocrManualNeeded: "Passport detected, but OCR failed multiple times. Please enter the remaining fields manually.", ocrInvalidDoc: "Upload rejected: this image does not look like a passport document.", ocrFailed: "OCR failed. Please try again.", ocrUnsupported: "This browser does not support local OCR. Photo is kept, please complete passport details manually.",
     addGuest: "Add Guest", guestLabel: "Guest", petLabel: "Number of Pets", countAdults: "Guest Count (adult/minor)",
     checkIn: "Check-in Date", checkOut: "Check-out Date",
@@ -488,7 +602,10 @@ const translations = {
     footer: "安全と快適さが最優先です。", guideTitle: "チェックイン案内", changeLang: "言語", manualLink: "マニュアル PDF",
     regResident: "日本在住", regTourist: "訪日観光客", startNewCheckin: "新しいチェックインを開始", regFormName: "氏名", regFormAge: "年齢", regFormOcc: "職業", regFormPhone: "電話番号",
     regFormNation: "国籍", regFormPass: "パスポート番号", regPassportUpload: "パスポート写真をアップロード", regPassportUploaded: "パスポート写真アップロード済み", regMinorAlert: "未成年は保護者情報が必要",
+    passportReviewHint: "一部の情報を確認できませんでした。パスポートと照合してから反映してください。",
     passportModalTitle: "パスポート写真のアップロード", passportModalClose: "閉じる", passportModalIntro: "端末のカメラでパスポートの情報ページを撮影するか、鮮明な写真を選択してください。アップロード後、自動で読み取りフォームに入力します。", passportModalPick: "撮影または写真をアップロード", passportModalProcessing: "写真を保存し、パスポート情報を読み取っています...", passportModalConfirm: "フォームに反映", passportModalRetake: "撮り直す", passportModalSavedHint: "写真はバックエンドに保存され、管理画面でのみ確認できます。", passportFileTooLarge: "画像が大きすぎます。12MB以内の写真をアップロードしてください。", passportFileInvalid: "画像ファイルを選択してください。",
+    ocrStageUploading: "写真をアップロード中...", ocrStageUploaded: "写真を保存しました", ocrStageLoading: "認識エンジンを起動中...", ocrStageCompressed: "画像の準備が完了しました", ocrStageRecognizing: "パスポートを読み取り中（{pass}/{totalPasses}回目）...", ocrStageMatched: "パスポート情報を取得しました。仕上げ中...",
+    resLookupTitle: "予約があります（情報を自動入力）", resLookupCode: "予約番号", resLookupOr: "または", resLookupName: "予約者氏名", resLookupFind: "予約を検索", resLookupFound: "ご予約が見つかりました", resLookupNotFound: "一致する予約が見つかりません。ご確認のうえ再試行いただくか、そのまま登録にお進みください。", resLookupRateLimited: "検索回数が上限に達しました。しばらくしてからお試しください。", resGuestsUnit: "名", resPrefilledNote: "宿泊日と人数は自動入力済みです。次のステップで確認・修正できます。", resPhotoConfirmTitle: "ご予約時に提出された証明書写真です。ご確認ください", resPhotoConfirmYes: "間違いありません", resPhotoRetake: "撮り直す", resPhotoPoolTitle: "予約時にアップロードされた証明書写真です。ご自身のものを選択してください：", resPhotoApplied: "予約の証明書写真を使用し、情報を自動入力しました。", resPhotoUnrecognized: "読み取り不可", resPhotoUnrecognizedHint: "この写真は自動読み取りできませんでした（ぶれている可能性があります）。写真は保持されます。パスポート情報を手入力するか、撮り直してください。", resPhotosPartial: "{total}名中{n}名の証明書情報を自動入力しました。残りの方はその場で撮影するか手入力してください。", regGuardianPick: "同行の大人から選択：",
     ocrChecking: "ローカルで書類をOCR中...", ocrAutoFillSuccess: "パスポートを検出し、番号を自動入力しました。", ocrManualNeeded: "パスポートは検出されましたが、OCRが複数回失敗しました。残りは手入力してください。", ocrInvalidDoc: "アップロード不可：パスポート画像/スキャンではありません。", ocrFailed: "OCRに失敗しました。再試行してください。", ocrUnsupported: "このブラウザはローカルOCRに未対応です。画像は保持したので、パスポート情報を手入力してください。",
     addGuest: "追加", guestLabel: "ゲスト", petLabel: "ペットの数", countAdults: "人数 (成人/未成年)",
     checkIn: "チェックイン日", checkOut: "チェックアウト日",
@@ -521,7 +638,10 @@ const translations = {
     footer: "안전과 편안함이 최우선입니다.", guideTitle: "체크인 안내", changeLang: "언어", manualLink: "매뉴얼 PDF",
     regResident: "일본 거주자", regTourist: "방문객", startNewCheckin: "새 체크인 시작", regFormName: "이름", regFormAge: "나이", regFormOcc: "직업", regFormPhone: "전화번호",
     regFormNation: "국적", regFormPass: "여권 번호", regPassportUpload: "여권 사진 업로드", regPassportUploaded: "여권 사진 업로드 완료", regMinorAlert: "미성년자는 보호자 정보 필요",
+    passportReviewHint: "일부 정보를 확인하지 못했습니다. 여권과 대조한 후 양식에 입력해 주세요.",
     passportModalTitle: "여권 사진 업로드", passportModalClose: "닫기", passportModalIntro: "기기 카메라로 여권 정보면을 촬영하거나 선명한 사진을 선택해 주세요. 업로드 후 자동으로 인식해 양식에 입력합니다.", passportModalPick: "여권 사진 촬영 또는 업로드", passportModalProcessing: "사진을 저장하고 여권 정보를 인식하는 중입니다...", passportModalConfirm: "양식에 입력", passportModalRetake: "다시 촬영", passportModalSavedHint: "사진은 백엔드에 저장되며 관리자 화면에서만 확인할 수 있습니다.", passportFileTooLarge: "이미지가 너무 큽니다. 12MB 이하의 여권 사진을 업로드해 주세요.", passportFileInvalid: "이미지 파일을 선택해 주세요.",
+    ocrStageUploading: "사진 업로드 중...", ocrStageUploaded: "사진이 저장되었습니다", ocrStageLoading: "인식 엔진을 시작하는 중...", ocrStageCompressed: "이미지 준비가 완료되었습니다", ocrStageRecognizing: "여권을 읽는 중({pass}/{totalPasses}번째 시도)...", ocrStageMatched: "여권 정보를 찾았습니다. 마무리 중...",
+    resLookupTitle: "예약이 있습니다 (정보 자동 입력)", resLookupCode: "예약 번호", resLookupOr: "또는", resLookupName: "예약자 성명", resLookupFind: "예약 찾기", resLookupFound: "예약을 찾았습니다", resLookupNotFound: "일치하는 예약을 찾을 수 없습니다. 확인 후 다시 시도하거나 그대로 등록을 진행해 주세요.", resLookupRateLimited: "조회 횟수가 너무 많습니다. 잠시 후 다시 시도해 주세요.", resGuestsUnit: "명", resPrefilledNote: "숙박 날짜와 인원이 자동 입력되었습니다. 다음 단계에서 확인·수정할 수 있습니다.", resPhotoConfirmTitle: "예약 시 제출하신 신분증 사진입니다. 확인해 주세요", resPhotoConfirmYes: "맞습니다", resPhotoRetake: "다시 촬영", resPhotoPoolTitle: "예약 시 업로드된 신분증 사진입니다. 본인 것을 선택해 주세요:", resPhotoApplied: "예약의 신분증 사진을 사용해 정보를 자동 입력했습니다.", resPhotoUnrecognized: "인식 불가", resPhotoUnrecognizedHint: "이 사진은 자동 인식되지 않았습니다(흐릿할 수 있음). 사진은 보관되니 여권 정보를 직접 입력하거나 다시 촬영해 주세요.", resPhotosPartial: "{total}명 중 {n}명의 신분증 정보를 자동 입력했습니다. 나머지 분은 현장에서 촬영하거나 직접 입력해 주세요.", regGuardianPick: "동행 성인 중에서 선택:",
     ocrChecking: "로컬 OCR로 문서를 분석하는 중...", ocrAutoFillSuccess: "여권을 인식해 여권번호를 자동 입력했습니다.", ocrManualNeeded: "여권은 감지했지만 OCR이 여러 번 실패했습니다. 남은 정보는 수동 입력해 주세요.", ocrInvalidDoc: "업로드 거절: 여권 사진/스캔으로 확인되지 않았습니다.", ocrFailed: "OCR 실패. 다시 시도해 주세요.", ocrUnsupported: "현재 브라우저는 로컬 OCR을 지원하지 않습니다. 사진은 보관되며 여권 정보를 수동 입력해 주세요.",
     addGuest: "인원 추가", guestLabel: "게스트", petLabel: "반려동물 수", countAdults: "인원 수 (성인/미성년)",
     checkIn: "체크인 날짜", checkOut: "체크아웃 날짜",
@@ -740,7 +860,7 @@ const App = () => {
   const [hasPendingRetry, setHasPendingRetry] = useState(() => !!localStorage.getItem(PENDING_RETRY_KEY));
   const [adminToken, setAdminToken] = useState(() => sessionStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) || '');
 
-  const [lang, setLang] = useState(null);
+  const [lang, setLang] = useState(initialLanguageFromQuery);
   const [currentStep, setCurrentStep] = useState(0);
   const [guests, setGuests] = useState([]);
   const [petCount, setPetCount] = useState(0);
@@ -750,10 +870,40 @@ const App = () => {
   const [hasHistory, setHasHistory] = useState(false);
   // 已完成登記的歷史資料（只讀顯示），與可編輯的表單 guests 分開
   const [savedRegistration, setSavedRegistration] = useState(null);
+  const [accessReceipt, setAccessReceipt] = useState(readAccessReceipt);
 
   const [stepsConfig, setStepsConfig] = useState([]);
   const [completionTemplate, setCompletionTemplate] = useState(() => buildDefaultCompletionTemplate(DEFAULT_LANG));
   const [appSettings, setAppSettings] = useState(DEFAULT_APP_SETTINGS);
+  // Hostex 訂單預填：深鏈 ?res= 自動查找，或 welcome 步驟手動查找後寫入
+  const [hostexReservation, setHostexReservation] = useState(readSelectedOrder);
+
+  const deepLink = reservationLinkState(location);
+  const reservationCode = deepLink.code;
+  const reservationDone = deepLink.done;
+
+  useEffect(() => {
+    if (deepLink.canonical && deepLink.canonical !== `${location.pathname}${location.search}${location.hash}`) {
+      navigate(deepLink.canonical, { replace: true });
+    }
+  }, [deepLink.canonical, location.pathname, location.search, location.hash, navigate]);
+
+  useEffect(() => {
+    if (!reservationCode) { setHostexReservation(prev => prev?.selectionOnly ? prev : null); return; }
+    if (reservationDone || hostexReservation?.reservationCode === reservationCode) return;
+    let cancelled = false;
+    setHostexReservation(null);
+    setCurrentStep(0);
+    setGuests([createGuestTemplate('adult')]);
+    setCheckInDate('');
+    setCheckOutDate('');
+    DB.lookupReservation({ code: reservationCode }).then((result) => {
+      if (!cancelled && result?.found) setHostexReservation(result.reservation);
+    }).catch(() => { /* Keep the URL so a refresh can retry a failed lookup. */ });
+    return () => { cancelled = true; };
+  // Lookup once per URL booking, not again when the response is stored.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reservationCode, reservationDone]);
 
   useEffect(() => {
     const hasPendingRetryFlag = !!localStorage.getItem(PENDING_RETRY_KEY);
@@ -834,7 +984,7 @@ const App = () => {
         setRetryMessage(t.retryMsg || 'Network unstable — retrying...');
         await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS[attempt - 1]));
       }
-      result = await DB.insertRecord({ submissionId, guests: guestData, petCount, checkIn: checkInDate, checkOut: checkOutDate });
+      result = await DB.insertRecord({ submissionId, guests: guestData, petCount, checkIn: checkInDate, checkOut: checkOutDate, reservationCode: hostexReservation?.reservationCode || reservationCode || undefined, selectionToken: hostexReservation?.selectionToken || undefined });
       if (!result.networkError) break;
     }
     setRetryMessage('');
@@ -856,6 +1006,10 @@ const App = () => {
       return false;
     }
     localStorage.removeItem(PENDING_RETRY_KEY);
+    setAccessReceipt(result.accessReceipt || null);
+    if (result.accessReceipt) localStorage.setItem(ACCESS_RECEIPT_KEY, JSON.stringify(result.accessReceipt));
+    else localStorage.removeItem(ACCESS_RECEIPT_KEY);
+    localStorage.removeItem(SUBMISSION_ID_KEY);
     setHasPendingRetry(false);
     setSubmitError('');
     localStorage.setItem(CHECKIN_STORAGE_KEY, 'true');
@@ -867,6 +1021,9 @@ const App = () => {
     setSavedRegistration({ guests: guestsForStorage, petCount, checkInDate, checkOutDate });
     setGuests([createGuestTemplate('adult')]);
     setHasHistory(true);
+    // 訂單已完成使命；清掉避免下一組客人誤繼承預填
+    setHostexReservation(null);
+    sessionStorage.removeItem(SELECTION_STORAGE_KEY);
     return true;
   };
 
@@ -883,6 +1040,8 @@ const App = () => {
     localStorage.removeItem(PENDING_RETRY_KEY);
     localStorage.removeItem(FAILED_SUBMISSIONS_LOG_KEY);
     setHasPendingRetry(false);
+    setHostexReservation(null);
+    sessionStorage.removeItem(SELECTION_STORAGE_KEY);
     navigate('/checkin');
   };
 
@@ -945,7 +1104,7 @@ const App = () => {
       setLang={setLang}
       currentStep={currentStep}
       setCurrentStep={setCurrentStep}
-      onCompleteCheckin={() => navigate('/checkin/done')}
+      onCompleteCheckin={() => navigate(`${reservationPath(reservationCode, true)}${location.search}${location.hash}`)}
       guests={guests}
       setGuests={setGuests}
       petCount={petCount}
@@ -959,6 +1118,9 @@ const App = () => {
       hasHistory={hasHistory}
       stepsConfig={stepsConfig}
       appSettings={appSettings}
+      hostexReservation={hostexReservation}
+      setHostexReservation={setHostexReservation}
+      allowOrderSelection={!reservationCode}
     />
   );
 
@@ -983,8 +1145,12 @@ const App = () => {
         />
       } />
       <Route path="/checkin" element={checkinFlowElement} />
+      <Route path="/checkin/r/:reservationCode" element={checkinFlowElement} />
+      <Route path="/checkin/r/:reservationCode/done" element={
+        <CompletionScreen lang={lang} completionTemplate={completionTemplate} accessReceipt={accessReceipt} reservationCode={reservationCode} />
+      } />
       <Route path="/checkin/done" element={
-        <CompletionScreen lang={lang} completionTemplate={completionTemplate} />
+        <CompletionScreen lang={lang} completionTemplate={completionTemplate} accessReceipt={accessReceipt} reservationCode={reservationCode} />
       } />
       <Route path="/guide" element={guideViewElement} />
       <Route path="/guide/:stepId" element={guideViewElement} />
@@ -1083,6 +1249,25 @@ const fileToDataUrl = (file) => new Promise((resolve, reject) => {
   reader.onerror = (e) => reject(e);
   reader.readAsDataURL(file);
 });
+
+// Hostex 證件照回顯：按 OCR 判定的方向把照片擺正（rotation 為逆時針度數，
+// CSS rotate 正值為順時針，故取負）。90/270 時寬高互換，需限制旋轉前的寬度。
+const ReservationPhoto = ({ token, rotation = 0, heightClass = 'h-48' }) => {
+  const swap = rotation === 90 || rotation === 270;
+  return (
+    <div className={`w-full ${heightClass} flex items-center justify-center bg-white rounded-lg overflow-hidden`}>
+      <img
+        src={`${API_URL}/checkin/reservation-photo/${token}`}
+        alt="passport"
+        className={swap ? '' : 'max-w-full max-h-full object-contain'}
+        style={swap ? {
+          transform: `rotate(${-rotation}deg)`,
+          maxWidth: heightClass === 'h-20' ? '5rem' : '11.5rem'
+        } : rotation ? { transform: `rotate(${-rotation}deg)` } : undefined}
+      />
+    </div>
+  );
+};
 
 const CustomFieldInput = ({ field, value, disabled, onChange }) => {
   const baseClass = "w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none disabled:bg-slate-100";
@@ -1236,13 +1421,22 @@ const CheckinFlow = ({
   checkOutDate, setCheckOutDate,
   hasAgreed, setHasAgreed,
   hasHistory,
-  stepsConfig, appSettings
+  stepsConfig, appSettings,
+  hostexReservation, setHostexReservation, allowOrderSelection
 }) => {
   const navigate = useNavigate();
   const onAdminRequest = () => navigate('/admin');
   const [isLookingUpZip, setIsLookingUpZip] = useState(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [scannerGuestId, setScannerGuestId] = useState(null);
+  // Hostex 查找卡片狀態
+  const [lookupOpen, setLookupOpen] = useState(false);
+  const [lookupCode, setLookupCode] = useState('');
+  const [lookupName, setLookupName] = useState('');
+  const [lookupDate, setLookupDate] = useState('');
+  const [lookupBusy, setLookupBusy] = useState(false);
+  const [lookupError, setLookupError] = useState('');
+  const hostexEnabled = Boolean(appSettings?.hostexEnabled);
 
   const fieldsConfig = getFieldsConfig(appSettings);
 
@@ -1293,8 +1487,8 @@ const CheckinFlow = ({
   const updateCheckOutDate = (value) => setCheckOutDate(value);
   const isRegValid = () => isRegistrationValid(guests, fieldsConfig);
 
-  const uploadAndOcrPassport = async (base64Image, options = { strict: true }) => {
-    const ocrResult = await DB.recognizePassport(base64Image);
+  const uploadAndOcrPassport = async (base64Image, options = { strict: true }, onProgress) => {
+    const ocrResult = await DB.recognizePassport(base64Image, onProgress);
     if (!ocrResult?.isPassport && !ocrResult?.unsupported && options?.strict !== false) {
       throw new Error(t.ocrInvalidDoc);
     }
@@ -1307,6 +1501,8 @@ const CheckinFlow = ({
       birthDate: ocrResult.birthDate || '',
       sex: ocrResult.sex || '',
       confidence: ocrResult.confidence,
+      needsReview: Boolean(ocrResult.needsReview),
+      fieldEvidence: ocrResult.fieldEvidence,
       viz: ocrResult.viz,
       mrz: ocrResult.mrz,
       mrzPassportNumber: ocrResult.mrzPassportNumber,
@@ -1353,6 +1549,148 @@ const CheckinFlow = ({
     } else {
       updateGuest(guestId, 'passportOcrStatus', 'manual-required');
       updateGuest(guestId, 'passportOcrMessage', t.ocrManualNeeded);
+    }
+  };
+
+  // ---------- Hostex 訂單預填 ----------
+
+  // 把已下載照片（含後台預跑的 OCR 結果）填進 guest 對象（就地修改模板對象）
+  const fillGuestFromReservationPhoto = (g, photo) => {
+    g.passportPhoto = photo.filename;
+    g.hostexPhotoToken = photo.photoToken;
+    g.hostexPhotoRotation = photo.rotation || 0;
+    const ocr = photo.ocr;
+    if (!ocr) return;
+    if (ocr.passportNumber && !g.passportNumber) g.passportNumber = ocr.passportNumber;
+    if (ocr.fullName && !g.name) g.name = ocr.fullName;
+    if (Number.isFinite(ocr.age) && !g.age) g.age = String(ocr.age);
+    if (ocr.nationalityCode) {
+      const resolved = resolveNationalityForForm({ nationalityCode: ocr.nationalityCode });
+      if (!g.nationality) g.nationality = resolved.nationality || '';
+      g.nationalityDetected = resolved.nationalityDetected || '';
+    }
+    if (g.passportNumber) {
+      g.passportOcrStatus = 'success';
+      g.passportOcrMessage = t.resPhotoApplied;
+    }
+  };
+
+  const markGuestAsVisitor = (g, nationalityCode) => {
+    if (!nationalityCode || nationalityCode === 'JP') return;
+    g.isResident = false;
+    g.customFields = buildCustomFieldsDefaults(fieldsConfig, { isResident: false });
+    const resolved = resolveNationalityForForm({ nationalityCode });
+    g.nationality = resolved.nationality || '';
+    g.nationalityDetected = resolved.nationalityDetected || '';
+  };
+
+  // 照片驅動展開：每張識別成功的證件照直接展開成一張填好的住客卡片。
+  // 卡片數 = max(預訂人數, 識別照片數)；多出的空白卡片即「漏傳」的客人，
+  // 走原有拍照流程。未識別（OCR 失敗）的照片留在池中由客人認領。
+  const applyReservationPrefill = (reservation) => {
+    if (!reservation) return;
+    if (reservation.checkInDate) setCheckInDate(reservation.checkInDate);
+    if (reservation.checkOutDate) setCheckOutDate(reservation.checkOutDate);
+    if (Number.isFinite(reservation.petCount)) setPetCount(reservation.petCount);
+
+    const recognized = (reservation.photos || []).filter((p) => p.ocr);
+    const booked = Math.max(1, reservationGuestCount(reservation));
+    const total = Math.max(booked, recognized.length);
+
+    const normName = (v) => String(v || '').toLowerCase().normalize('NFKC').replace(/\s+/g, ' ').trim();
+    // Hostex 名單（通常只有預訂人）中尚未被某張照片覆蓋的人
+    const rosterLeft = [...(reservation.guests || [])];
+    const consumeRosterFor = (fullName) => {
+      const target = normName(fullName);
+      const idx = rosterLeft.findIndex((r) => {
+        const n = normName(r.name);
+        return n && target && (n.includes(target) || target.includes(n));
+      });
+      return idx >= 0 ? rosterLeft.splice(idx, 1)[0] : null;
+    };
+
+    const next = [];
+    for (let i = 0; i < total; i += 1) {
+      const g = createGuestTemplate('adult', fieldsConfig);
+      const photo = recognized[i];
+      if (photo) {
+        markGuestAsVisitor(g, photo.ocr.nationalityCode || reservation.guests?.[0]?.nationality);
+        fillGuestFromReservationPhoto(g, photo);
+        // 同名的 Hostex 名單項視為同一人，避免重複出卡
+        const roster = consumeRosterFor(photo.ocr.fullName);
+        if (roster?.nationality) markGuestAsVisitor(g, roster.nationality);
+      } else if (rosterLeft.length > 0) {
+        const roster = rosterLeft.shift();
+        if (roster.name) g.name = roster.name;
+        if (roster.passportNumber) g.passportNumber = roster.passportNumber;
+        markGuestAsVisitor(g, roster.nationality);
+      }
+      next.push(g);
+    }
+    setGuests(next);
+  };
+
+  // 深鏈或查找成功後套用一次（同一訂單不重複覆蓋客人已編輯的內容）
+  const appliedReservationRef = useRef('');
+  useEffect(() => {
+    if (!hostexReservation) return;
+    if (appliedReservationRef.current === (hostexReservation.reservationCode || hostexReservation.selectionToken)) return;
+    appliedReservationRef.current = hostexReservation.reservationCode || hostexReservation.selectionToken;
+    applyReservationPrefill(hostexReservation);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hostexReservation]);
+
+  // 訂單級照片池：尚未被任何客人占用的已下載照片
+  const reservationPhotoPool = (hostexReservation?.photos || []).filter(
+    (p) => !guests.some((g) => g.passportPhoto === p.filename)
+  );
+
+  const pickReservationPhoto = (guestId, photo) => {
+    setGuests((prev) => prev.map((g) => {
+      if (g.id !== guestId) return g;
+      const nextGuest = { ...g };
+      fillGuestFromReservationPhoto(nextGuest, photo);
+      if (!photo.ocr) {
+        // 認領了無法識別的照片：保留照片但提示手動補充資料
+        nextGuest.passportOcrStatus = 'manual-required';
+        nextGuest.passportOcrMessage = t.resPhotoUnrecognizedHint;
+      }
+      return nextGuest;
+    }));
+  };
+
+  const clearReservationPhoto = (guestId) => {
+    setGuests((prev) => prev.map((g) => (g.id === guestId ? {
+      ...g,
+      passportPhoto: null,
+      hostexPhotoToken: '',
+      hostexPhotoRotation: 0,
+      passportOcrStatus: 'idle',
+      passportOcrMessage: ''
+    } : g)));
+  };
+
+  const runManualLookup = async () => {
+    setLookupBusy(true);
+    setLookupError('');
+    try {
+      const body = lookupCode.trim()
+        ? { code: lookupCode.trim() }
+        : { name: lookupName.trim(), checkInDate: lookupDate };
+      const result = await DB.lookupReservation(body);
+      if (result?.found) {
+        setHostexReservation(result.reservation);
+        const params = new URLSearchParams(window.location.search);
+        params.delete('res');
+        navigate(`${reservationPath(result.reservation.reservationCode)}${params.size ? `?${params}` : ''}${window.location.hash}`, { replace: true });
+        setLookupOpen(false);
+      } else {
+        setLookupError(t.resLookupNotFound);
+      }
+    } catch (err) {
+      setLookupError(err?.message === 'RATE_LIMITED' ? t.resLookupRateLimited : t.resLookupNotFound);
+    } finally {
+      setLookupBusy(false);
     }
   };
 
@@ -1455,6 +1793,81 @@ const CheckinFlow = ({
               {(hasContent || stepConfig?.type === 'custom' || builtinFallbackContent) && (
                 <div className="step-content-surface">
                   <StepContent content={stepConfig.content || builtinFallbackContent} fallback={t.customStepEmpty} />
+                </div>
+              )}
+
+              {stepConfig.id === 'welcome' && hostexEnabled && (
+                <div className="mt-4 space-y-3">
+                  {allowOrderSelection && (!hostexReservation || hostexReservation.selectionOnly) && <ReservationChooser lang={lang} selected={hostexReservation} onSelect={setHostexReservation} />}
+                  {hostexReservation?.selectionOnly ? null : hostexReservation ? (
+                    <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl space-y-1 animate-in fade-in">
+                      <div className="flex items-center gap-2 text-emerald-700">
+                        <CheckCircle2 className="w-4 h-4 shrink-0" />
+                        <p className="text-sm font-bold">{t.resLookupFound}</p>
+                      </div>
+                      <p className="text-xs text-emerald-700/80">
+                        {hostexReservation.guestName && `${hostexReservation.guestName} · `}
+                        {reservationGuestCount(hostexReservation)} {t.resGuestsUnit} · {hostexReservation.checkInDate} → {hostexReservation.checkOutDate}
+                      </p>
+                      <p className="text-[11px] text-emerald-600/70">{t.resPrefilledNote}</p>
+                      {(() => {
+                        const recognizedCount = (hostexReservation.photos || []).filter((p) => p.ocr).length;
+                        const bookedCount = reservationGuestCount(hostexReservation);
+                        return recognizedCount > 0 && recognizedCount < bookedCount ? (
+                          <p className="text-[11px] text-amber-600">
+                            {t.resPhotosPartial.replace('{n}', String(recognizedCount)).replace('{total}', String(bookedCount))}
+                          </p>
+                        ) : null;
+                      })()}
+                    </div>
+                  ) : !lookupOpen ? (
+                    <button
+                      onClick={() => setLookupOpen(true)}
+                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between text-slate-600 hover:border-slate-400 transition-colors"
+                    >
+                      <span className="text-sm font-bold">{t.resLookupTitle}</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  ) : (
+                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 animate-in fade-in">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-bold text-slate-700">{t.resLookupTitle}</p>
+                        <button onClick={() => setLookupOpen(false)} className="text-xs text-slate-400 font-semibold">{t.passportModalClose || '×'}</button>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase">{t.resLookupCode}</label>
+                        <input
+                          type="text"
+                          value={lookupCode}
+                          onChange={(e) => setLookupCode(e.target.value)}
+                          placeholder="9-XXXXXXXXXX-XXXXXXXX"
+                          className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm font-mono shadow-sm outline-none"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2 text-[10px] text-slate-400 font-bold uppercase">
+                        <div className="flex-1 h-px bg-slate-200" />{t.resLookupOr}<div className="flex-1 h-px bg-slate-200" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase">{t.resLookupName}</label>
+                          <input type="text" value={lookupName} onChange={(e) => setLookupName(e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none" />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase">{t.checkIn}</label>
+                          <input type="date" value={lookupDate} onChange={(e) => setLookupDate(e.target.value)} className="w-full p-3 bg-white border border-slate-100 rounded-xl text-sm shadow-sm outline-none appearance-none" />
+                        </div>
+                      </div>
+                      {lookupError && <p className="text-[11px] text-amber-600">{lookupError}</p>}
+                      <button
+                        disabled={lookupBusy || (!lookupCode.trim() && !(lookupName.trim().length >= 2 && lookupDate))}
+                        onClick={runManualLookup}
+                        className="w-full py-3 bg-slate-900 text-white rounded-xl text-sm font-bold disabled:bg-slate-300 flex items-center justify-center gap-2"
+                      >
+                        {lookupBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                        {t.resLookupFind}
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1582,14 +1995,36 @@ const CheckinFlow = ({
                           <>
                             {fieldOn('passportPhoto') && (
                               <div className="col-span-2 space-y-2">
-                                <button
-                                  disabled={!guest.isEditable || guest.passportOcrStatus === 'processing'}
-                                  onClick={() => setScannerGuestId(guest.id)}
-                                  className="w-full p-4 border-2 border-dashed rounded-xl flex items-center justify-center gap-2 transition-colors bg-emerald-50 border-emerald-200 text-emerald-600 disabled:opacity-60"
-                                >
-                                  {guest.passportOcrStatus === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
-                                  <span className="text-[10px] font-bold uppercase">{t.regPassportUploaded}</span>
-                                </button>
+                                {guest.hostexPhotoToken ? (
+                                  // Hostex 預填的護照照片：回顯供客人確認
+                                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl space-y-2">
+                                    <p className="text-[11px] font-bold text-emerald-700">{t.resPhotoConfirmTitle}</p>
+                                    <ReservationPhoto token={guest.hostexPhotoToken} rotation={guest.hostexPhotoRotation || 0} />
+                                    {(guest.name || guest.passportNumber) && (
+                                      <p className="text-xs font-bold text-emerald-800 text-center">
+                                        {guest.name}{guest.name && guest.passportNumber ? ' · ' : ''}{guest.passportNumber}
+                                      </p>
+                                    )}
+                                    <div className="flex gap-2">
+                                      <div className="flex-1 py-2 rounded-lg bg-emerald-600/10 text-emerald-700 text-[11px] font-bold flex items-center justify-center gap-1">
+                                        <CheckCircle2 className="w-3.5 h-3.5" />{t.resPhotoConfirmYes}
+                                      </div>
+                                      <button
+                                        onClick={() => clearReservationPhoto(guest.id)}
+                                        className="flex-1 py-2 rounded-lg border border-slate-200 text-slate-600 text-[11px] font-bold"
+                                      >{t.resPhotoRetake}</button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <button
+                                    disabled={!guest.isEditable || guest.passportOcrStatus === 'processing'}
+                                    onClick={() => setScannerGuestId(guest.id)}
+                                    className="w-full p-4 border-2 border-dashed rounded-xl flex items-center justify-center gap-2 transition-colors bg-emerald-50 border-emerald-200 text-emerald-600 disabled:opacity-60"
+                                  >
+                                    {guest.passportOcrStatus === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+                                    <span className="text-[10px] font-bold uppercase">{t.regPassportUploaded}</span>
+                                  </button>
+                                )}
                                 {guest.passportOcrMessage && (
                                   <p className={`text-[11px] ${guest.passportOcrStatus === 'failed' ? 'text-rose-500' : guest.passportOcrStatus === 'manual-required' ? 'text-amber-600' : 'text-emerald-600'}`}>{guest.passportOcrMessage}</p>
                                 )}
@@ -1649,6 +2084,27 @@ const CheckinFlow = ({
                         ) : (
                           fieldOn('passportPhoto') ? (
                             <div className="col-span-2 space-y-2">
+                              {reservationPhotoPool.length > 0 && (
+                                // 訂單級照片池：正常情況照片已自動掛到各卡片，這裡只剩
+                                // 未識別的或被「重新拍攝」退回的照片，供客人認領
+                                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                                  <p className="text-[11px] font-bold text-slate-600">{t.resPhotoPoolTitle}</p>
+                                  <div className="grid grid-cols-3 gap-2">
+                                    {reservationPhotoPool.map((photo) => (
+                                      <button
+                                        key={photo.photoToken}
+                                        onClick={() => pickReservationPhoto(guest.id, photo)}
+                                        className="rounded-lg overflow-hidden border border-slate-200 hover:border-emerald-500 transition-colors bg-white text-left"
+                                      >
+                                        <ReservationPhoto token={photo.photoToken} rotation={photo.rotation || 0} heightClass="h-20" />
+                                        <span className={`block px-1.5 py-1 text-[10px] font-bold truncate ${photo.ocr ? 'text-slate-600' : 'text-amber-600'}`}>
+                                          {photo.ocr?.fullName || `⚠ ${t.resPhotoUnrecognized}`}
+                                        </span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                               <button
                                 disabled={!guest.isEditable || guest.passportOcrStatus === 'processing'}
                                 onClick={() => setScannerGuestId(guest.id)}
@@ -1701,6 +2157,47 @@ const CheckinFlow = ({
                         {isMinor && (fieldOn('guardianName') || fieldOn('guardianPhone')) && (
                           <div className="col-span-2 bg-rose-50 p-4 rounded-xl border border-rose-100 space-y-3">
                             <p className="text-[10px] font-bold text-rose-600 flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> {t.regMinorAlert}</p>
+                            {(() => {
+                              // 同行成年人快捷選擇：點選填入姓名（預訂人再帶上電話），再點取消
+                              const adultCandidates = guests.filter((g) => {
+                                if (g.id === guest.id || !g.name) return false;
+                                const a = parseInt(g.age);
+                                return Number.isFinite(a) && a >= 18;
+                              });
+                              if (adultCandidates.length === 0) return null;
+                              const normName = (v) => String(v || '').toLowerCase().normalize('NFKC').replace(/\s+/g, ' ').trim();
+                              return (
+                                <div className="space-y-1.5">
+                                  <p className="text-[10px] text-rose-500/80">{t.regGuardianPick}</p>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {adultCandidates.map((adult) => {
+                                      const selected = guest.guardianName === adult.name;
+                                      const bookerName = normName(hostexReservation?.guestName);
+                                      const isBooker = bookerName && (normName(adult.name).includes(bookerName) || bookerName.includes(normName(adult.name)));
+                                      return (
+                                        <button
+                                          key={adult.id}
+                                          disabled={!guest.isEditable}
+                                          onClick={() => {
+                                            if (selected) {
+                                              updateGuest(guest.id, 'guardianName', '');
+                                              updateGuest(guest.id, 'guardianPhone', '');
+                                              return;
+                                            }
+                                            updateGuest(guest.id, 'guardianName', adult.name);
+                                            const phone = adult.phone || (isBooker ? hostexReservation?.bookerPhone : '') || '';
+                                            if (phone) updateGuest(guest.id, 'guardianPhone', phone);
+                                          }}
+                                          className={`px-3 py-1.5 rounded-full text-[11px] font-bold border transition-colors ${selected ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-rose-600 border-rose-200 hover:border-rose-400'}`}
+                                        >
+                                          {selected ? '✓ ' : ''}{adult.name}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            })()}
                             <div className="grid grid-cols-2 gap-2">
                               {fieldOn('guardianName') && (
                                 <input disabled={!guest.isEditable} type="text" placeholder={t.regFormName} value={guest.guardianName} onChange={(e) => updateGuest(guest.id, 'guardianName', e.target.value)} className="w-full p-2 bg-white rounded-lg text-xs outline-none disabled:bg-slate-100" />
@@ -1773,7 +2270,7 @@ const CheckinFlow = ({
 // ----------------------------------------------------------------------
 // CompletionScreen（提交成功，强引导阅读指南）
 // ----------------------------------------------------------------------
-const CompletionScreen = ({ lang, completionTemplate }) => {
+const CompletionScreen = ({ lang, completionTemplate, accessReceipt, reservationCode }) => {
   const navigate = useNavigate();
   const t = translations[lang || DEFAULT_LANG] || translations[DEFAULT_LANG];
   return (
@@ -1781,6 +2278,7 @@ const CompletionScreen = ({ lang, completionTemplate }) => {
       <CheckCircle2 className="w-16 h-16 text-emerald-500 mb-6 mx-auto" />
       <h1 className="text-3xl font-bold mb-2">{completionTemplate.title}</h1>
       <p className="text-slate-500 mb-6">{completionTemplate.subtitle}</p>
+      <OrderAccessCode lang={lang} receipt={accessReceipt} reservationCode={reservationCode} />
       <div className="bg-slate-900 text-white p-8 rounded-[2rem] shadow-xl w-full max-w-sm">
         <div className="flex items-center gap-3">
           <Wifi className="w-7 h-7" />

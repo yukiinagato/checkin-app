@@ -1,3 +1,5 @@
+import { ReservationLinkActions, ReservationLinkDialog } from './components/ReservationLinkTools.jsx';
+import { reservationGuestCount } from './reservationGuestCount.js';
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import DOMPurify from 'dompurify';
@@ -30,7 +32,9 @@ import {
   RotateCcw,
   ExternalLink,
   GripVertical,
-  LogIn
+  LogIn,
+  CalendarClock,
+  RefreshCw
 } from 'lucide-react';
 import { DEFAULT_APP_SETTINGS, TAIWAN_NAMING_MODE_OPTIONS, getCountryName } from './countryOptions';
 import {
@@ -647,6 +651,186 @@ const openAuthImage = async (url, token) => {
   }
 };
 
+// ----------------------------------------------------------------------
+// Hostex 訂單同步 tab
+// ----------------------------------------------------------------------
+const HOSTEX_STATUS_LABELS = {
+  accepted: { text: '已确认', cls: 'bg-emerald-100 text-emerald-700' },
+  cancelled: { text: '已取消', cls: 'bg-rose-100 text-rose-600' },
+  wait_accept: { text: '待确认', cls: 'bg-amber-100 text-amber-700' },
+  wait_pay: { text: '待支付', cls: 'bg-amber-100 text-amber-700' }
+};
+
+export const HostexTab = ({ db, adminToken }) => {
+  const [qrReservation, setQrReservation] = useState(null);
+  const [status, setStatus] = useState(null);
+  const [list, setList] = useState({ total: 0, reservations: [] });
+  const [query, setQuery] = useState('');
+  const [offset, setOffset] = useState(0);
+  const [syncing, setSyncing] = useState(false);
+  const [error, setError] = useState('');
+  const PAGE_SIZE = 20;
+
+  const refresh = async (nextOffset = offset, nextQuery = query) => {
+    try {
+      const [statusRes, listRes] = await Promise.all([
+        db.getHostexStatus(adminToken),
+        db.getHostexReservations(adminToken, { offset: nextOffset, limit: PAGE_SIZE, q: nextQuery })
+      ]);
+      setStatus(statusRes);
+      setList(listRes);
+      setError('');
+    } catch (e) {
+      setError(e.message || '加载失败');
+    }
+  };
+
+  useEffect(() => { refresh(0, ''); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      await db.triggerHostexSync(adminToken);
+      await refresh();
+    } catch (e) {
+      setError(e.message || '同步失败');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  if (status && !status.enabled) {
+    return (
+      <div className="max-w-3xl mx-auto bg-white rounded-3xl border border-slate-200 p-8 text-center text-slate-500">
+        <CalendarClock className="w-10 h-10 mx-auto mb-3 text-slate-300" />
+        <p className="font-bold text-slate-700 mb-1">Hostex 集成未启用</p>
+        <p className="text-sm">请在服务端 .env.production 配置 HOSTEX_API_TOKEN 与 HOSTEX_PROPERTY_ID 后重启服务。</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
+      <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm flex flex-wrap items-center gap-4">
+        <div className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center text-white">
+          <CalendarClock className="w-6 h-6" />
+        </div>
+        <div className="flex-1 min-w-[200px]">
+          <h3 className="font-bold text-xl text-slate-800">Hostex 订单同步</h3>
+          <p className="text-sm text-slate-500">
+            {status?.lastSyncAt ? `最近同步：${new Date(status.lastSyncAt).toLocaleString()}` : '尚未同步'}
+            {status?.reservationCount != null && ` · 共 ${status.reservationCount} 个订单`}
+            {status?.images && ` · 护照图片 ${status.images.downloaded || 0} 张`}
+          </p>
+          {status?.lastError && <p className="text-xs text-rose-500 mt-1">上次同步出错：{status.lastError}</p>}
+        </div>
+        <button
+          onClick={handleSync}
+          disabled={syncing}
+          className="px-5 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-bold flex items-center gap-2 disabled:opacity-60"
+        >
+          <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
+          {syncing ? '同步中...' : '立即同步'}
+        </button>
+      </div>
+
+      {error && <p className="text-sm text-rose-500">{error}</p>}
+
+      <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="p-4 border-b border-slate-100 flex flex-wrap items-center gap-3">
+          <input
+            type="text"
+            value={query}
+            placeholder="搜索订单号 / 预订人"
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { setOffset(0); refresh(0, query); } }}
+            className="flex-1 min-w-[200px] p-3 rounded-xl border border-slate-200 text-sm"
+          />
+          <button onClick={() => { setOffset(0); refresh(0, query); }} className="px-4 py-2.5 rounded-xl bg-slate-100 text-slate-700 text-sm font-bold">搜索</button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[860px]">
+            <thead>
+              <tr className="text-left text-[11px] uppercase text-slate-400 border-b border-slate-100">
+                <th className="p-3">订单号</th>
+                <th className="p-3">渠道</th>
+                <th className="p-3">预订人</th>
+                <th className="p-3">入住 → 退房</th>
+                <th className="p-3">人数</th>
+                <th className="p-3">状态</th>
+                <th className="p-3">护照图片</th>
+                <th className="p-3">本地登记</th>
+                <th className="p-3">入住链接</th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.reservations.map((r) => {
+                const badge = HOSTEX_STATUS_LABELS[r.status] || { text: r.status, cls: 'bg-slate-100 text-slate-500' };
+                const downloadedImages = (r.images || []).filter((img) => img.status === 'downloaded' && img.filename);
+                return (
+                  <tr key={r.reservation_code} className="border-b border-slate-50 hover:bg-slate-50/60">
+                    <td className="p-3 font-mono text-xs">{r.reservation_code}</td>
+                    <td className="p-3 text-xs">{r.channel_type || '-'}</td>
+                    <td className="p-3">{r.guest_name || '-'}</td>
+                    <td className="p-3 text-xs whitespace-nowrap">{r.check_in_date} → {r.check_out_date || '?'}</td>
+                    <td className="p-3">{reservationGuestCount({ numberOfGuests: r.number_of_guests, numberOfAdults: r.number_of_adults, numberOfChildren: r.number_of_children })}{r.number_of_pets ? ` +🐾${r.number_of_pets}` : ''}</td>
+                    <td className="p-3"><span className={`px-2 py-1 rounded-lg text-[11px] font-bold ${badge.cls}`}>{badge.text}</span></td>
+                    <td className="p-3">
+                      {downloadedImages.length === 0 ? (
+                        <span className="text-slate-300 text-xs">无</span>
+                      ) : (
+                        <div className="flex gap-1">
+                          {downloadedImages.slice(0, 4).map((img) => (
+                            <button
+                              key={img.filename}
+                              onClick={() => openAuthImage(`/api/admin/uploads/${img.filename}`, adminToken)}
+                              className="w-9 h-9 rounded-lg overflow-hidden border border-slate-200 hover:border-emerald-400"
+                            >
+                              <AuthImage src={`/api/admin/uploads/${img.filename}`} token={adminToken} alt="passport" className="w-full h-full object-cover" />
+                            </button>
+                          ))}
+                          {downloadedImages.length > 4 && <span className="text-[11px] text-slate-400 self-center">+{downloadedImages.length - 4}</span>}
+                        </div>
+                      )}
+                    </td>
+                    <td className="p-3">
+                      {r.checkin_record_id
+                        ? <span className="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-600 text-[11px] font-bold" title={r.checkin_link_source === 'name_and_dates' ? '按姓名与入住日期唯一匹配' : '已关联登记记录'}>已登记{r.checkin_link_source === 'name_and_dates' ? ' · 自动关联' : ''}</span>
+                        : r.registration_match_count > 0
+                          ? <span className="px-2 py-1 rounded-lg bg-amber-50 text-amber-700 text-[11px] font-bold" title="找到姓名和入住日期匹配的登记，但存在多个可能的订单或登记记录，请在住客数据中核对。">登记待确认</span>
+                          : <span className="text-slate-300 text-xs">未登记</span>}
+                    </td>
+                    <td className="p-3"><ReservationLinkActions reservation={r} onShowQr={() => setQrReservation(r)} /></td>
+                  </tr>
+                );
+              })}
+              {list.reservations.length === 0 && (
+                <tr><td colSpan={9} className="p-8 text-center text-slate-400 text-sm">暂无同步的订单</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        {list.total > PAGE_SIZE && (
+          <div className="p-4 flex items-center justify-between text-sm">
+            <button
+              disabled={offset === 0}
+              onClick={() => { const next = Math.max(0, offset - PAGE_SIZE); setOffset(next); refresh(next, query); }}
+              className="px-4 py-2 rounded-xl bg-slate-100 font-bold disabled:opacity-40"
+            >上一页</button>
+            <span className="text-slate-400">{offset + 1} - {Math.min(offset + PAGE_SIZE, list.total)} / {list.total}</span>
+            <button
+              disabled={offset + PAGE_SIZE >= list.total}
+              onClick={() => { const next = offset + PAGE_SIZE; setOffset(next); refresh(next, query); }}
+              className="px-4 py-2 rounded-xl bg-slate-100 font-bold disabled:opacity-40"
+            >下一页</button>
+          </div>
+        )}
+      </div>
+      {qrReservation && <ReservationLinkDialog key={qrReservation.reservation_code} reservation={qrReservation} onClose={() => setQrReservation(null)} />}
+    </div>
+  );
+};
+
 const AdminLogin = ({ db, onLogin, onBack }) => {
   const [bootstrapToken, setBootstrapToken] = useState('');
   const [error, setError] = useState(false);
@@ -699,7 +883,7 @@ const AdminLogin = ({ db, onLogin, onBack }) => {
 
       await db.verifyPasskeyRegistration({
         credential: toPublicKeyCredentialJSON(credential)
-      });
+      }, bootstrapToken);
 
       setHasPasskey(true);
       setError(false);
@@ -804,7 +988,7 @@ const AdminDashboard = ({
 }) => {
   const adminNavigate = useNavigate();
   const adminLocation = useLocation();
-  const VALID_ADMIN_TABS = ['data', 'files', 'settings', 'steps'];
+  const VALID_ADMIN_TABS = ['data', 'files', 'hostex', 'settings', 'steps'];
   const pathTab = adminLocation.pathname.replace(/^\/admin\/?/, '').split('/')[0];
   const tab = VALID_ADMIN_TABS.includes(pathTab) ? pathTab : 'data';
   const setTab = (next) => adminNavigate(`/admin/${next}`);
@@ -1433,6 +1617,8 @@ const AdminDashboard = ({
           </div>
         );
       }
+      case 'hostex':
+        return <HostexTab db={db} adminToken={adminToken} />;
       case 'settings':
         return (
           <div className="max-w-3xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4">
@@ -1485,6 +1671,33 @@ const AdminDashboard = ({
                 <p>繁體中文示例：{getCountryName('TW', 'zh-hant', appSettings.taiwanNamingMode)}</p>
                 <p>English example: {getCountryName('TW', 'en', appSettings.taiwanNamingMode)}</p>
               </div>
+              <div className="flex items-center gap-3">
+                <button onClick={handleSaveAppSettings} className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-bold">保存系统设置</button>
+                {settingsSaved && <span className="text-sm text-emerald-600 font-bold">已保存</span>}
+              </div>
+            </div>
+            <div className="bg-white rounded-3xl border border-slate-200 p-8 shadow-sm space-y-4">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-700">
+                  <CalendarClock className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-xl text-slate-800">Hostex 订单同步</h3>
+                  <p className="text-sm text-slate-500">关闭后停止定时拉取 Hostex 订单（已同步数据保留）。API Token 在服务端 .env 配置。</p>
+                </div>
+              </div>
+              <label className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 cursor-pointer">
+                <span className="text-sm font-bold text-slate-700">启用自动同步</span>
+                <input
+                  type="checkbox"
+                  checked={appSettings.hostexSyncEnabled !== false}
+                  onChange={(e) => {
+                    setAppSettings((prev) => ({ ...prev, hostexSyncEnabled: e.target.checked }));
+                    setSettingsSaved(false);
+                  }}
+                  className="w-5 h-5 accent-emerald-600"
+                />
+              </label>
               <div className="flex items-center gap-3">
                 <button onClick={handleSaveAppSettings} className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-bold">保存系统设置</button>
                 {settingsSaved && <span className="text-sm text-emerald-600 font-bold">已保存</span>}
@@ -1853,6 +2066,7 @@ const AdminDashboard = ({
   const ADMIN_TABS = [
     { id: 'data',     label: '住客数据', short: '数据', icon: FileSpreadsheet },
     { id: 'files',    label: '护照管理', short: '护照', icon: FolderOpen },
+    { id: 'hostex',   label: 'Hostex 订单', short: '订单', icon: CalendarClock },
     { id: 'settings', label: '系统设置', short: '设置', icon: Settings },
     { id: 'steps',    label: '步骤管理', short: '步骤', icon: LayoutDashboard }
   ];

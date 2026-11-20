@@ -74,7 +74,7 @@ const startServer = async () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   };
 
-  return { baseUrl, stop };
+  return { baseUrl, stop, dbPath };
 };
 
 let ctx;
@@ -219,4 +219,42 @@ test('POST /api/admin/passkeys/register/options accepts bootstrap token', async 
   const payload = await res.json();
   assert.ok(payload.challenge);
   assert.ok(payload.rp);
+});
+
+
+test('reservation linkage survives retries and rejects mismatched stay dates', async () => {
+  const sqlite3 = require('sqlite3');
+  const { runAsync, getAsync } = require('../src/db');
+  const db = await new Promise((resolve, reject) => {
+    const handle = new sqlite3.Database(ctx.dbPath, (err) => err ? reject(err) : resolve(handle));
+  });
+  const code = 'TEST-LINK-RETRY';
+  const wrongCode = 'TEST-LINK-WRONG-DATES';
+  const guest = { id: 'link-guest', name: 'Link Retry Guest', age: 28, isResident: true, address: 'Tokyo', phone: '09012345678' };
+  const body = { guests: [guest], checkIn: '2026-10-05', checkOut: '2026-10-08' };
+  const submit = async (payload) => {
+    const res = await fetch(`${ctx.baseUrl}/api/submit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
+    assert.equal(res.status, 200);
+    return res.json();
+  };
+  try {
+    for (const [reservationCode, checkIn] of [[code, body.checkIn], [wrongCode, '2026-10-06']]) {
+      await runAsync(db, 'INSERT INTO hostex_reservations (reservation_code, status, check_in_date, check_out_date, raw_json) VALUES (?, ?, ?, ?, ?)', [reservationCode, 'accepted', checkIn, body.checkOut, '{}']);
+    }
+    await runAsync(db, 'INSERT INTO hostex_reservations (reservation_code, guest_name, status, check_in_date, check_out_date, raw_json) VALUES (?, ?, ?, ?, ?, ?)', ['TEST-NO-DEEP-LINK', guest.name, 'accepted', body.checkIn, body.checkOut, '{}']);
+    const first = await submit(body);
+    const automatic = await getAsync(db, 'SELECT checkin_record_id, checkin_link_source FROM hostex_reservations WHERE reservation_code = ?', ['TEST-NO-DEEP-LINK']);
+    assert.equal(automatic.checkin_record_id, first.id);
+    assert.equal(automatic.checkin_link_source, 'name_and_dates');
+    const retry = await submit({ ...body, reservationCode: code, submissionId: 'b68ed654-2d03-400f-8412-84e9a3d64c94' });
+    assert.equal(retry.duplicate, true);
+    assert.equal(retry.id, first.id);
+    assert.equal((await getAsync(db, 'SELECT checkin_record_id FROM hostex_reservations WHERE reservation_code = ?', [code])).checkin_record_id, first.id);
+    await submit({ ...body, reservationCode: wrongCode });
+    assert.equal((await getAsync(db, 'SELECT checkin_record_id FROM hostex_reservations WHERE reservation_code = ?', [wrongCode])).checkin_record_id, null);
+    const freshCode = 'TEST-LINK-FRESH';
+    await runAsync(db, 'INSERT INTO hostex_reservations (reservation_code, status, check_in_date, check_out_date, raw_json) VALUES (?, ?, ?, ?, ?)', [freshCode, 'accepted', body.checkIn, body.checkOut, '{}']);
+    const fresh = await submit({ ...body, guests: [{ ...guest, name: 'Fresh Linked Guest' }], reservationCode: freshCode });
+    assert.equal((await getAsync(db, 'SELECT checkin_record_id FROM hostex_reservations WHERE reservation_code = ?', [freshCode])).checkin_record_id, fresh.id);
+  } finally { await new Promise((resolve) => db.close(resolve)); }
 });

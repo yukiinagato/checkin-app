@@ -1,0 +1,20 @@
+[Unit]
+Description=Check-in captive portal FAS
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/checkin-app/captive-portal
+EnvironmentFile=/etc/checkin-captive-portal.env
+ExecStart=/root/.nvm/versions/node/v24.0.2/bin/node /root/checkin-app/captive-portal/server.js
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/checkin-captive-portal
+
+[Install]
+WantedBy=multi-user.target

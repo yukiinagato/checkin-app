@@ -36,3 +36,8 @@ server/.ocr-models/
 server/.cache/
 server/.paddle/
 venv
+server/data/
+__pycache__/
+*.pyc
+.pnpm-store/
+.claude/

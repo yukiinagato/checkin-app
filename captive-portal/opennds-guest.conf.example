@@ -1,0 +1,20 @@
+# This is the intended OpenWrt UCI configuration (do not paste the example key).
+# It is deliberately kept disabled until the remote FAS has passed its tests.
+config opennds
+	option enabled '0'
+	option gatewayinterface 'guest'
+	option gatewayname 'Kawachinagano Check-in Wi-Fi'
+	option enable_serial_number_suffix '0'
+	option gatewayfqdn 'status.client'
+	option fasport '443'
+	option fasremoteip '104.21.66.231'
+	option fasremotefqdn 'checkin-kawachinagano.ox.gy'
+	option faspath '/portal'
+	option fas_secure_enabled '4'
+	option faskey 'replace-with-the-same-64-character-random-secret'
+	option nat_traversal_poll_interval '3'
+	option dhcp_default_url_enable '1'
+	option preauthidletimeout '30'
+	list walledgarden_fqdn_list 'checkin-kawachinagano.ox.gy'
+	list walledgarden_port_list '443'
+	list authenticated_users 'allow all'

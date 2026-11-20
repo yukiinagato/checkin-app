@@ -44,307 +44,235 @@ if sys.stdout.encoding != 'utf-8':
 # 常量与配置
 # ==========================================
 
-MONTH_MAP = {
-    'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
-    'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12,
-    '0CT': 10, '1AN': 1, 'A0G': 8, '0EC': 12, '5EP': 9
-}
+# 识别前把图片降采样到的最长边。手机直出照片是 4032px，全尺寸推理要 20s+，
+# 默认保留到 1600px；受损机读码会按检测坐标局部放大重试。设 0 关闭降采样。
+OCR_MAX_IMAGE_SIDE = int(os.environ.get('OCR_MAX_IMAGE_SIDE') or 1600)
 
-VIZ_BLACKLIST = {
-    'SIGNATURE', 'BEARER', 'MINISTRY', 'PASSPORT', 'REPUBLIC', 'KOREA',
-    'DATE', 'SURNAME', 'GIVEN', 'NATIONALITY', 'BIRTH', 'AUTHORITY',
-    'COUNTRY', 'NUMBER', 'SEX', 'TYPE', 'CODE', 'ISSUING', 'AFFAIRS', 
-    'FOREIGN', 'NAMES', 'HONG', 'KONG', 'REGION', 'SPECIAL', 'ADMINISTRATIVE', 
-    'PEOPLE', 'CHINA', 'IMMIGRATION', 'DEPARTMENT', 'STATE', 'OFFICE'
-}
+# onnxruntime 线程数。默认 -1（用满所有核）对这种小模型是灾难：32 核时
+# 线程同步开销让单轮推理 9s，限到 8 线程只要 2s。
+OCR_INTRA_OP_THREADS = int(os.environ.get('OCR_INTRA_OP_THREADS') or 8)
 
-ISO3_TO_ISO2 = {
-    'CHN': 'CN', 'JPN': 'JP', 'KOR': 'KR', 'USA': 'US', 'GBR': 'GB', 'CAN': 'CA',
-    'AUS': 'AU', 'FRA': 'FR', 'DEU': 'DE', 'ITA': 'IT', 'ESP': 'ES', 'RUS': 'RU',
-    'IND': 'IN', 'PHL': 'PH', 'VNM': 'VN', 'MYS': 'MY', 'THA': 'TH', 'IDN': 'ID',
-    'SGP': 'SG', 'TWN': 'TW', 'HKG': 'HK', 'MAC': 'MO', 'CHE': 'CH',
-    'NOR': 'NO', 'ARE': 'AE'
-}
+def create_engine():
+    from rapidocr_onnxruntime import RapidOCR
+    return RapidOCR(intra_op_num_threads=OCR_INTRA_OP_THREADS)
 
-# ==========================================
-# MRZ 工具函数 (位置敏感)
-# ==========================================
+# 四个旋转角度依次尝试；EXIF 校正后绝大多数照片在 0 度就能命中，
+# 命中后提前退出可省掉剩余 3 次推理。
+ROTATIONS = (0, 90, 180, 270)
 
-def _mrz_val(ch: str) -> int:
-    if ch in ('<', ' ', '(', '{'): return 0
-    c = ch.upper()
-    if c == 'O': c = '0'
-    if c == 'I': c = '1'
-    if c == 'Z': c = '2'
-    if c.isdigit(): return int(c)
-    if 'A' <= c <= 'Z': return ord(c) - 55
-    return 0
+def emit_progress(stage: str, **fields) -> None:
+    """向 stderr 输出一行进度事件，供 Node 端转发给前端。
 
-def _mrz_check(val: str, expected: str) -> bool:
-    if not expected.isdigit(): return False
-    weights = (7, 3, 1)
-    s = sum(_mrz_val(ch) * weights[i % 3] for i, ch in enumerate(val))
-    return str(s % 10) == expected
-
-# ==========================================
-# 结构化解析引擎
-# ==========================================
-
-def parse_mrz_block(lines: List[str]) -> Optional[Dict]:
+    走 stderr 是为了和 stdout 上的最终 JSON 结果分流，互不干扰。
     """
-    寻找并解析 TD3 标准的 44x2 MRZ 区域。
-    这是最稳健的提取方式，基于 ICAO Doc 9303 位置标准。
-    """
-    # 预处理：提取所有看起来像 MRZ 的行（包含大量 < 或 长度接近 44）
-    mrz_lines = []
-    for ln in lines:
-        clean = re.sub(r'[^A-Z0-9<]', '', ln.upper())
-        if len(clean) >= 30: # 允许部分遮挡
-            mrz_lines.append(clean)
-
-    # 尝试寻找两行配对（通常第一行 P 开头，第二行以护照号开头）
-    for i in range(len(mrz_lines)):
-        l1 = mrz_lines[i]
-        if not l1.startswith('P'): continue
-        
-        for j in range(len(mrz_lines)):
-            if i == j: continue
-            l2 = mrz_lines[j]
-            
-            # 校验护照号位置 (0-9位)
-            pass_no = l2[0:9]
-            pass_check = l2[9:10]
-            if _mrz_check(pass_no, pass_check):
-                # 这是一个高置信度的 MRZ 块
-                data = {
-                    'passportNumber': pass_no.replace('<', ''),
-                    'nationalityCode': ISO3_TO_ISO2.get(_mrz_fix_iso(l2[10:13]), ''),
-                    'sex': l2[20:21] if l2[20:21] in 'MF' else '',
-                    'checksumValid': True
-                }
-                
-                # 生日解析 (13-19位)
-                dob_raw = l2[13:19]
-                if _mrz_check(dob_raw, l2[19:20]):
-                    yy, mm, dd = int(dob_raw[0:2]), int(dob_raw[2:4]), int(dob_raw[4:6])
-                    year = 1900 + yy if yy > (date.today().year % 100) else 2000 + yy
-                    try:
-                        d = date(year, mm, dd)
-                        data['birthDate'] = d.strftime('%Y%m%d')
-                        data['age'] = date.today().year - d.year - ((date.today().month, date.today().day) < (d.month, d.day))
-                    except: pass
-                
-                # 姓名解析 (Line 1: 5-44位)
-                name_part = l1[5:]
-                if '<<' in name_part:
-                    parts = name_part.split('<<')
-                    surname = parts[0].replace('<', ' ').strip()
-                    given = parts[1].replace('<', ' ').strip()
-                    data['fullName'] = f"{given} {surname}".strip()
-                else:
-                    data['fullName'] = name_part.replace('<', ' ').strip()
-                
-                return data
-    return None
-
-def _parse_date_from_ddmmyyyy(raw: str) -> Optional[date]:
-    digits = re.sub(r'\D', '', raw)
-    if len(digits) != 8:
-        return None
+    payload = {'stage': stage, **fields}
     try:
-        return date(int(digits[4:8]), int(digits[2:4]), int(digits[0:2]))
-    except ValueError:
+        sys.stderr.write('@@PROGRESS@@ ' + json.dumps(payload, ensure_ascii=False) + '\n')
+        sys.stderr.flush()
+    except Exception:
+        pass  # 进度上报是尽力而为，不能影响识别本身
+
+from passport_parser import parse_passport
+
+def _score_ocr_data(data: Dict) -> float:
+    weights = {'confirmed': 30, 'checked': 20, 'review': 8, 'missing': 0}
+    return ((100 if data.get('isPassport') else 0)
+            + sum(weights[v['status']] for v in data.get('fieldEvidence', {}).values())
+            - len(data.get('warnings', [])))
+
+
+def _rapidocr_blocks_for_image(engine, image: Image.Image) -> List[Dict]:
+    img_bgr = cv2.cvtColor(np.array(image.convert('RGB')), cv2.COLOR_RGB2BGR)
+    result, _ = engine(img_bgr)
+    return [{'text': str(row[1]), 'box': np.asarray(row[0]).tolist(),
+             'score': float(row[2]) if len(row) > 2 else None}
+            for row in (result or []) if row and len(row) >= 2 and row[1]]
+
+
+def _mrz_retry(engine, image, blocks):
+    # Use detected positions, not a fixed bottom strip: screenshots may include
+    # browser chrome below the passport. A retry is limited to the MRZ region.
+    anchors = [b for b in blocks if '<<' in b['text'] and len(b['text']) >= 25]
+    if not anchors:
         return None
+    anchor = max(anchors, key=lambda b: max(p[1] for p in b['box']))
+    top = min(p[1] for p in anchor['box'])
+    height = max(p[1] for p in anchor['box']) - top
+    selected = [b for b in blocks if len(re.sub(r'\s', '', b['text'])) >= 30
+                and top - height <= min(p[1] for p in b['box']) <= top + height * 4]
+    if not selected:
+        return None
+    points = [p for b in selected for p in b['box']]
+    bounds = (max(0, int(min(p[0] for p in points)) - 12),
+              max(0, int(min(p[1] for p in points)) - 12),
+              min(image.width, int(max(p[0] for p in points)) + 12),
+              min(image.height, int(max(p[1] for p in points)) + 12))
+    crop = image.crop(bounds)
+    crop = crop.resize((crop.width * 2, crop.height * 2), Image.Resampling.LANCZOS)
+    retry = _rapidocr_blocks_for_image(engine, crop)
+    if not retry:
+        return None
+    # Restore coordinates into the oriented original image.
+    for block in retry:
+        block['box'] = [[x / 2 + bounds[0], y / 2 + bounds[1]] for x, y in block['box']]
+    return [b for b in blocks if b not in selected] + retry
 
-def parse_visual_mrz_line(lines: List[str]) -> Optional[Dict]:
-    """
-    Some phone photos make RapidOCR merge the visual fields into a MRZ-like line
-    that misses ICAO check digits, e.g. PASSNO + ISO3 + DDMMYYYY + SEX + DDMMYYYY.
-    This is lower confidence than parse_mrz_block but useful for auto-fill.
-    """
-    mrz_name = ''
-    for name_line in lines:
-        clean_name = re.sub(r'[^A-Z0-9<]', '', name_line.upper())
-        if not clean_name.startswith('P<'):
-            continue
-        name_part = clean_name[5:] if clean_name[2:5] in ISO3_TO_ISO2 else clean_name[2:]
-        if '<<' in name_part:
-            parts = name_part.split('<<')
-            surname = parts[0].replace('<', ' ').strip()
-            given = parts[1].replace('<', ' ').strip()
-            mrz_name = f"{given} {surname}".strip()
-        else:
-            mrz_name = name_part.replace('<', ' ').strip()
-        break
 
-    for ln in lines:
-        clean = re.sub(r'[^A-Z0-9<]', '', ln.upper())
-        match = re.search(r'([A-Z0-9]{7,10})([A-Z0-9]{3})(\d{8})([MF])(\d{8})', clean)
-        if not match:
-            continue
-        passport_no, iso3, birth_raw, sex, expiry_raw = match.groups()
-        birth = _parse_date_from_ddmmyyyy(birth_raw)
-        expiry = _parse_date_from_ddmmyyyy(expiry_raw)
-        data = {
-            'passportNumber': passport_no.replace('<', ''),
-            'nationalityCode': ISO3_TO_ISO2.get(_mrz_fix_iso(iso3), ''),
-            'sex': sex,
-            'checksumValid': False
-        }
-        if mrz_name:
-            data['fullName'] = mrz_name
-        if birth:
-            data['birthDate'] = birth.strftime('%Y%m%d')
-            data['age'] = date.today().year - birth.year - ((date.today().month, date.today().day) < (birth.month, birth.day))
-        if expiry:
-            data['expiryDate'] = expiry.strftime('%Y%m%d')
-        return data
-    return None
-
-def _mrz_fix_iso(raw: str) -> str:
-    return raw.replace('0', 'O').replace('1', 'I').replace('2', 'Z').replace('5', 'S')
-
-# ==========================================
-# VIZ 备选方案 (基于评分系统的鲁棒提取)
-# ==========================================
-
-def fallback_extract_viz(lines: List[str]) -> Dict:
-    res = {'passportNumber': '', 'fullName': '', 'birthDate': '', 'age': None, 'sex': '', 'nationalityCode': ''}
-    text = '\n'.join(lines).upper()
-
-    # 1. 护照号提取：寻找 8-10 位，包含数字，排除月份
-    pass_candidates = []
-    for ln in lines:
-        tokens = re.findall(r'\b[A-Z0-9]{7,12}\b', ln.upper())
-        for tk in tokens:
-            if any(c.isdigit() for c in tk) and not any(m in tk for m in MONTH_MAP):
-                # 评分：包含字母和数字的权重更高
-                score = 10 if (re.search(r'[A-Z]', tk) and re.search(r'[0-9]', tk)) else 5
-                pass_candidates.append((tk, score))
-    
-    if pass_candidates:
-        res['passportNumber'] = sorted(pass_candidates, key=lambda x: x[1], reverse=True)[0][0]
-
-    # 2. 姓名提取：基于排除法与结构得分
-    name_candidates = []
-    for i, ln in enumerate(lines):
-        orig = ln.strip()
-        if len(orig) < 3 or any(ch.islower() for ch in orig) or any(ch.isdigit() for ch in orig):
-            continue
-        
-        words = orig.upper().replace('/', ' ').split()
-        if any(w in VIZ_BLACKLIST for w in words): continue
-        
-        # 评分：多单词更有可能是姓名
-        score = len(words) * 5 - (1 if len(orig) > 20 else 0)
-        name_candidates.append((orig.replace('/', ' ').strip(), score))
-    
-    if name_candidates:
-        res['fullName'] = sorted(name_candidates, key=lambda x: x[1], reverse=True)[0][0]
-
-    # 3. 日期提取
-    for ln in lines:
-        # 匹配各种格式 03APR1972, 19.08.1998, 22JUL00
-        m = re.search(r'(\d{2})[\s\./-]?([A-Z0-9]{3})[\s\./-]?(\d{2,4})', ln.upper())
-        if m:
-            dd, mm_str, yy_str = m.groups()
-            mm = MONTH_MAP.get(mm_str)
-            if mm:
-                try:
-                    yy = int(yy_str)
-                    if yy < 100: yy += 2000 if yy <= (date.today().year % 100) else 1900
-                    d = date(yy, mm, int(dd))
-                    res['birthDate'] = d.strftime('%Y%m%d')
-                    res['age'] = date.today().year - d.year - ((date.today().month, date.today().day) < (d.month, d.day))
-                except: pass
-        
-        if not res['sex']:
-            if re.search(r'\b[MF]\b', ln.upper()):
-                res['sex'] = 'M' if 'M' in ln.upper() else 'F'
-
-        if not res['nationalityCode']:
-            for iso3, iso2 in ISO3_TO_ISO2.items():
-                if re.search(rf'\b{iso3}\b', ln.upper()):
-                    res['nationalityCode'] = iso2
-                    break
-
-    return res
-
-def _score_ocr_data(data: Dict, lines: List[str]) -> int:
-    score = 0
-    if data.get('checksumValid'): score += 120
-    if data.get('passportNumber'): score += 60
-    if data.get('fullName'): score += 30
-    if data.get('birthDate'): score += 25
-    if data.get('nationalityCode'): score += 20
-    if data.get('sex'): score += 10
-    score += min(len(lines), 20)
-    return score
-
-def _rapidocr_lines_for_image(engine, image: Image.Image) -> List[str]:
+def _rapidocr_result_for_image(engine, image: Image.Image):
     img_bgr = cv2.cvtColor(np.array(image.convert('RGB')), cv2.COLOR_RGB2BGR)
     result, _ = engine(img_bgr)
     if not result:
-        return []
-    return [str(row[1]) for row in result if row and len(row) >= 2 and row[1]]
+        return [], []
+    rows = [row for row in result if row and len(row) >= 2 and row[1]]
+    return [str(row[1]) for row in rows], rows
 
-def run_rapidocr(image_path: Path) -> Tuple[Dict, List[str], int]:
-    from rapidocr_onnxruntime import RapidOCR
+def _rapidocr_lines_for_image(engine, image: Image.Image) -> List[str]:
+    return _rapidocr_result_for_image(engine, image)[0]
 
-    engine = RapidOCR()
+def _analyze_mrz_geometry(rows):
+    """从 MRZ 文本框几何判断证件的视觉方向。
+
+    RapidOCR 自带文字方向分类，横躺的照片在 0 度也能识别成功，
+    因此「识别胜出的旋转角度」不等于视觉方向。这里检查 MRZ 行的
+    检测框：竖排（高>宽）说明证件转了 ±90°；横排时再用 TD3 结构
+    （P 开头的姓名行应在数据行上方）识别 180° 倒置。
+
+    返回 (found, horizontal, inverted)。
+    """
+    boxes = []
+    for row in rows or []:
+        box, text = row[0], str(row[1])
+        clean = re.sub(r'[^A-Z0-9<]', '', text.upper())
+        if len(clean) >= 25 and '<' in clean:
+            xs = [p[0] for p in box]
+            ys = [p[1] for p in box]
+            boxes.append((clean, min(xs), max(xs), min(ys), max(ys)))
+    if not boxes:
+        return False, True, False
+
+    horizontal = all((x2 - x1) >= (y2 - y1) for _, x1, x2, y1, y2 in boxes)
+    inverted = False
+    if horizontal and len(boxes) >= 2:
+        p_line = next((b for b in boxes if b[0].startswith('P')), None)
+        if p_line:
+            other = next((b for b in boxes if b is not p_line), None)
+            if other:
+                inverted = (p_line[3] + p_line[4]) / 2 > (other[3] + other[4]) / 2
+    return True, horizontal, inverted
+
+PROBE_MAX_SIDE = 640
+
+def probe_orientation(engine, image: Image.Image) -> int:
+    """用低分辨率 det-only 快速猜测证件方向（0 或 90），供全量识别定起始角度。
+
+    只跑文本检测（~0.6s），看长条文本框的走向：证件上的 MRZ / 字段行
+    都是细长条，竖排占多数说明照片横躺。90 与 270 的歧义交给全量识别
+    里的倒置几何修正（_analyze_mrz_geometry），猜错也只是同一轮内修正。
+    """
+    try:
+        ratio = PROBE_MAX_SIDE / max(image.size)
+        small = image.resize(
+            (max(1, round(image.width * ratio)), max(1, round(image.height * ratio))),
+            Image.BILINEAR
+        ) if ratio < 1 else image
+        img_bgr = cv2.cvtColor(np.array(small.convert('RGB')), cv2.COLOR_RGB2BGR)
+        boxes, _ = engine(img_bgr, use_det=True, use_cls=False, use_rec=False)
+        vertical = horizontal = 0
+        for box in boxes or []:
+            xs = [p[0] for p in box]
+            ys = [p[1] for p in box]
+            w, h = max(xs) - min(xs), max(ys) - min(ys)
+            if max(w, h) < 4 * min(w, h):
+                continue  # 接近方形的框不含方向信息
+            if h > w:
+                vertical += 1
+            else:
+                horizontal += 1
+        return 90 if vertical > horizontal else 0
+    except Exception:
+        return 0  # 探测失败不影响主流程
+
+def downscale_for_ocr(image: Image.Image) -> Image.Image:
+    """按最长边等比缩小，仅用于识别；落盘保存的原图不受影响。"""
+    if not OCR_MAX_IMAGE_SIDE:
+        return image
+    longest = max(image.size)
+    if longest <= OCR_MAX_IMAGE_SIDE:
+        return image
+    ratio = OCR_MAX_IMAGE_SIDE / longest
+    return image.resize(
+        (max(1, round(image.width * ratio)), max(1, round(image.height * ratio))),
+        Image.LANCZOS
+    )
+
+def run_rapidocr(image_path: Path, engine=None):
+    if engine is None:
+        emit_progress('loading')
+        engine = create_engine()
     with Image.open(image_path) as img:
         base = ImageOps.exif_transpose(img).convert('RGB')
-
-    best = ({}, [], -1)
-    for degrees in (0, 90, 180, 270):
+    original_size = base.size
+    base = downscale_for_ocr(base)
+    emit_progress('compressed', originalWidth=original_size[0], originalHeight=original_size[1],
+                  width=base.width, height=base.height)
+    guess = probe_orientation(engine, base)
+    rotations = [guess] + [d for d in ROTATIONS if d != guess]
+    best = ({}, [], -1, 0)
+    best_blocks, best_image, best_bonus = [], None, 0
+    for index, degrees in enumerate(rotations):
+        emit_progress('recognizing', **{'pass': index + 1, 'totalPasses': len(rotations), 'rotation': degrees})
         image = base.rotate(degrees, expand=True) if degrees else base
-        lines = _rapidocr_lines_for_image(engine, image)
-        mrz_data = parse_mrz_block(lines) or parse_visual_mrz_line(lines) or {}
-        viz_data = fallback_extract_viz(lines)
-
-        final = dict(mrz_data)
-        for key in ['passportNumber', 'fullName', 'birthDate', 'age', 'sex', 'nationalityCode']:
-            if not final.get(key):
-                final[key] = viz_data.get(key)
-
-        score = _score_ocr_data(final, lines)
+        blocks = _rapidocr_blocks_for_image(engine, image)
+        lines = [b['text'] for b in blocks]
+        final = parse_passport(lines)
+        rows = [[b['box'], b['text'], b['score']] for b in blocks]
+        found, horizontal, inverted = _analyze_mrz_geometry(rows)
+        effective_rotation = (degrees + 180) % 360 if found and horizontal and inverted else degrees
+        final.update(rotation=effective_rotation, preprocessing='original')
+        bonus = 15 if found and horizontal else 0
+        score = _score_ocr_data(final) + bonus
         if score > best[2]:
-            best = (final, lines, score)
-
+            best = (final, lines, score, effective_rotation)
+            best_blocks, best_image, best_bonus = blocks, image, bonus
+        if final['success'] and (not found or horizontal):
+            emit_progress('matched', rotation=effective_rotation, passesUsed=index + 1)
+            break
+    if best[0].get('isPassport') and best[0].get('needsReview'):
+        emit_progress('recognizing', **{'pass': len(rotations) + 1, 'totalPasses': len(rotations) + 1,
+                                       'rotation': best[3], 'region': 'mrz'})
+        try:
+            retry = _mrz_retry(engine, best_image, best_blocks)
+        except Exception:
+            logging.getLogger(__name__).warning('Optional MRZ retry failed')
+            retry = None
+        if retry:
+            lines = [b['text'] for b in retry]
+            final = parse_passport(lines)
+            final.update(rotation=best[3], preprocessing='mrz_crop_2x')
+            score = _score_ocr_data(final) + best_bonus
+            if score > best[2]:
+                best = (final, lines, score, best[3])
     return best
 
-# ==========================================
-# 主流程
-# ==========================================
 
-def main() -> int:
+def format_result(final, chunks, rotation):
+    return {**final, 'rotation': rotation, 'text': '\n'.join(chunks),
+            'engine': 'rapidocr-onnxruntime-local', 'method': 'mrz_viz_crosscheck_multirotation'}
+
+
+def main():
     if len(sys.argv) < 2:
         print(json.dumps({'success': False, 'error': 'No image path'}))
         return 1
-
-    image_path = Path(sys.argv[1])
     try:
-        logging.getLogger("ppocr").setLevel(logging.ERROR)
-        final, chunks, score = run_rapidocr(image_path)
-
-        print(json.dumps({
-            'success': bool(final.get('passportNumber')),
-            'isPassport': bool(final.get('passportNumber') or parse_mrz_block(chunks) or parse_visual_mrz_line(chunks)),
-            'passportNumber': final.get('passportNumber', ''),
-            'fullName': final.get('fullName', ''),
-            'birthDate': final.get('birthDate', ''),
-            'age': final.get('age'),
-            'sex': final.get('sex', ''),
-            'nationalityCode': final.get('nationalityCode', ''),
-            'text': '\n'.join(chunks),
-            'confidence': min(0.99, max(0.35, score / 180)),
-            'engine': 'rapidocr-onnxruntime-local',
-            'method': 'mrz_or_viz_multirotation'
-        }, ensure_ascii=False))
+        logging.getLogger('ppocr').setLevel(logging.ERROR)
+        final, chunks, score, rotation = run_rapidocr(Path(sys.argv[1]))
+        print(json.dumps(format_result(final, chunks, rotation), ensure_ascii=False))
         return 0
     except Exception as exc:
         print(json.dumps({'success': False, 'error': str(exc)}))
         return 3
+
 
 if __name__ == '__main__':
     sys.exit(main())

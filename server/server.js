@@ -7,8 +7,7 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
 const os = require('os');
-const { execFile } = require('child_process');
-const { promisify } = require('util');
+const { spawn } = require('child_process');
 const {
   generateRegistrationOptions,
   verifyRegistrationResponse,
@@ -33,12 +32,17 @@ const {
   allAsync,
   getAsync
 } = require('./src/db');
+const { createSelectionService, fullNameMatches } = require('./src/reservationSelection');
+const { createTTLockClient, createOrderAccess, receiptToken, validReceipt } = require('./src/ttlock');
 const { AdminSessionStore } = require('./src/sessions');
 const { Semaphore } = require('./src/semaphore');
+const { createHostexClient } = require('./src/hostex');
+const { createReservationLinker, createReservationReconciler } = require('./src/reservationLinks');
+const { createHostexSync, dedupeReservationPhotos } = require('./src/hostexSync');
+const { createOcrWorkerPool } = require('./src/ocrWorkerPool');
 
 const logger = createLogger();
 const encoder = new TextEncoder();
-const execFileAsync = promisify(execFile);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -53,7 +57,19 @@ const MAX_TEXT_FIELD_LENGTH = Number.parseInt(process.env.MAX_TEXT_FIELD_LENGTH 
 const MAX_PASSPORT_NUMBER_LENGTH = Number.parseInt(process.env.MAX_PASSPORT_NUMBER_LENGTH || '32', 10);
 const OCR_MAX_CONCURRENCY = Number.parseInt(process.env.OCR_MAX_CONCURRENCY || '2', 10);
 const OCR_QUEUE_TIMEOUT_MS = Number.parseInt(process.env.OCR_QUEUE_TIMEOUT_MS || '15000', 10);
+// 護照 OCR 是 CPU 密集的同步推理，遠超一般請求；單獨放寬，其餘路由仍用 REQUEST_TIMEOUT_MS。
+const OCR_REQUEST_TIMEOUT_MS = Number.parseInt(process.env.OCR_REQUEST_TIMEOUT_MS || '180000', 10);
 const SESSION_BACKEND = 'sqlite';
+
+// Hostex 訂單同步（未配 token 時全部功能靜默停用）
+const HOSTEX_API_TOKEN = process.env.HOSTEX_API_TOKEN || '';
+const HOSTEX_PROPERTY_ID = process.env.HOSTEX_PROPERTY_ID || '';
+const HOSTEX_SYNC_INTERVAL_MS = Number.parseInt(process.env.HOSTEX_SYNC_INTERVAL_MS || '600000', 10);
+const HOSTEX_SYNC_PAST_DAYS = Number.parseInt(process.env.HOSTEX_SYNC_PAST_DAYS || '7', 10);
+const HOSTEX_SYNC_FUTURE_DAYS = Number.parseInt(process.env.HOSTEX_SYNC_FUTURE_DAYS || '60', 10);
+const HOSTEX_ENABLED = Boolean(HOSTEX_API_TOKEN && HOSTEX_PROPERTY_ID);
+// 客人照片回顯令牌有效期
+const RESERVATION_PHOTO_TOKEN_TTL_MS = 30 * 60 * 1000;
 
 // ----------------------------------------------------------------------
 // 1. 環境變數檢查
@@ -90,6 +106,15 @@ if (!Number.isFinite(REQUEST_TIMEOUT_MS) || REQUEST_TIMEOUT_MS <= 0) {
 
 if (!Number.isFinite(OCR_MAX_CONCURRENCY) || OCR_MAX_CONCURRENCY <= 0) {
   throw new Error('OCR_MAX_CONCURRENCY must be a positive integer');
+}
+
+if (!Number.isFinite(OCR_REQUEST_TIMEOUT_MS) || OCR_REQUEST_TIMEOUT_MS <= 0) {
+  throw new Error('OCR_REQUEST_TIMEOUT_MS must be a positive integer');
+}
+
+// 防止只配 token 不配房源時把全帳號訂單同步進來
+if (HOSTEX_API_TOKEN && !HOSTEX_PROPERTY_ID) {
+  throw new Error('HOSTEX_PROPERTY_ID is required when HOSTEX_API_TOKEN is set');
 }
 
 // ----------------------------------------------------------------------
@@ -178,6 +203,7 @@ const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'hotel.db');
 const CLIENT_DIST_DIR = path.resolve(__dirname, process.env.CLIENT_DIST_DIR || path.join('..', 'client', 'dist'));
 const PADDLE_OCR_PYTHON_PATH = process.env.PADDLE_OCR_PYTHON_PATH || process.env.PADDLE_OCR_PYTHON || 'python3';
 const PADDLE_OCR_RUNNER = process.env.PADDLE_OCR_RUNNER || path.join(__dirname, 'tools', 'paddle_ocr_runner.py');
+const PADDLE_OCR_WORKER = process.env.PADDLE_OCR_WORKER || path.join(__dirname, 'tools', 'paddle_ocr_worker.py');
 const OCR_CACHE_HOME = path.resolve(__dirname, process.env.CHECKIN_OCR_HOME || path.join('.cache', 'home'));
 const OCR_CACHE_DIR = path.resolve(__dirname, process.env.XDG_CACHE_HOME || '.cache');
 const OCR_PADDLE_HOME = path.resolve(__dirname, process.env.PADDLE_HOME || '.paddle');
@@ -324,7 +350,105 @@ const parseDataImage = (dataImage) => {
   };
 };
 
-const runLocalPassportOcr = async (dataImage) => {
+const PROGRESS_PREFIX = '@@PROGRESS@@ ';
+const OCR_CHILD_TIMEOUT_MS = 120000;
+
+// 以 spawn 取代 execFile，讓 Python 端的進度事件能邊跑邊往外送。
+const spawnPassportOcr = (imagePath, onProgress) => new Promise((resolve, reject) => {
+  const child = spawn(PADDLE_OCR_PYTHON_PATH, [PADDLE_OCR_RUNNER, imagePath], {
+    cwd: __dirname,
+    env: {
+      ...process.env,
+      HOME: OCR_CACHE_HOME,
+      XDG_CACHE_HOME: OCR_CACHE_DIR,
+      PADDLE_HOME: OCR_PADDLE_HOME,
+      PADDLEOCR_HOME: OCR_MODEL_HOME,
+      PYTHONPYCACHEPREFIX: path.join(OCR_CACHE_DIR, 'pycache')
+    }
+  });
+
+  let stdoutBuffer = '';
+  let stderrTail = '';
+  let settled = false;
+
+  const timer = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    child.kill('SIGKILL');
+    reject(new Error('Passport OCR timed out'));
+  }, OCR_CHILD_TIMEOUT_MS);
+
+  const finish = (fn, value) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    fn(value);
+  };
+
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => { stdoutBuffer += chunk; });
+
+  // 進度事件走 stderr，逐行解析；非進度行只保留尾段用於錯誤診斷。
+  child.stderr.setEncoding('utf8');
+  let stderrBuffer = '';
+  child.stderr.on('data', (chunk) => {
+    stderrBuffer += chunk;
+    const lines = stderrBuffer.split(/\r?\n/);
+    stderrBuffer = lines.pop() || '';
+    for (const line of lines) {
+      if (line.startsWith(PROGRESS_PREFIX)) {
+        try {
+          onProgress?.(JSON.parse(line.slice(PROGRESS_PREFIX.length)));
+        } catch {
+          // 進度解析失敗不影響識別流程
+        }
+      } else if (line.trim()) {
+        stderrTail = `${stderrTail}\n${line}`.slice(-2000);
+      }
+    }
+  });
+
+  child.on('error', (err) => finish(reject, err));
+
+  child.on('close', (code) => {
+    if (settled) return;
+    const lines = `${stdoutBuffer}\n${stderrTail}`
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const line = lines[index];
+      if (!line.startsWith('{') || !line.endsWith('}')) continue;
+      try {
+        finish(resolve, JSON.parse(line));
+        return;
+      } catch {
+        // continue searching previous lines
+      }
+    }
+
+    finish(reject, new Error(
+      `Passport OCR output does not contain JSON payload (exit ${code})`
+    ));
+  });
+});
+
+// 常駐 worker 池（startServer 中初始化）；不可用時回退到一次性子進程
+let ocrWorkerPool = null;
+
+const executePassportOcr = async (imagePath, onProgress) => {
+  if (ocrWorkerPool?.isReady()) {
+    try {
+      return await ocrWorkerPool.run(imagePath, onProgress);
+    } catch (err) {
+      logger.warn({ err: err.message }, 'ocr worker pool failed, falling back to one-shot process');
+    }
+  }
+  return spawnPassportOcr(imagePath, onProgress);
+};
+
+const runLocalPassportOcr = async (dataImage, onProgress) => {
   const parsed = parseDataImage(dataImage);
   if (!parsed) {
     return { success: false, unsupported: true, error: 'Invalid image payload' };
@@ -343,36 +467,7 @@ const runLocalPassportOcr = async (dataImage) => {
 
   try {
     await fs.writeFile(imagePath, parsed.buffer);
-    const { stdout, stderr } = await execFileAsync(PADDLE_OCR_PYTHON_PATH, [PADDLE_OCR_RUNNER, imagePath], {
-      maxBuffer: 10 * 1024 * 1024,
-      timeout: 120000,
-      cwd: __dirname,
-      env: {
-        ...process.env,
-        HOME: OCR_CACHE_HOME,
-        XDG_CACHE_HOME: OCR_CACHE_DIR,
-        PADDLE_HOME: OCR_PADDLE_HOME,
-        PADDLEOCR_HOME: OCR_MODEL_HOME,
-        PYTHONPYCACHEPREFIX: path.join(OCR_CACHE_DIR, 'pycache')
-      }
-    });
-
-    const outputLines = `${String(stdout || '')}\n${String(stderr || '')}`
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    for (let index = outputLines.length - 1; index >= 0; index -= 1) {
-      const line = outputLines[index];
-      if (!line.startsWith('{') || !line.endsWith('}')) continue;
-      try {
-        return JSON.parse(line);
-      } catch {
-        // continue searching previous lines
-      }
-    }
-
-    throw new Error('Passport OCR output does not contain JSON payload');
+    return await executePassportOcr(imagePath, onProgress);
   } catch (error) {
     logger.error({ err: error.message || String(error) }, 'passport OCR failed');
     return {
@@ -404,11 +499,15 @@ const loadAppSettings = () => new Promise((resolve, reject) => {
 
     const settings = {
       taiwanNamingMode: DEFAULT_APP_SETTINGS.taiwanNamingMode,
-      guestFieldsConfig: sanitizeGuestFieldsConfig(DEFAULT_GUEST_FIELDS_CONFIG)
+      guestFieldsConfig: sanitizeGuestFieldsConfig(DEFAULT_GUEST_FIELDS_CONFIG),
+      hostexSyncEnabled: true
     };
     (rows || []).forEach((row) => {
       if (row.key === 'taiwanNamingMode' && TAIWAN_NAMING_MODES.has(row.value)) {
         settings.taiwanNamingMode = row.value;
+      } else if (row.key === 'hostexSyncEnabled') {
+        settings.hostexSyncEnabled = row.value !== 'false';
+        hostexSyncEnabledCache = settings.hostexSyncEnabled;
       } else if (row.key === 'guestFieldsConfig') {
         try {
           const parsed = JSON.parse(row.value);
@@ -451,6 +550,11 @@ const saveAppSettings = (settings) => new Promise((resolve, reject) => {
   }
   if (Object.prototype.hasOwnProperty.call(incoming, 'guestFieldsConfig')) {
     entries.push(['guestFieldsConfig', SETTING_SERIALIZERS.guestFieldsConfig(incoming.guestFieldsConfig)]);
+  }
+  if (Object.prototype.hasOwnProperty.call(incoming, 'hostexSyncEnabled')) {
+    const enabled = !(incoming.hostexSyncEnabled === false || incoming.hostexSyncEnabled === 'false');
+    hostexSyncEnabledCache = enabled;
+    entries.push(['hostexSyncEnabled', enabled ? 'true' : 'false']);
   }
 
   if (entries.length === 0) {
@@ -711,18 +815,39 @@ const validateSubmissionPayload = (payload, config = DEFAULT_GUEST_FIELDS_CONFIG
 const adminChallenges = new Map();
 // adminSessions exposes a Map-like API but is backed by SQLite (see AdminSessionStore).
 let adminSessions = null;
+// Hostex 同步實例（startServer 中構建）；enabled 快取供輪詢間隔判斷
+let hostexSync = null;
+const reconcileReservationLinks = createReservationReconciler({ db: null, allAsync: (_, ...args) => allAsync(db, ...args), runAsync: (_, ...args) => runAsync(db, ...args), logger });
+const reconcileLinksSafely = () => reconcileReservationLinks().catch((err) => logger.warn({ err: err.message }, 'registration reconciliation failed'));
+let hostexSyncEnabledCache = true;
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+
+// 客人照片回顯令牌：lookup 時簽發，短時效、一 token 對應一個已下載的護照檔名
+const reservationPhotoTokens = new Map();
+
+const issueReservationPhotoToken = (filename) => {
+  const token = crypto.randomBytes(32).toString('hex');
+  reservationPhotoTokens.set(token, {
+    filename,
+    expiresAt: Date.now() + RESERVATION_PHOTO_TOKEN_TTL_MS
+  });
+  return token;
+};
 
 const purgeExpiredEntries = () => {
   const now = Date.now();
   for (const [key, value] of adminChallenges) {
     if (value.expiresAt < now) adminChallenges.delete(key);
   }
+  for (const [token, value] of reservationPhotoTokens) {
+    if (value.expiresAt < now) reservationPhotoTokens.delete(token);
+  }
   if (!adminSessions) return;
   for (const [token, expiresAt] of adminSessions) {
     if (expiresAt < now) adminSessions.delete(token);
   }
+  void adminSessions.purgeExpired();
 };
 
 const cleanupInterval = setInterval(purgeExpiredEntries, 5 * 60 * 1000);
@@ -733,10 +858,10 @@ const normalizeChallenge = (str) => {
   return str.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 };
 
-const createChallenge = (purpose) => {
+const createChallenge = (purpose, context = {}) => {
   const raw = crypto.randomBytes(32).toString('base64url');
   const challenge = normalizeChallenge(raw);
-  adminChallenges.set(challenge, { purpose, expiresAt: Date.now() + CHALLENGE_TTL_MS });
+  adminChallenges.set(challenge, { ...context, purpose, expiresAt: Date.now() + CHALLENGE_TTL_MS });
   return challenge;
 };
 
@@ -754,7 +879,7 @@ const consumeChallenge = (challenge, purpose) => {
       logger.warn('challenge expired');
       return false;
     }
-    return true;
+    return found;
   }
 
   // Some clients double-encode the challenge; try decoding once before giving up.
@@ -772,7 +897,7 @@ const consumeChallenge = (challenge, purpose) => {
         logger.warn('challenge expired (decoded)');
         return false;
       }
-      return true;
+      return found;
     }
   } catch (e) {
     // ignore decode errors and fall through
@@ -782,11 +907,17 @@ const consumeChallenge = (challenge, purpose) => {
   return false;
 };
 
-const createSessionToken = () => {
+const createSessionToken = async (epoch, credentialId) => {
   const token = crypto.randomBytes(32).toString('hex');
-  adminSessions.set(token, Date.now() + SESSION_TTL_MS);
-  return token;
+  // The conditional insert also covers a reset occurring during WebAuthn verification.
+  const result = await runAsync(db, `INSERT INTO admin_sessions (token, expires_at)
+    SELECT ?, ? WHERE EXISTS (SELECT 1 FROM admin_auth_state WHERE id=1 AND epoch=?)
+    AND EXISTS (SELECT 1 FROM admin_passkeys WHERE credential_id=?)`,
+  [token, Date.now() + SESSION_TTL_MS, epoch, credentialId]);
+  return result.changes === 1 ? token : null;
 };
+
+const registrationTokenHash = (token) => crypto.createHash('sha256').update(token).digest('hex');
 
 const getBearerToken = (req) => {
   const authHeader = req.get('authorization');
@@ -800,15 +931,15 @@ const getAdminSessionFromRequest = (req) => {
   return getBearerToken(req);
 };
 
-const requireAdminAuth = (req, res, next) => {
-  const token = getAdminSessionFromRequest(req);
-  const expiresAt = adminSessions?.get(token);
-  if (!token || !expiresAt || expiresAt < Date.now()) {
-    if (token && adminSessions) adminSessions.delete(token);
-    res.status(401).json({ error: 'Unauthorized' });
-    return;
+const requireAdminAuth = async (req, res, next) => {
+  try {
+    if (!await adminSessions?.isActive(getAdminSessionFromRequest(req))) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    next();
+  } catch (err) {
+    sendInternal(req, res, err, 'validate admin session');
   }
-  next();
 };
 
 const extractChallengeFromCredential = (credential) => {
@@ -862,6 +993,14 @@ const authVerifyRateLimit = rateLimit({
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { error: '驗證嘗試次數過多，每 15 分鐘最多 10 次，請稍後再試。' }
+});
+
+const lookupRateLimit = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 10,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { found: false, error: '查詢過於頻繁，每 10 分鐘最多 10 次，請稍後再試。' }
 });
 
 const shouldServeClientBuild = () => process.env.NODE_ENV === 'production';
@@ -981,21 +1120,19 @@ app.post('/api/admin/passkeys/register/options', async (req, res) => {
 
   try {
     const row = await new Promise((resolve, reject) => {
-      db.get('SELECT COUNT(*) as count FROM admin_passkeys', [], (err, r) => err ? reject(err) : resolve(r));
+      db.get('SELECT epoch, (SELECT COUNT(*) FROM admin_passkeys) AS count FROM admin_auth_state WHERE id=1', [], (err, r) => err ? reject(err) : resolve(r));
     });
 
     const hasPasskey = Number(row?.count || 0) > 0;
     if (!hasPasskey) {
       if (!bearerToken || bearerToken !== ADMIN_API_TOKEN) return res.status(401).json({ error: 'Invalid bootstrap token' });
     } else {
-      const expiresAt = adminSessions.get(bearerToken);
-      if (!bearerToken || !expiresAt || expiresAt < Date.now()) {
-        if (bearerToken) adminSessions.delete(bearerToken);
+      if (!await adminSessions.isActive(bearerToken)) {
         return res.status(401).json({ error: 'Unauthorized' });
       }
     }
 
-    const challenge = createChallenge('register');
+    const challenge = createChallenge('register', { epoch: row.epoch, mode: hasPasskey ? 'session' : 'bootstrap', tokenHash: registrationTokenHash(bearerToken) });
 
     const rowsForExclude = await new Promise((resolve, reject) => {
       db.all('SELECT credential_id FROM admin_passkeys', [], (err, rows) => err ? reject(err) : resolve(rows));
@@ -1038,11 +1175,23 @@ app.post('/api/admin/passkeys/register/verify', async (req, res) => {
 
   const challenge = extractChallengeFromCredential(credential);
 
-  if (!challenge || !consumeChallenge(challenge, 'register')) {
+  const registration = challenge && consumeChallenge(challenge, 'register');
+  if (!registration) {
     return res.status(400).json({ error: 'Invalid or expired challenge' });
   }
 
+  const bearerToken = getBearerToken(req);
+  if (!bearerToken || registration.tokenHash !== registrationTokenHash(bearerToken)) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
   try {
+    const state = await getAsync(db, 'SELECT epoch FROM admin_auth_state WHERE id=1');
+    if (state?.epoch !== registration.epoch ||
+        (registration.mode === 'session' && !await adminSessions.isActive(bearerToken)) ||
+        (registration.mode === 'bootstrap' && bearerToken !== ADMIN_API_TOKEN)) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
     const verification = await verifyRegistrationResponse({
       response: credential,
       expectedChallenge: challenge,
@@ -1055,14 +1204,19 @@ app.post('/api/admin/passkeys/register/verify', async (req, res) => {
       const { credentialID, credentialPublicKey, counter } = verification.registrationInfo;
       const transports = Array.isArray(credential.response?.transports) ? JSON.stringify(credential.response.transports) : null;
 
-      db.run(
-        'INSERT OR REPLACE INTO admin_passkeys (credential_id, public_key, counter, transports) VALUES (?, ?, ?, ?)',
-        [credentialID, Buffer.from(credentialPublicKey).toString('base64url'), counter, transports],
-        (err) => {
-          if (err) return sendInternal(req, res, err, 'persist passkey');
-          res.json({ success: true });
-        }
-      );
+      // Check the authority again atomically with the write. Bootstrap is single-use.
+      const authoritySql = registration.mode === 'bootstrap'
+        ? 'NOT EXISTS (SELECT 1 FROM admin_passkeys)'
+        : 'EXISTS (SELECT 1 FROM admin_sessions WHERE token=? AND expires_at>?)';
+      const authorityParams = registration.mode === 'bootstrap' ? [] : [bearerToken, Date.now()];
+      const inserted = await runAsync(db, `INSERT INTO admin_passkeys
+        (credential_id, public_key, counter, transports)
+        SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM admin_auth_state WHERE id=1 AND epoch=?)
+        AND ${authoritySql}`,
+      [credentialID, Buffer.from(credentialPublicKey).toString('base64url'), counter, transports,
+        registration.epoch, ...authorityParams]);
+      if (inserted.changes !== 1) return res.status(401).json({ error: 'Registration authorization expired' });
+      res.json({ success: true });
     } else {
       res.status(400).json({ error: 'Registration verification failed' });
     }
@@ -1077,8 +1231,9 @@ app.post('/api/admin/passkeys/auth/options', (req, res) => {
     if (err) return sendInternal(req, res, err, 'auth options');
     if (!rows?.length) return res.status(404).json({ error: 'No passkey registered' });
 
-    const challenge = createChallenge('auth');
     try {
+      const state = await getAsync(db, 'SELECT epoch FROM admin_auth_state WHERE id=1');
+      const challenge = createChallenge('auth', { epoch: state.epoch });
       const options = await generateAuthenticationOptions({
         rpID: RP_ID,
         challenge,
@@ -1100,7 +1255,8 @@ app.post('/api/admin/passkeys/auth/verify', authVerifyRateLimit, async (req, res
   if (!credential || !credential.id) return res.status(400).json({ error: 'credential is required' });
 
   const challenge = extractChallengeFromCredential(credential);
-  if (!challenge || !consumeChallenge(challenge, 'auth')) {
+  const authentication = challenge && consumeChallenge(challenge, 'auth');
+  if (!authentication) {
     return res.status(400).json({ error: 'Invalid or expired challenge' });
   }
 
@@ -1127,7 +1283,8 @@ app.post('/api/admin/passkeys/auth/verify', authVerifyRateLimit, async (req, res
         const newCounter = verification.authenticationInfo.newCounter;
         db.run('UPDATE admin_passkeys SET counter = ? WHERE credential_id = ?', [newCounter, row.credential_id]);
 
-        const sessionToken = createSessionToken();
+        const sessionToken = await createSessionToken(authentication.epoch, row.credential_id);
+        if (!sessionToken) return res.status(401).json({ error: 'Authentication authorization expired' });
         res.json({ success: true, sessionToken });
       } else {
         res.status(401).json({ error: 'Authentication verification failed' });
@@ -1139,10 +1296,17 @@ app.post('/api/admin/passkeys/auth/verify', authVerifyRateLimit, async (req, res
   });
 });
 
-app.post('/api/admin/logout', requireAdminAuth, (req, res) => {
-  const token = getAdminSessionFromRequest(req);
-  if (token) adminSessions.delete(token);
-  res.json({ success: true });
+app.post('/api/admin/logout', requireAdminAuth, async (req, res) => {
+  try {
+    const token = getAdminSessionFromRequest(req);
+    await adminSessions.revoke(token);
+    for (const [challenge, context] of adminChallenges) {
+      if (context.tokenHash === registrationTokenHash(token)) adminChallenges.delete(challenge);
+    }
+    res.json({ success: true });
+  } catch (err) {
+    sendInternal(req, res, err, 'revoke admin session');
+  }
 });
 
 app.get('/api/steps', (req, res) => {
@@ -1199,7 +1363,7 @@ app.get('/api/template-bundle', async (req, res) => {
           fallbackUsed: completionRow.resolvedLang !== targetLang,
           data: parsedCompletionTemplate
         },
-        appSettings
+        appSettings: { ...appSettings, hostexEnabled: HOSTEX_ENABLED }
       });
     } catch (parseErr) {
       return sendInternal(req, res, parseErr, 'parse template bundle');
@@ -1337,6 +1501,41 @@ const isContentDuplicate = (newGuest, newMd5, newCheckIn, existing, existingChec
   );
 };
 
+// Only a successful registration receives a signed receipt. Order IDs alone never reveal codes.
+let orderSelections = null;
+const selectionService = () => orderSelections || (orderSelections = createSelectionService({db,getAsync,allAsync,runAsync,secret:ADMIN_API_TOKEN,propertyId:HOSTEX_PROPERTY_ID}));
+const registrationReceipt = async (id, submittedGuests, checkIn, checkOut, selectionToken) => {
+  const record = await getAsync(db, 'SELECT id,data,check_in,check_out FROM checkins WHERE id=?', [id]);
+  if (!record || record.check_in !== checkIn || record.check_out !== checkOut) return null;
+  let saved; try { saved = JSON.parse(record.data).filter(g => !g.deleted); } catch { return null; }
+  if (!submittedGuests.every(g => saved.some(ex => isContentDuplicate(g, computePhotoMd5(g.passportPhoto), checkIn, ex, record.check_in)))) return null;
+  if (selectionToken) await selectionService().attach(id, selectionToken);
+  const selected = await getAsync(db, 'SELECT record_id FROM checkin_order_selections WHERE record_id=?', [id]);
+  const orders = await allAsync(db, "SELECT reservation_code FROM hostex_reservations WHERE checkin_record_id=? AND property_id=? AND status='accepted'", [id, HOSTEX_PROPERTY_ID]);
+  return {recordId:id, receiptToken:receiptToken(id, ADMIN_API_TOKEN), selectionOnly:Boolean(selected), reservationCode:!selected && orders.length===1 ? orders[0].reservation_code : null};
+};
+
+let ttlockOrderAccess = null;
+app.post('/api/checkin/access-code', submitRateLimit, async (req,res) => {
+  res.set('Cache-Control', 'no-store');
+  res.setTimeout(75000);
+  const {recordId,receiptToken:token}=req.body || {};
+  if (typeof recordId!=='string' || !UUID_RE.test(recordId) || !validReceipt(recordId,token,ADMIN_API_TOKEN)) return res.status(403).json({error:'Invalid registration receipt'});
+  try {
+    const gate = await selectionService().accessGate(recordId);
+    if (gate && gate.status !== 'verified') return res.json(gate);
+    if (!ttlockOrderAccess) {
+      const client=createTTLockClient({db,getAsync,runAsync});
+      ttlockOrderAccess=createOrderAccess({db,getAsync,allAsync,runAsync,client,propertyId:HOSTEX_PROPERTY_ID});
+    }
+    // Persistent DB leases protect concurrent requests, including across workers.
+    res.json(await ttlockOrderAccess.getAccess(recordId, gate?.reservation));
+  } catch(err) {
+    logger.warn({code:err.code || 'access_failed',requestId:req.requestId}, 'TTLock access code unavailable');
+    res.status(503).json({status:'unavailable'});
+  }
+});
+
 app.post('/api/submit', submitRateLimit, async (req, res) => {
   try {
     const appSettings = await loadAppSettings();
@@ -1363,48 +1562,58 @@ app.post('/api/submit', submitRateLimit, async (req, res) => {
     const submitId = (typeof clientId === 'string' && UUID_RE.test(clientId)) ? clientId : uuidv4();
     const today = new Date().toISOString().split('T')[0];
 
+    const selectionToken = typeof req.body?.selectionToken === 'string' ? req.body.selectionToken : '';
+    if (selectionToken) {
+      const selectedCode = selectionService().tokenCode(selectionToken);
+      const selectedOrder = selectedCode ? await getAsync(db, "SELECT check_in_date,check_out_date FROM hostex_reservations WHERE reservation_code=? AND property_id=? AND status='accepted'", [selectedCode,HOSTEX_PROPERTY_ID]) : null;
+      if (!selectedOrder || selectedOrder.check_in_date!==checkIn || selectedOrder.check_out_date!==checkOut) return res.status(400).json({success:false,error:'Selected order is unavailable or dates changed'});
+    }
+    const code = !selectionToken && typeof req.body?.reservationCode === 'string' ? req.body.reservationCode.trim() : '';
+    const linkReservation = createReservationLinker({ db, getAsync, runAsync, logger });
     const incomingMd5s = guests.map(g => computePhotoMd5(g.passportPhoto));
-    const isDuplicate = await new Promise((resolve) => {
-      db.all('SELECT data, check_in FROM checkins', [], (err, rows) => {
-        if (err || !rows || rows.length === 0) { resolve(false); return; }
-        const existingGuests = rows.flatMap(row => {
-          try {
-            return JSON.parse(row.data).map(g => ({ ...g, _checkIn: row.check_in }));
-          } catch { return []; }
-        });
-        const allMatch = guests.every((g, i) =>
-          existingGuests.some(ex => isContentDuplicate(g, incomingMd5s[i], checkIn, ex, ex._checkIn))
-        );
-        resolve(allMatch);
-      });
+    const existingRows = await allAsync(db, 'SELECT id, data, check_in, check_out FROM checkins WHERE check_in = ?', [checkIn]);
+    const parsedRows = existingRows.map((row) => {
+      try { return { ...row, guests: JSON.parse(row.data).filter((g) => !g.deleted) }; }
+      catch { return { ...row, guests: [] }; }
     });
-
+    const matches = (g, i, row) => row.guests.some((ex) => isContentDuplicate(g, incomingMd5s[i], checkIn, ex, row.check_in));
+    const duplicateRecord = parsedRows.find((row) => row.check_out === checkOut && guests.every((g, i) => matches(g, i, row)));
+    const isDuplicate = guests.every((g, i) => parsedRows.some((row) => row.check_out === checkOut && matches(g, i, row)));
     if (isDuplicate) {
+      // A retry must link the persisted record, never a new, unused submission UUID.
+      if (duplicateRecord) await linkReservation(code, duplicateRecord.id);
+      await reconcileLinksSafely();
       logger.info({ submitId, requestId: req.requestId }, 'duplicate submission ignored (content match)');
-      return res.json({ success: true, id: submitId, duplicate: true });
+      return res.json({ success: true, id: duplicateRecord?.id || submitId, duplicate: true, accessReceipt: duplicateRecord ? await registrationReceipt(duplicateRecord.id, guests, checkIn, checkOut, selectionToken) : null });
     }
 
     const guestsWithUrls = (await saveImagesLocally(guests)).map((guest) => ({ ...guest, deleted: guest.deleted === true }));
 
-    const stmt = db.prepare("INSERT OR IGNORE INTO checkins (id, date, data, check_in, check_out) VALUES (?, ?, ?, ?, ?)");
-    stmt.run(submitId, today, JSON.stringify(guestsWithUrls), checkIn || null, checkOut || null, function (err) {
-      if (err) {
-        sendInternal(req, res, err, 'persist submission');
-      } else if (this.changes === 0) {
-        logger.info({ submitId, requestId: req.requestId }, 'duplicate submissionId ignored');
-        res.json({ success: true, id: submitId, duplicate: true });
-      } else {
-        logger.info({ submitId, date: today, requestId: req.requestId }, 'new check-in registered');
-        res.json({ success: true, id: submitId });
-      }
-    });
-    stmt.finalize();
+    const inserted = await runAsync(db, 'INSERT OR IGNORE INTO checkins (id, date, data, check_in, check_out) VALUES (?, ?, ?, ?, ?)',
+      [submitId, today, JSON.stringify(guestsWithUrls), checkIn || null, checkOut || null]);
+    if (inserted.changes === 0) {
+      logger.info({ submitId, requestId: req.requestId }, 'duplicate submissionId ignored');
+      res.json({ success: true, id: submitId, duplicate: true, accessReceipt: await registrationReceipt(submitId, guests, checkIn, checkOut, selectionToken) });
+    } else {
+      await linkReservation(code, submitId);
+      await reconcileLinksSafely();
+      logger.info({ submitId, date: today, requestId: req.requestId }, 'new check-in registered');
+      res.json({ success: true, id: submitId, accessReceipt: await registrationReceipt(submitId, guests, checkIn, checkOut, selectionToken) });
+    }
+
   } catch (error) {
     sendInternal(req, res, error, '/api/submit');
   }
 });
 
 app.post('/api/ocr/passport', ocrRateLimit, async (req, res) => {
+  // OCR 遠比一般請求慢，單獨放寬這條路由的回應逾時。
+  res.setTimeout(OCR_REQUEST_TIMEOUT_MS);
+
+  // 客戶端帶 Accept: application/x-ndjson 時改走串流，逐步回報識別階段；
+  // 未帶則維持原本的單一 JSON 回應，既有呼叫端不受影響。
+  const wantsStream = String(req.headers.accept || '').includes('application/x-ndjson');
+
   try {
     const { image } = req.body || {};
     if (!parseDataImage(image)) {
@@ -1412,16 +1621,277 @@ app.post('/api/ocr/passport', ocrRateLimit, async (req, res) => {
       return;
     }
 
-    const passportPhoto = await savePassportImage(image);
-    const ocrResult = await runLocalPassportOcr(image);
-    if (ocrResult?.error === 'OCR_BUSY') {
-      // Photo was saved; surface a 503 so the client can retry while keeping the upload.
-      res.status(503).json({ success: false, error: 'OCR_BUSY', passportPhoto });
+    if (!wantsStream) {
+      const passportPhoto = await savePassportImage(image);
+      const ocrResult = await runLocalPassportOcr(image);
+      if (ocrResult?.error === 'OCR_BUSY') {
+        // Photo was saved; surface a 503 so the client can retry while keeping the upload.
+        res.status(503).json({ success: false, error: 'OCR_BUSY', passportPhoto });
+        return;
+      }
+      res.json({ ...ocrResult, passportPhoto });
       return;
     }
-    res.json({ ...ocrResult, passportPhoto });
+
+    res.status(200);
+    res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Accel-Buffering', 'no'); // 讓 nginx 不要緩衝，進度才會即時到達
+    res.flushHeaders();
+
+    const send = (event) => {
+      if (res.writableEnded) return;
+      res.write(`${JSON.stringify(event)}\n`);
+    };
+
+    send({ stage: 'uploading' });
+    const passportPhoto = await savePassportImage(image);
+    send({ stage: 'uploaded' });
+
+    const ocrResult = await runLocalPassportOcr(image, (progress) => send(progress));
+
+    if (ocrResult?.error === 'OCR_BUSY') {
+      send({ stage: 'error', error: 'OCR_BUSY', passportPhoto });
+    } else {
+      send({ stage: 'done', result: { ...ocrResult, passportPhoto } });
+    }
+    res.end();
   } catch (error) {
+    if (wantsStream && res.headersSent) {
+      logger.error({ err: error.message, requestId: req.requestId }, 'passport OCR stream failed');
+      if (!res.writableEnded) {
+        res.write(`${JSON.stringify({ stage: 'error', error: 'OCR_FAILED' })}\n`);
+        res.end();
+      }
+      return;
+    }
     sendInternal(req, res, error, 'passport OCR');
+  }
+});
+
+// ----------------------------------------------------------------------
+// Hostex 訂單查找與照片回顯（客人側）
+// ----------------------------------------------------------------------
+const RESERVATION_CODE_RE = /^[A-Za-z0-9_-]{4,64}$/;
+
+const buildLookupResponse = async (row) => {
+  let raw = {};
+  try {
+    raw = JSON.parse(row.raw_json);
+  } catch { /* raw_json 損壞時仍返回基本欄位 */ }
+
+  const imageRows = await allAsync(db, `
+    SELECT image_id, hostex_guest_id, filename, ocr_json FROM hostex_id_images
+    WHERE reservation_code = ? AND status = 'downloaded' AND filename IS NOT NULL
+  `, [row.reservation_code]);
+
+  // 去重（同一本護照傳兩次）並排序（成年人優先），詳見 dedupeReservationPhotos
+  const { photos: dedupedRows, duplicatesRemoved } = dedupeReservationPhotos(imageRows, UPLOAD_DIR);
+  if (duplicatesRemoved > 0) {
+    logger.info({ reservationCode: row.reservation_code, duplicatesRemoved }, 'duplicate reservation photos removed from lookup');
+  }
+
+  const photos = dedupedRows.map((img) => {
+    const parsed = img.parsedOcr;
+    // OCR 判定的視覺方向（PIL 逆時針度數），前端用 CSS rotate(-deg) 擺正顯示
+    const rotation = Number.isFinite(parsed?.rotation) ? parsed.rotation : 0;
+    const ocr = parsed ? {
+      passportNumber: parsed.passportNumber || '',
+      fullName: parsed.fullName || '',
+      age: Number.isFinite(parsed.age) ? parsed.age : null,
+      birthDate: parsed.birthDate || '',
+      sex: parsed.sex || '',
+      nationalityCode: parsed.nationalityCode || ''
+    } : null;
+    return {
+      photoToken: issueReservationPhotoToken(img.filename),
+      filename: img.filename,
+      guestId: img.hostex_guest_id || null,
+      rotation,
+      ocr
+    };
+  });
+
+  const guests = (raw.guests || []).map((g) => ({
+    hostexGuestId: String(g.id ?? ''),
+    name: g.name || '',
+    nationality: typeof g.country === 'string' ? g.country.toUpperCase() : '',
+    passportNumber: g.id_type === 'passport' && g.id_number ? String(g.id_number) : '',
+    isBooker: Boolean(g.is_booker)
+  }));
+
+  return {
+    found: true,
+    reservation: {
+      reservationCode: row.reservation_code,
+      checkInDate: row.check_in_date,
+      checkOutDate: row.check_out_date,
+      numberOfGuests: raw.number_of_guests ?? null,
+      numberOfAdults: row.number_of_adults ?? 1,
+      numberOfChildren: row.number_of_children ?? 0,
+      petCount: row.number_of_pets ?? 0,
+      guestName: row.guest_name || '',
+      // 已通過訂單號或姓名+日期驗證，回傳預訂人電話供監護人欄快捷填充
+      bookerPhone: typeof raw.guest_phone === 'string' ? raw.guest_phone : '',
+      guests,
+      photos
+    }
+  };
+};
+
+const reservationSelectionRateLimit = rateLimit({windowMs:10*60*1000,limit:30,standardHeaders:'draft-7',legacyHeaders:false,message:{found:false,error:'Too many booking selections; please try later'}});
+app.get('/api/checkin/reservation-candidates', reservationSelectionRateLimit, async (req,res) => {
+  res.set('Cache-Control','no-store');
+  try { res.json({candidates:HOSTEX_ENABLED ? await selectionService().recentOrders() : []}); }
+  catch(err) { sendInternal(req,res,err,'reservation candidates'); }
+});
+app.post('/api/checkin/reservation-select', reservationSelectionRateLimit, async (req,res) => {
+  res.set('Cache-Control','no-store');
+  try {
+    const reservation=HOSTEX_ENABLED ? await selectionService().select(req.body?.selectionToken,req.body?.bookerName,req.body?.checkInDate,req.body?.checkOutDate) : null;
+    if(!reservation)return res.status(404).json({found:false});
+    if(reservation.needsConfirmation)return res.json(reservation);
+    res.json({found:true,reservation});
+  } catch(err) { sendInternal(req,res,err,'reservation selection'); }
+});
+
+app.post('/api/checkin/reservation-lookup', lookupRateLimit, async (req, res) => {
+  try {
+    if (!HOSTEX_ENABLED) {
+      res.json({ found: false });
+      return;
+    }
+
+    const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    const checkInDate = typeof req.body?.checkInDate === 'string' ? req.body.checkInDate.trim() : '';
+
+    // 只在近窗口内可查，降低撞库价值
+    const now = Date.now();
+    const windowFrom = new Date(now - 86400000).toISOString().slice(0, 10);
+    const windowTo = new Date(now + 30 * 86400000).toISOString().slice(0, 10);
+
+    let row = null;
+    if (code && RESERVATION_CODE_RE.test(code)) {
+      row = await getAsync(db, `
+        SELECT * FROM hostex_reservations
+        WHERE reservation_code = ? AND status = 'accepted'
+          AND check_in_date BETWEEN ? AND ?
+      `, [code, windowFrom, windowTo]);
+    } else if (name.length >= 2 && name.length <= 100 && parseDateOnly(checkInDate)) {
+      const candidates = await allAsync(db, `
+        SELECT * FROM hostex_reservations
+        WHERE status = 'accepted' AND check_in_date = ?
+          AND check_in_date BETWEEN ? AND ?
+      `, [checkInDate, windowFrom, windowTo]);
+      const matches = candidates.filter((c) => fullNameMatches(c.guest_name, name));
+      // 同名同日多单时不猜，让客人改用订单号
+      if (matches.length === 1) row = matches[0];
+    }
+
+    if (!row) {
+      res.json({ found: false });
+      return;
+    }
+    res.json(await buildLookupResponse(row));
+  } catch (error) {
+    sendInternal(req, res, error, 'reservation lookup');
+  }
+});
+
+app.get('/api/checkin/reservation-photo/:token', (req, res) => {
+  const token = String(req.params.token || '');
+  const entry = reservationPhotoTokens.get(token);
+  if (!entry || entry.expiresAt < Date.now()) {
+    reservationPhotoTokens.delete(token);
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  const safeName = path.basename(entry.filename);
+  const filePath = path.resolve(UPLOAD_DIR, safeName);
+  if (!filePath.startsWith(path.resolve(UPLOAD_DIR) + path.sep) || !fs.existsSync(filePath)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.sendFile(filePath);
+});
+
+// ----------------------------------------------------------------------
+// Hostex 管理端
+// ----------------------------------------------------------------------
+app.get('/api/admin/hostex/status', requireAdminAuth, async (req, res) => {
+  try {
+    if (!hostexSync) {
+      res.json({ enabled: false });
+      return;
+    }
+    const status = await hostexSync.getStatus();
+    res.json({ enabled: true, syncEnabled: hostexSyncEnabledCache, ...status });
+  } catch (error) {
+    sendInternal(req, res, error, 'hostex status');
+  }
+});
+
+app.post('/api/admin/hostex/sync', requireAdminAuth, async (req, res) => {
+  try {
+    if (!hostexSync) {
+      res.status(400).json({ success: false, error: 'Hostex integration is not configured' });
+      return;
+    }
+    const result = await hostexSync.syncNow();
+    res.json(result);
+  } catch (error) {
+    sendInternal(req, res, error, 'hostex manual sync');
+  }
+});
+
+app.get('/api/admin/hostex/reservations', requireAdminAuth, async (req, res) => {
+  try {
+    const registrationMatches = await reconcileReservationLinks();
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 50));
+    const offset = Math.max(0, Number.parseInt(req.query.offset, 10) || 0);
+    const q = typeof req.query.q === 'string' ? req.query.q.trim().toLowerCase() : '';
+
+    const where = q
+      ? "WHERE reservation_code LIKE ? OR guest_name_norm LIKE ?"
+      : '';
+    const params = q ? [`%${q}%`, `%${q}%`] : [];
+
+    const total = await getAsync(db, `SELECT COUNT(*) AS c FROM hostex_reservations ${where}`, params);
+    const rows = await allAsync(db, `
+      SELECT reservation_code, stay_code, channel_type, status, check_in_date, check_out_date,
+             guest_name, number_of_adults, number_of_children, number_of_pets,
+             booked_at, checkin_record_id, checkin_link_source, last_synced_at, raw_json
+      FROM hostex_reservations ${where}
+      ORDER BY check_in_date DESC
+      LIMIT ? OFFSET ?
+    `, [...params, limit, offset]);
+
+    const codes = rows.map((r) => r.reservation_code);
+    let imagesByCode = {};
+    if (codes.length) {
+      const placeholders = codes.map(() => '?').join(',');
+      const imgs = await allAsync(db, `
+        SELECT reservation_code, filename, status FROM hostex_id_images
+        WHERE reservation_code IN (${placeholders})
+      `, codes);
+      imagesByCode = imgs.reduce((acc, img) => {
+        (acc[img.reservation_code] ||= []).push({ filename: img.filename, status: img.status });
+        return acc;
+      }, {});
+    }
+
+    res.json({
+      total: total?.c ?? 0,
+      reservations: rows.map(({ raw_json, ...r }) => {
+        let numberOfGuests = null;
+        try { numberOfGuests = JSON.parse(raw_json).number_of_guests ?? null; } catch { /* legacy row */ }
+        return { ...r, registration_match_count: registrationMatches.ambiguous[r.reservation_code] || 0, number_of_guests: numberOfGuests, images: imagesByCode[r.reservation_code] || [] };
+      })
+    });
+  } catch (error) {
+    sendInternal(req, res, error, 'hostex reservations list');
   }
 });
 
@@ -1449,6 +1919,8 @@ const shutdown = (signal = 'unknown') => {
   shuttingDown = true;
   logger.info({ signal }, 'shutting down');
   clearInterval(cleanupInterval);
+  if (hostexSync) hostexSync.stop();
+  if (ocrWorkerPool) ocrWorkerPool.stop();
 
   const finalizeExit = async (code) => {
     await closeDatabase(db);
@@ -1485,6 +1957,56 @@ const startServer = async () => {
   sessionStore = new AdminSessionStore({ db, logger, runAsync, allAsync });
   await sessionStore.hydrate();
   adminSessions = sessionStore;
+
+  await loadAppSettings(); // 預熱 hostexSyncEnabledCache
+
+  // 常駐 OCR worker 池：模型只加載一次，單張識別從 ~15s 降到 ~4s
+  ocrWorkerPool = createOcrWorkerPool({
+    pythonPath: PADDLE_OCR_PYTHON_PATH,
+    workerScript: PADDLE_OCR_WORKER,
+    size: OCR_MAX_CONCURRENCY,
+    cwd: __dirname,
+    env: {
+      ...process.env,
+      HOME: OCR_CACHE_HOME,
+      XDG_CACHE_HOME: OCR_CACHE_DIR,
+      PADDLE_HOME: OCR_PADDLE_HOME,
+      PADDLEOCR_HOME: OCR_MODEL_HOME,
+      PYTHONPYCACHEPREFIX: path.join(OCR_CACHE_DIR, 'pycache')
+    },
+    logger
+  });
+
+  if (HOSTEX_ENABLED) {
+    const hostexClient = createHostexClient({ token: HOSTEX_API_TOKEN, logger });
+    hostexSync = createHostexSync({
+      db,
+      runAsync,
+      allAsync,
+      getAsync,
+      client: hostexClient,
+      uploadDir: UPLOAD_DIR,
+      propertyId: HOSTEX_PROPERTY_ID,
+      pastDays: HOSTEX_SYNC_PAST_DAYS,
+      futureDays: HOSTEX_SYNC_FUTURE_DAYS,
+      intervalMs: HOSTEX_SYNC_INTERVAL_MS,
+      isEnabled: () => hostexSyncEnabledCache,
+      reconcileLinks: reconcileReservationLinks,
+      // 預跑 OCR 與到店客人的實時 OCR 共用同一個併發閘
+      runOcr: async (imagePath) => {
+        const release = await ocrSemaphore.acquire(OCR_QUEUE_TIMEOUT_MS);
+        try {
+          return await executePassportOcr(imagePath);
+        } finally {
+          release();
+        }
+      },
+      logger
+    });
+    hostexSync.start();
+  } else {
+    logger.info('hostex integration disabled (HOSTEX_API_TOKEN not configured)');
+  }
 
   if (shouldServeClientBuild()) {
     mountClientBuild();

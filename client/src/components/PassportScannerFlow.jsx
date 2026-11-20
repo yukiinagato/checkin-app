@@ -18,6 +18,7 @@ const emptyForm = {
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 
 const defaultLabels = {
+  passportReviewHint: 'Some details could not be verified. Check the fields against your passport before applying them.',
   passportModalTitle: 'Passport Photo Upload',
   passportModalClose: 'Close',
   passportModalIntro: 'Use your device camera to photograph the passport information page, or choose a clear image from your library. We will read it and fill the form automatically.',
@@ -27,7 +28,43 @@ const defaultLabels = {
   passportModalRetake: 'Retake',
   passportModalSavedHint: 'The photo is stored on the backend and is only visible in the admin console.',
   passportFileTooLarge: 'Image is too large. Please upload a passport photo under 12MB.',
-  passportFileInvalid: 'Please choose an image file.'
+  passportFileInvalid: 'Please choose an image file.',
+  ocrStageUploading: 'Uploading photo...',
+  ocrStageUploaded: 'Photo saved',
+  ocrStageLoading: 'Starting recognition engine...',
+  ocrStageCompressed: 'Image prepared for recognition',
+  ocrStageRecognizing: 'Reading passport ({pass}/{totalPasses})...',
+  ocrStageMatched: 'Passport data found, finishing up...'
+};
+
+// 每個階段對應的粗略完成度；識別階段依嘗試次數細分。
+const STAGE_PROGRESS = {
+  uploading: 0.08,
+  uploaded: 0.2,
+  loading: 0.3,
+  compressed: 0.4,
+  recognizing: 0.5,
+  matched: 0.95
+};
+
+const formatStageLabel = (copy, event) => {
+  if (!event?.stage) return copy.passportModalProcessing;
+  const key = `ocrStage${event.stage.charAt(0).toUpperCase()}${event.stage.slice(1)}`;
+  const template = copy[key];
+  if (!template) return copy.passportModalProcessing;
+  return template
+    .replace('{pass}', String(event.pass ?? 1))
+    .replace('{totalPasses}', String(event.totalPasses ?? 1));
+};
+
+const stageProgressValue = (event) => {
+  const base = STAGE_PROGRESS[event?.stage];
+  if (base === undefined) return null;
+  if (event.stage !== 'recognizing') return base;
+  // 識別佔 0.5→0.9 這段，依當前是第幾次嘗試往前推進。
+  const total = Math.max(1, Number(event.totalPasses) || 1);
+  const current = Math.max(1, Number(event.pass) || 1);
+  return base + (0.4 * ((current - 1) / total));
 };
 
 const pickFirst = (...values) => values.find((value) => value !== undefined && value !== null && String(value).trim() !== '');
@@ -47,13 +84,17 @@ export default function PassportScannerFlow({ isOpen, onClose, uploadAndOcrPassp
   const [uploadedPhoto, setUploadedPhoto] = useState('');
   const [detectedForm, setDetectedForm] = useState(emptyForm);
   const [errorMessage, setErrorMessage] = useState('');
+  const [needsReview, setNeedsReview] = useState(false);
+  const [progressEvent, setProgressEvent] = useState(null);
 
   const resetFlow = useCallback(() => {
     setScanState(PassportScanState.PICK_IMAGE);
     setBase64Image('');
     setUploadedPhoto('');
     setDetectedForm(emptyForm);
+    setNeedsReview(false);
     setErrorMessage('');
+    setProgressEvent(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -89,12 +130,14 @@ export default function PassportScannerFlow({ isOpen, onClose, uploadAndOcrPassp
     }
 
     setScanState(PassportScanState.PROCESSING);
+    setProgressEvent({ stage: 'uploading' });
 
     try {
       const dataUrl = await fileToDataUrl(file);
       setBase64Image(dataUrl);
-      const ocr = await uploadAndOcrPassport(dataUrl);
+      const ocr = await uploadAndOcrPassport(dataUrl, { strict: true }, setProgressEvent);
       setUploadedPhoto(ocr.passportPhoto || '');
+      setNeedsReview(Boolean(ocr.needsReview));
       setDetectedForm({
         passportNumber: pickFirst(ocr.passportNumber, ocr.mrzPassportNumber) || '',
         fullName: ocr.fullName || '',
@@ -106,6 +149,8 @@ export default function PassportScannerFlow({ isOpen, onClose, uploadAndOcrPassp
     } catch (error) {
       setErrorMessage(error?.message || copy.ocrFailed || 'OCR failed. Please try again.');
       setScanState(PassportScanState.PICK_IMAGE);
+    } finally {
+      setProgressEvent(null);
     }
   };
 
@@ -158,12 +203,30 @@ export default function PassportScannerFlow({ isOpen, onClose, uploadAndOcrPassp
           </div>
         )}
 
-        {scanState === PassportScanState.PROCESSING && (
-          <div className="py-10 flex flex-col items-center gap-3 text-slate-600">
-            <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
-            <p className="text-sm font-medium">{copy.passportModalProcessing}</p>
-          </div>
-        )}
+        {scanState === PassportScanState.PROCESSING && (() => {
+          const ratio = stageProgressValue(progressEvent);
+          const percent = ratio === null ? null : Math.round(ratio * 100);
+          return (
+            <div className="py-10 flex flex-col items-center gap-4 text-slate-600">
+              <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
+              <p className="text-sm font-medium text-center px-4" aria-live="polite">
+                {formatStageLabel(copy, progressEvent)}
+              </p>
+              <div
+                className="w-full max-w-xs h-1.5 rounded-full bg-slate-200 overflow-hidden"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                {...(percent === null ? {} : { 'aria-valuenow': percent })}
+              >
+                <div
+                  className="h-full bg-emerald-600 transition-[width] duration-500 ease-out"
+                  style={{ width: `${percent === null ? 5 : percent}%` }}
+                />
+              </div>
+            </div>
+          );
+        })()}
 
         {scanState === PassportScanState.VERIFYING && (
           <div className="space-y-3">
@@ -172,6 +235,7 @@ export default function PassportScannerFlow({ isOpen, onClose, uploadAndOcrPassp
                 <img src={base64Image} alt="Passport preview" className="w-full max-h-64 object-contain bg-slate-100" />
               </div>
             )}
+            {needsReview && <p role="status" className="p-3 rounded-xl bg-amber-50 text-amber-800 text-sm">{copy.passportReviewHint}</p>}
             <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50 space-y-3">
               <label className="text-xs text-slate-500 block">護照號</label>
               <input value={detectedForm.passportNumber} onChange={(e) => setDetectedForm((prev) => ({ ...prev, passportNumber: e.target.value }))} className="w-full p-3 rounded-xl border border-slate-200 text-sm" />

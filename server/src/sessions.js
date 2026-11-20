@@ -38,6 +38,21 @@ class AdminSessionStore {
     return this;
   }
 
+  // Consult SQLite on every authenticated request: reset runs in a separate process.
+  async isActive(token) {
+    if (!token) return false;
+    const rows = await this.allAsync(this.db,
+      'SELECT expires_at FROM admin_sessions WHERE token = ? AND expires_at > ?',
+      [token, Date.now()]);
+    if (!rows.length) this.cache.delete(token);
+    return rows.length > 0;
+  }
+
+  async revoke(token) {
+    await this.runAsync(this.db, 'DELETE FROM admin_sessions WHERE token = ?', [token]);
+    this.cache.delete(token);
+  }
+
   get(token) {
     return this.cache.get(token);
   }

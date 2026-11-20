@@ -6,7 +6,7 @@
  *   node reset-passkey.js [--env development|production]
  *
  * 說明：
- *   清除資料庫 admin_passkeys 表中的所有記錄，讓管理員可以重新註冊新的 Passkey。
+ *   清除所有 Passkey、撤銷管理員會話及待完成驗證，讓管理員重新註冊。
  *   下次訪問管理後台時，系統會要求使用 ADMIN_API_TOKEN（Bootstrap Token）重新綁定裝置。
  */
 
@@ -14,6 +14,7 @@
 
 const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
+const { runAsync } = require('./src/db');
 
 // 解析 --env 參數（預設 development）
 const envArgIdx = process.argv.indexOf('--env');
@@ -45,12 +46,6 @@ db.get('SELECT COUNT(*) AS count FROM admin_passkeys', [], (err, row) => {
 
   const count = row?.count ?? 0;
 
-  if (count === 0) {
-    console.log('ℹ️   目前沒有已註冊的 Passkey，無需清除。');
-    db.close();
-    process.exit(0);
-  }
-
   console.log(`⚠️   即將刪除 ${count} 個已註冊的 Passkey。`);
   console.log('    刪除後，下次登入管理後台需使用 ADMIN_API_TOKEN（Bootstrap Token）重新綁定裝置。');
   console.log('');
@@ -58,17 +53,26 @@ db.get('SELECT COUNT(*) AS count FROM admin_passkeys', [], (err, row) => {
   // 非互動模式（--yes 或 FORCE=1）跳過確認
   const skipConfirm = process.argv.includes('--yes') || process.env.FORCE === '1';
 
-  const doDelete = () => {
-    db.run('DELETE FROM admin_passkeys', [], function (deleteErr) {
-      if (deleteErr) {
-        console.error('❌  刪除失敗：', deleteErr.message);
-        db.close();
-        process.exit(1);
-      }
-      console.log(`✅  已清除 ${this.changes} 個 Passkey 記錄。`);
-      console.log('    請使用 Bootstrap Token 重新登入並綁定新裝置。');
+  const doDelete = async () => {
+    try {
+      await runAsync(db, 'PRAGMA busy_timeout = 5000');
+      await runAsync(db, 'BEGIN IMMEDIATE');
+      // Also works on a database created before the auth-state migration.
+      await require('./migrations/002_admin_sessions').up({ db, runAsync });
+      await require('./migrations/007_admin_auth_state').up({ db, runAsync });
+      await runAsync(db, "UPDATE admin_auth_state SET epoch=lower(hex(randomblob(32))) WHERE id=1");
+      await runAsync(db, 'DELETE FROM admin_sessions');
+      const result = await runAsync(db, 'DELETE FROM admin_passkeys');
+      await runAsync(db, 'COMMIT');
+      console.log(`✅  已清除 ${result.changes} 個 Passkey，並撤銷全部管理員會話及待完成驗證。`);
+      console.log('    請使用 Bootstrap Token 重新綁定裝置。');
+    } catch (error) {
+      await runAsync(db, 'ROLLBACK').catch(() => {});
+      console.error('❌  重置失敗：', error.message);
+      process.exitCode = 1;
+    } finally {
       db.close();
-    });
+    }
   };
 
   if (skipConfirm) {

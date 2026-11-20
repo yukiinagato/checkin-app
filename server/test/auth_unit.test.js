@@ -517,7 +517,7 @@ test('server.js：UUID_RE 正規式已定義', () => {
 
 test('server.js：/api/submit 從 req.body 讀取 submissionId', () => {
   const submitMatch = serverSrc.match(
-    /app\.post\(['"]\/api\/submit['"][\s\S]*?stmt\.finalize\(\)/
+    /app\.post\(['"]\/api\/submit['"][\s\S]*?app\.post\(['"]\/api\/ocr\/passport/
   );
   assert.ok(submitMatch, '無法擷取 /api/submit 路由本體');
   assert.ok(
@@ -533,18 +533,18 @@ test('server.js：/api/submit 使用 INSERT OR IGNORE（冪等寫入）', () => 
   );
 });
 
-test('server.js：/api/submit 當 this.changes === 0 時仍回傳 success: true', () => {
+test('server.js：/api/submit 當 inserted.changes === 0 時仍回傳 success: true', () => {
   const submitMatch = serverSrc.match(
-    /app\.post\(['"]\/api\/submit['"][\s\S]*?stmt\.finalize\(\)/
+    /app\.post\(['"]\/api\/submit['"][\s\S]*?app\.post\(['"]\/api\/ocr\/passport/
   );
   assert.ok(submitMatch, '無法擷取 /api/submit 路由本體');
   assert.ok(
-    submitMatch[0].includes('this.changes === 0'),
-    '未處理 this.changes === 0 的重複提交情況'
+    submitMatch[0].includes('inserted.changes === 0'),
+    '未處理 inserted.changes === 0 的重複提交情況'
   );
   // 確認重複提交也回傳 success: true
   const dupBlock = submitMatch[0].match(
-    /this\.changes === 0[\s\S]*?res\.json\(\{([\s\S]*?)\}\)/
+    /inserted\.changes === 0[\s\S]*?res\.json\(\{([\s\S]*?)\}\)/
   );
   assert.ok(dupBlock, '找不到重複提交回傳區塊');
   assert.ok(
